@@ -1,401 +1,279 @@
-# BTC Trading Engine
+BTC Trading Engine
 
-Bot de trading em tempo real para BTCUSDT, construído em Java 25 com Spring Boot, Binance e PostgreSQL.
+![Java 25](https://img.shields.io/badge/Java-25-orange?style=flat-square&logo=openjdk)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.x-brightgreen?style=flat-square&logo=springboot)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue?style=flat-square&logo=postgresql)
+![Binance API](https://img.shields.io/badge/Binance-Testnet%2FReal-yellow?style=flat-square&logo=binance)
 
-O sistema recebe trades da Binance, agrega candles de 15 minutos, calcula indicadores técnicos, produz sinais por regras, executa operações em simulação ou Binance Testnet/real e acompanha risco, persistência e métricas pelo dashboard.
+Bot de alta performance para trading em tempo real no par **BTCUSDT**. O sistema processa trades via WebSocket da Binance, agrega candles de 15 minutos, calcula indicadores técnicos avançados, produz sinais heurísticos e executa ordens simuladas ou reais na Binance Testnet/Mainnet com monitoramento contínuo de risco e dashboard em tempo real.
 
-> O predictor atual é determinístico e baseado em regras heurísticas. Os valores `probabilityUp` e `probabilityDown` são probabilidades implícitas pelo score, não probabilidades estatísticas calibradas por machine learning.
+> ℹ️ **Nota sobre o Predictor:** O motor preditivo atual é determinístico e baseado em regras heurísticas. Os valores `probabilityUp` e `probabilityDown` representam probabilidades implícitas derivadas do score técnico, e não probabilidades estatísticas calibradas por machine learning.
 
-## Estado Atual
+---
 
-- Mercado padrão: `BTCUSDT`.
-- Timeframe padrão: `15m`.
-- Modo padrão: simulação.
-- Endpoint Binance padrão: **Testnet** (`stream.testnet.binance.vision` e `testnet.binance.vision`).
-- Dashboard web com WebSocket e endpoints REST.
-- Histórico inicial carregado pela Binance REST, com fallback para PostgreSQL.
-- Candles e ticks persistidos de forma assíncrona.
-- Compra e fechamento manual pelo dashboard.
-- Target e stop loss avaliados a cada trade recebido, não apenas no fechamento do candle.
-- Execução real preparada com reconciliação, confirmação de ordens e User Data Stream.
 
-## Arquitetura
+<p align="center">
+  <img width="600" height="400" alt="image" src="https://github.com/user-attachments/assets/637d2da6-07d1-48b9-8982-0ac38ed2de96" />
+</p>
 
+> **eu depois de conseguir 50 reais**
+
+---
+
+## ⚡ Estado Atual do Sistema
+
+| Parâmetro / Recurso | Configuração Padrão / Estado |
+| :--- | :--- |
+| **Mercado & Timeframe** | `BTCUSDT` \| `15m` |
+| **Modo de Operação** | Simulação (Paper Trading) |
+| **Endpoints Binance** | Testnet (`stream.testnet.binance.vision` e `testnet.binance.vision`) |
+| **Persistência** | PostgreSQL (gravação assíncrona de ticks, candles e ordens) |
+| **Interface** | Dashboard Web dinâmico via WebSocket + Endpoints REST |
+| **Gestão de Posição** | Target e Stop Loss avaliados tick-a-tick (`aggTrade`), não só no fechamento |
+| **Execução Real** | Suporte a reconciliação, confirmação de ordens e User Data Stream |
+
+---
+
+## 🏗️ Arquitetura do Fluxo de Dados
+
+### 1. Processamento em Tempo Real
 ```text
 Binance WebSocket (aggTrade)
-				|
-				v
-NormalizedPriceEvent
-				|
-				+--> DatabaseWriter --> PostgreSQL (ticks)
-				|
-				+--> CandleAggregator --> CandleEvent
-																			|
-																			+--> DatabaseWriter --> PostgreSQL (candles)
-																			|
-																			+--> FeatureExtractor
-																								|
-																								+--> indicadores/features
-																								+--> RuleBasedPredictor
-																													|
-																													+--> PredictionVector
-																													+--> PositionManager
-																													+--> Dashboard/WebSocket
+         │
+         ▼
+NormalizedPriceEvent ───┬───► DatabaseWriter ─────► PostgreSQL (ticks)
+                        │
+                        └───► CandleAggregator ───► CandleEvent
+                                                        │
+                                                        ├───► DatabaseWriter ───► PostgreSQL (candles)
+                                                        │
+                                                        └───► FeatureExtractor
+                                                                    │
+                                                                    ├───► Indicadores / Features
+                                                                    └───► RuleBasedPredictor
+                                                                                │
+                                                                                └───► PredictionVector
+                                                                                        ├───► PositionManager
+                                                                                        └───► Dashboard (WS)
 ```
 
-No modo real, o fluxo adicional é:
-
+### 2. Execução Real (Modo Habilitado)
 ```text
-API Binance
-	+--> saldo USDT
-	+--> reconciliação de ordens/posição
-	+--> execução de mercado
-	+--> confirmação via User Data Stream
+API Binance REST / WS
+    ├──► Consulta Saldo USDT em Tempo Real
+    ├──► Reconciliação de Posição & Ordens
+    ├──► Execução de Mercado (Market Orders)
+    └──► Confirmação via User Data Stream (com fallback via Polling)
 ```
 
-## Indicadores E Features
+---
 
-Os parâmetros padrão estão em `btctradingengine/src/main/resources/application.properties`.
+## 📊 Indicadores e Features
 
-### Indicadores
+O histórico inicial é carregado via Binance REST (com fallback para o PostgreSQL) para aquecer os indicadores antes da abertura do WebSocket.
 
-- SMA: período `50`.
-- EMA: período `26`.
-- RSI: período `14`.
-- ATR: período `14`.
-- MACD: `12/26/9`.
+### Indicadores Técnicos
 
-### Features
+| Indicador | Parâmetro Padrão |
+| :--- | :--- |
+| **SMA** (Média Móvel Simples) | Período `50` |
+| **EMA** (Média Móvel Exponencial) | Período `26` |
+| **RSI** (Índice de Força Relativa) | Período `14` |
+| **ATR** (Average True Range) | Período `14` |
+| **MACD** | Fast `12`, Slow `26`, Signal `9` |
 
-- Retorno do candle.
-- Volatilidade curta e longa.
-- Distância do preço para SMA e EMA.
-- RSI.
-- MACD, sinal e histograma.
-- ATR.
-- Razão de volume.
-- Faixa máxima/mínima.
-- Posição do fechamento dentro da faixa.
-- Hora e dia da semana.
+### Pipeline de Features Extraídas
+* **Retorno e Volatilidade:** Retorno do candle, volatilidade de curto e longo prazo.
+* **Médias & Osciladores:** Distância do preço para SMA/EMA, RSI, MACD (Linha, Sinal e Histograma), ATR.
+* **Estrutura de Mercado:** Razão de volume, faixa máxima/mínima, posição do fechamento na faixa.
+* **Sazonalidade:** Hora do dia e dia da semana.
 
-O histórico de candles fechados é usado para aquecer os indicadores antes do WebSocket começar a operar. O warmup atualiza as métricas, mas não gera ordens históricas.
+---
 
-## Predictor E Score
+## 🧠 Predictor e Tomada de Decisão
 
-O `RuleBasedPredictor` combina cinco regras:
+O `RuleBasedPredictor` combina cinco regras individuais. Cada regra gera um score no intervalo $[-1, +1]$:
 
-- RSI.
-- Distância da SMA.
-- MACD normalizado por ATR.
-- Volatilidade ATR.
-- Razão de volatilidade curta/longa.
+1. **RSI Score**
+2. **SMA Distance Score**
+3. **MACD Score** *(normalizado por ATR)*
+4. **ATR Volatility Score**
+5. **Short/Long Volatility Ratio Score**
 
-Cada regra retorna um score entre `-1` e `+1`. O score final é a média:
+### Cálculo do Score e Probabilidade Implícita
 
 ```text
-sumScore = scoreRSI + scoreSMA + scoreMACD + scoreATR + scoreVolatilidade
-avgScore = sumScore / quantidadeDeRegras
-confidence = abs(avgScore)
-```
+sumScore    = scoreRSI + scoreSMA + scoreMACD + scoreATR + scoreVolatilidade
+avgScore    = sumScore / 5
+confidence  = |avgScore|
 
-A probabilidade exibida é derivada pela sigmoide:
-
-```text
-probabilityUp = 1 / (1 + exp(-avgScore * 2))
+probabilityUp   = 1 / (1 + exp(-avgScore * 2))
 probabilityDown = 1 - probabilityUp
 ```
 
-Exemplo:
+### Regras de Entrada e Sinais
 
-```text
-sumScore = 0.70
-avgScore = 0.140
-confidence = 0.140
-probabilityUp ≈ 0.570
-```
+| Condição | Sinal Gerado | Confirmação Necessária |
+| :--- | :--- | :--- |
+| `avgScore >= 0.65` | **BUY** | $N$ snapshots consecutivos (`prediction.confirmation.snapshots`) |
+| `avgScore <= -0.65` | **SELL** | $N$ snapshots consecutivos (`prediction.confirmation.snapshots`) |
+| Outros valores | **HOLD** | Imediato (Zona neutra/espera) |
 
-Os scores individuais, `sum` e `avg` aparecem na explicação da previsão e no log.
+---
 
-### Sinais
+## 📈 Métricas do Dashboard e Backtest
 
-Com a configuração padrão:
+### Métricas de Predição & Mercado
+* `probabilityUp` / `probabilityDown`: Probabilidades implícitas heurísticas.
+* `confidence`: Intensidade absoluta do score médio.
+* **Dashboard Live:** Total de trades, Win Rate, P&L Total, Sharpe Ratio, Max Drawdown e histórico recente.
 
-```properties
-prediction.buy.threshold=0.65
-prediction.sell.threshold=-0.65
-prediction.hold.min=-0.3
-prediction.hold.max=0.3
-prediction.confirmation.snapshots=2
-```
+### Relatório de Backtest (`BacktestReport`)
+O motor de replay valida a estratégia sobre dados históricos considerando comissões e gestão intra-candle:
+* Win Rate, Profit Factor, P&L Líquido Total e Retorno %.
+* Maximum Drawdown e Sharpe Ratio.
+* Média de candles por trade.
+* **Tratamento de Conflitos:** Se Target e Stop Loss forem atingidos no mesmo candle (usando High/Low), o **Stop Loss tem prioridade automatizada**.
 
-```text
-avgScore >= 0.65  -> BUY
-avgScore <= -0.65 -> SELL
-qualquer outro    -> HOLD
-```
+---
 
-BUY e SELL ainda precisam da quantidade configurada de snapshots consecutivos para confirmação. A zona entre `0.30` e `0.65` continua sendo HOLD, apenas com score positivo mais forte.
-
-## Métricas E Interpretação
-
-### Métricas da previsão
-
-- `probabilityUp`: probabilidade implícita pelo score heurístico.
-- `probabilityDown`: complemento da probabilidade de alta.
-- `confidence`: magnitude absoluta do score médio.
-- `sum`: soma dos scores individuais.
-- `avg`: score médio usado pela decisão.
-
-Essas métricas não representam uma taxa histórica de acerto. Para isso ainda é necessário executar backtests e calibrar o modelo com dados fora da amostra.
-
-### Métricas de trading
-
-O dashboard expõe:
-
-- Total de trades.
-- Trades vencedores.
-- P&L total.
-- Sharpe ratio.
-- Maximum drawdown.
-- Histórico dos últimos trades fechados.
-
-### Métricas do backtest
-
-O `BacktestReport` calcula:
-
-- Total de trades.
-- Win rate.
-- P&L total líquido.
-- Retorno percentual.
-- P&L médio.
-- Profit factor.
-- Maximum drawdown.
-- Sharpe ratio.
-- Média de candles por trade.
-
-As métricas usam comissão de entrada e saída. A configuração padrão é:
-
-```properties
-backtest.commission.rate=0.001
-```
-
-O backtest também suporta target e stop por candle, usando máxima e mínima. Quando os dois limites aparecem no mesmo candle, o stop tem prioridade, evitando um resultado artificialmente otimista.
-
-## Risco E Saídas
+## 🛡️ Gestão de Risco e Saídas
 
 ```properties
 trading.target.percent=2.0
 trading.stop.loss.percent=1.5
-trading.max.drawdown.percent=5
+trading.max.drawdown.percent=5.0
 ```
 
-Uma posição pode ser fechada por:
+Uma posição é encerrada automaticamente sob as seguintes condições:
+* 🎯 Target de Lucro atingido
+* 🛑 Stop Loss atingido
+* 🔄 Reversão do sinal preditivo
+* ✋ Intervenção manual via Dashboard
+* ⚠️ Falha na execução da ordem
 
-- Target atingido.
-- Stop loss atingido.
-- Reversão do sinal.
-- Fechamento manual.
-- Falha de ordem.
-- Erro de execução.
+---
 
-O target e o stop são verificados a cada `aggTrade`. No dashboard, os preços absolutos de venda automática e stop são mostrados com base no preço de entrada.
+## 🖥️ Dashboard & API REST
 
-## Dashboard
+O sistema provê uma interface web dinamicamente atualizada via WebSocket (`/ws/live`).
 
-O dashboard mostra:
+### Endpoints REST
 
-- Preço e gráfico de candles.
-- Feed de trades e latência.
-- OHLCV.
-- Indicadores e features.
-- Sinal atual, score e probabilidades.
-- Posição aberta, P&L, target e stop.
-- Compra manual.
-- Fechamento manual.
-- Trades recentes.
-- Resumo de estatísticas.
+| Método | Endpoint | Descrição |
+| :--- | :--- | :--- |
+| `GET` | `/api/candles/history` | Histórico dos últimos candles agregados |
+| `GET` | `/api/metrics/current` | Métricas de performance e runtime |
+| `GET` | `/api/prediction/current` | Sinal preditivo, probabilidades e scores |
+| `GET` | `/api/trades/open` | Detalhes da posição atualmente aberta |
+| `GET` | `/api/trades/closed` | Histórico de operações encerradas |
+| `GET` | `/api/stats` | Estatísticas acumuladas da conta/estratégia |
+| `POST` | `/api/trades/manual/buy` | Executa ordem de compra manual |
+| `POST` | `/api/trades/manual/close` | Força o fechamento da posição aberta |
 
-Endpoints principais:
+---
 
-```text
-GET  /api/candles/history
-GET  /api/metrics/current
-GET  /api/prediction/current
-GET  /api/trades/open
-GET  /api/trades/closed
-GET  /api/stats
-POST /api/trades/manual/buy
-POST /api/trades/manual/close
-WS   /ws/live
-```
+## 🗄️ Modelo de Persistência
 
-## Persistência
+O PostgreSQL armazena o histórico do sistema com suporte a `UPSERT` e recuperação de estado após reinício:
 
-O PostgreSQL armazena:
+* `candles`: Agregação idempotente por símbolo e timestamp de abertura.
+* `ticks`: Registro de trades brutos recebidos da exchange.
+* `trades`: Operações abertas e fechadas (mantedas atualizadas em tempo real).
+* `execution_log`: Rastreabilidade de eventos de ordens e integrações.
 
-- Candles agregados na tabela `candles`.
-- Trades brutos na tabela `ticks`.
-- Operações na tabela `trades`.
-- Eventos de execução na tabela `execution_log`.
+---
 
-Candles são persistidos de forma idempotente por símbolo e horário de abertura. Operações são salvas imediatamente na entrada e atualizadas no fechamento com `UPSERT`. O histórico fechado e, em simulação, a posição aberta podem ser restaurados após reinício.
+## ⚙️ Configuração do Sistema
 
-## Configuração
-
-Arquivo principal:
-
-```text
-btctradingengine/src/main/resources/application.properties
-```
-
-### Mercado
+As configurações estão centralizadas em `btctradingengine/src/main/resources/application.properties`.
 
 ```properties
+# Mercado
 market.symbol=BTCUSDT
 market.interval.seconds=900
 market.binance.interval=15m
 market.history.candles=200
-```
 
-### Binance
-
-O projeto está configurado por padrão para Binance Testnet:
-
-```properties
+# Binance Testnet
 binance.ws.url=wss://stream.testnet.binance.vision:9443/ws/
 binance.rest.url=https://testnet.binance.vision
-```
 
-Credenciais podem ser fornecidas por variáveis de ambiente:
-
-```text
-POLYMARKET_BINANCE_API_KEY
-POLYMARKET_BINANCE_API_SECRET
-```
-
-Não coloque credenciais reais no Git.
-
-### Banco
-
-```properties
+# Banco de Dados
 db.url=jdbc:postgresql://localhost:5432/polymarket_btc
 db.user=polymarket
 db.password=senha@123
 ```
 
-Para produção, prefira `POLYMARKET_DB_PASSWORD` ou outro mecanismo externo de secrets.
+> 🔑 **Variáveis de Ambiente Recomendadas:**
+> Setar `POLYMARKET_BINANCE_API_KEY`, `POLYMARKET_BINANCE_API_SECRET` e `POLYMARKET_DB_PASSWORD` para evitar expor credenciais no repositório.
 
-## Inicialização
+---
 
-Pré-requisitos:
+## 🚀 Como Executar
 
-- JDK 25.
-- Maven.
-- Docker e Docker Compose.
-- PostgreSQL local ou acessível pela URL configurada.
+### Pré-requisitos
+* **Java SDK 25**
+* **Apache Maven**
+* **Docker & Docker Compose**
 
-Subir o PostgreSQL:
+### Passo a Passo
 
-```bash
-docker compose up -d postgres
-```
+1. **Subir o Banco de Dados (PostgreSQL):**
+   ```bash
+   docker compose up -d postgres
+   ```
 
-Executar os testes:
+2. **Executar os Testes Unitários:**
+   ```bash
+   cd btctradingengine
+   mvn test
+   ```
 
-```bash
-cd btctradingengine
-mvn test
-```
+3. **Iniciar a Aplicação:**
+   ```bash
+   cd btctradingengine
+   mvn spring-boot:run -Dspring-boot.run.main-class=dev.romeo.btctradingengine.Main
+   ```
 
-Executar a aplicação:
+4. **Acessar o Dashboard:**
+   Abra no navegador: `http://localhost:8080`
 
-```bash
-cd btctradingengine
-mvn spring-boot:run -Dspring-boot.run.main-class=dev.romeo.btctradingengine.Main
-```
+---
 
-O dashboard Spring Boot fica disponível, por padrão, em:
+## 🧪 Simulação vs. Trading Real
 
-```text
-http://localhost:8080
-```
+Por padrão, a aplicação roda em modo **Simulação** (`trading.real.enabled=false`).
 
-## Simulação E Trading Real
+Para ativar operações com dinheiro real ou na Testnet da Binance:
+1. Altere no `application.properties`:
+   ```properties
+   trading.real.enabled=true
+   ```
+2. Forneça as credenciais válidas da Binance API.
+3. Certifique-se de ter saldo em USDT disponível.
+4. Verifique as regras de notional mínimo e lot size do par `BTCUSDT`.
 
-O modo padrão é simulação:
+---
 
-```properties
-trading.real.enabled=false
-```
-
-Nesse modo, compras e vendas alteram apenas o estado interno, o banco e o dashboard.
-
-Para habilitar execução real/testnet:
-
-```properties
-trading.real.enabled=true
-```
-
-Antes de ativar:
-
-1. Use credenciais da Binance Testnet.
-2. Confirme que a URL REST e WebSocket apontam para o mesmo ambiente.
-3. Verifique saldo USDT e permissões da chave.
-4. Confirme os filtros de quantidade e notional do símbolo.
-5. Teste primeiro com capital pequeno.
-
-Quando o modo real é iniciado, o sistema:
-
-- Consulta o saldo USDT.
-- Usa o saldo real no controle de risco.
-- Reconcilia ordens/posição com a Binance.
-- Envia ordens de mercado.
-- Confirma execuções pelo User Data Stream.
-- Usa polling como fallback de confirmação.
-- Não restaura automaticamente uma posição simulada local.
-
-## Backtest
-
-O replay reutiliza o pipeline de features e as mesmas regras do modo ao vivo:
-
-```text
-BacktestRunner
-	-> FeatureExtractor
-	-> RuleBasedPredictor
-	-> BacktestEngine
-	-> BacktestReport
-```
-
-O `BacktestEngine.configured()` usa os valores do `application.properties`. O motor considera comissão, target, stop e fechamento por sinal oposto.
-
-O backtest deve ser interpretado com cuidado: resultados passados não garantem performance futura. Ainda é necessário avaliar slippage, spread, liquidez, calibração, divisão temporal e validação fora da amostra.
-
-## Limitações Conhecidas
-
-- O predictor ainda não é machine learning calibrado.
-- A probabilidade é heurística e muda principalmente no fechamento do candle.
-- O sistema atual opera um símbolo por processo.
-- Execução real exige validação adicional dos filtros da Binance.
-- Slippage e spread ainda precisam ser modelados com mais precisão.
-- O modo real depende de credenciais e saldo válidos.
-- Não há garantia de lucro; o projeto é experimental.
-
-## Estrutura Principal
+## 📂 Estrutura do Projeto
 
 ```text
 btctradingengine/src/main/java/dev/romeo/btctradingengine/
-├── adapter/       # Binance, WebSocket, candles e event bus
-├── backtest/      # Replay, engine, relatório e validação
-├── config/        # Leitura e validação das propriedades
-├── dashboard/     # REST, WebSocket e estado da interface
-├── feature/       # Buffer, extractor e vetor de features
-├── indicator/     # SMA, EMA, RSI, ATR e MACD
-├── marketstate/   # Estado quente de mercado
-├── persistence/   # PostgreSQL, leitura e gravação assíncrona
-├── prediction/    # Predictor, sinais e regras
-└── trading/       # Posições, risco, ordens e reconciliação
+├── adapter/         # Conectores WebSocket Binance, REST e Event Bus
+├── backtest/        # Engine de Replay, Validação e Relatórios
+├── config/          # Leitura e Validação de Propriedades do Spring
+├── dashboard/       # Controllers REST, Handlers WS e Estado da UI
+├── feature/         # Feature Extractor, Buffers e Vetores de Entrada
+├── indicator/       # Implementação dos Indicadores (SMA, RSI, ATR, MACD)
+├── marketstate/     # Estado em memória do mercado em tempo real
+├── persistence/     # DAO e Entidades PostgreSQL (Gravação Assíncrona)
+├── prediction/      # Engine de Regras Heurísticas e Sinais
+└── trading/         # Gerenciamento de Posições, Ordens e Risco
 ```
 
-## Aviso
+---
 
-Este projeto pode enviar ordens reais quando `trading.real.enabled=true`. Mantenha essa opção desativada até validar o backtest, as credenciais, os filtros de quantidade, o saldo e o comportamento de reconciliação. O uso é de responsabilidade do operador.
+## ⚠️ Aviso Legal
+
+> 🚨 **Aviso Importante:** Este software é experimental e destinado a fins educacionais e de pesquisa. O mercado de criptomoedas é highly volátil. O uso deste robô em ambiente de produção com saldo real é de inteira responsabilidade do operador. Os desenvolvedores não se responsabilizam por potenciais perdas financeiras.
