@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: btc-trading-engine_postgres
+    environment:
+      POSTGRES_DB: btc-trading-engine_btc
+      POSTGRES_USER: btc-trading-engine
+      POSTGRES_PASSWORD: senha@123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U btc-trading-engine -d btc-trading-engine_btc"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - btc-trading-engine_network
+
+volumes:
+  postgres_data:
+
+networks:
+  btc-trading-engine_network:
+    driver: bridge
