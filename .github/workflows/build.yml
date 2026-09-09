@@ -28,4 +28,4 @@ jobs:
           cache-dependency-path: btctradingengine/pom.xml
 
       - name: Build
-        run: ./mvnw clean package -DskipTests
+        run: mvn clean package -DskipTests

@@ -1,4 +1,4 @@
-name: Lint
+name: Tests
 
 on:
   pull_request:
@@ -7,8 +7,8 @@ on:
       - dev
 
 jobs:
-  lint:
-    name: Lint
+  test:
+    name: Tests
     runs-on: ubuntu-latest
 
     defaults:
@@ -27,5 +27,5 @@ jobs:
           cache: maven
           cache-dependency-path: btctradingengine/pom.xml
 
-      - name: Run lint
-        run: ./mvnw spotless:check
+      - name: Run tests
+        run: mvn test

@@ -28,4 +28,4 @@ jobs:
           cache-dependency-path: btctradingengine/pom.xml
 
       - name: Run tests
-        run: ./mvnw test
+        run: mvn test
