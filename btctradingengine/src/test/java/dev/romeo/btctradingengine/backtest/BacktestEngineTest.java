@@ -35,8 +35,9 @@ public class BacktestEngineTest {
         PredictionVector pred3 = createPrediction(Signal.SELL, "110");
         engine.processPrediction(pred3, candle3);
 
-        assertFalse(engine.getOpenTrade().isPresent(), "Trade should close on SELL signal");
+        assertTrue(engine.getOpenTrade().isPresent(), "Opposite signal should reverse into a new trade");
         assertEquals(1, engine.getClosedTrades().size());
+        assertEquals(Signal.SELL, engine.getOpenTrade().get().getSignal());
 
         Trade closedTrade = engine.getClosedTrades().get(0);
         assertEquals(Signal.BUY, closedTrade.getSignal());
@@ -70,18 +71,19 @@ public class BacktestEngineTest {
 
     @Test
     public void calculateWinRate() {
-        BacktestEngine engine = new BacktestEngine(new BigDecimal("0.0"));
-
         // Winning trade: BUY at 100, SELL at 110
-        createAndCloseTrade(engine, Signal.BUY, "100", "110", 0, 1);
+        Trade winningBuy = createAndCloseTrade(Signal.BUY, "100", "110", 0, 1);
 
         // Losing trade: BUY at 120, SELL at 115
-        createAndCloseTrade(engine, Signal.BUY, "120", "115", 2, 3);
+        Trade losingBuy = createAndCloseTrade(Signal.BUY, "120", "115", 2, 3);
 
         // Winning trade: SELL at 100, BUY at 95
-        createAndCloseTrade(engine, Signal.SELL, "100", "95", 4, 5);
+        Trade winningSell = createAndCloseTrade(Signal.SELL, "100", "95", 4, 5);
 
-        BacktestReport report = engine.generateReport(new BigDecimal("1000"));
+        BacktestReport report = new BacktestReport(
+            java.util.List.of(winningBuy, losingBuy, winningSell),
+            new BigDecimal("1000"),
+            new BigDecimal("0.0"));
 
         assertEquals(3, report.getTotalTrades());
         assertEquals(2, report.getWinTrades());
@@ -103,16 +105,17 @@ public class BacktestEngineTest {
 
     @Test
     public void calculateProfitFactor() {
-        BacktestEngine engine = new BacktestEngine(new BigDecimal("0.0"));
-
         // 2 winning trades: +10, +5
-        createAndCloseTrade(engine, Signal.BUY, "100", "110", 0, 1);
-        createAndCloseTrade(engine, Signal.BUY, "200", "205", 2, 3);
+        Trade firstWin = createAndCloseTrade(Signal.BUY, "100", "110", 0, 1);
+        Trade secondWin = createAndCloseTrade(Signal.BUY, "200", "205", 2, 3);
 
         // 1 losing trade: -20
-        createAndCloseTrade(engine, Signal.BUY, "300", "280", 4, 5);
+        Trade loss = createAndCloseTrade(Signal.BUY, "300", "280", 4, 5);
 
-        BacktestReport report = engine.generateReport(new BigDecimal("1000"));
+        BacktestReport report = new BacktestReport(
+            java.util.List.of(firstWin, secondWin, loss),
+            new BigDecimal("1000"),
+            new BigDecimal("0.0"));
 
         // Profit factor = 15 / 20 = 0.75
         assertEquals(new BigDecimal("0.75"), report.getProfitFactor().setScale(2, java.math.RoundingMode.HALF_UP));
@@ -138,7 +141,13 @@ public class BacktestEngineTest {
         assertEquals(3, trade.getBarCount(), "Trade should span 3 bars");
     }
 
-    private void createAndCloseTrade(BacktestEngine engine, Signal signal, String entry, String exit, int entryBar, int exitBar) {
+    private Trade createAndCloseTrade(Signal signal, String entry, String exit, int entryBar, int exitBar) {
+        BacktestEngine engine = new BacktestEngine(new BigDecimal("0.0"));
+        return createAndCloseTrade(engine, signal, entry, exit, entryBar, exitBar);
+    }
+
+    private Trade createAndCloseTrade(BacktestEngine engine, Signal signal,
+                                      String entry, String exit, int entryBar, int exitBar) {
         CandleEvent candleEntry = createCandle(entry, entryBar);
         PredictionVector predEntry = createPrediction(signal, entry);
         engine.processPrediction(predEntry, candleEntry);
@@ -147,6 +156,7 @@ public class BacktestEngineTest {
         Signal exitSignal = signal == Signal.BUY ? Signal.SELL : Signal.BUY;
         PredictionVector predExit = createPrediction(exitSignal, exit);
         engine.processPrediction(predExit, candleExit);
+        return engine.getClosedTrades().get(0);
     }
 
     private CandleEvent createCandle(String price, int barIndex) {
