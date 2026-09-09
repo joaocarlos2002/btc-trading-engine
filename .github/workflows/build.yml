@@ -2,14 +2,18 @@ name: Build
 
 on:
   pull_request:
-  push:
     branches:
       - main
-      - dev
+      - develop
 
 jobs:
   build:
+    name: Build
     runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: btctradingengine
 
     steps:
       - name: Checkout
@@ -21,6 +25,7 @@ jobs:
           distribution: temurin
           java-version: '25'
           cache: maven
+          cache-dependency-path: btctradingengine/pom.xml
 
       - name: Build
         run: ./mvnw clean package -DskipTests
