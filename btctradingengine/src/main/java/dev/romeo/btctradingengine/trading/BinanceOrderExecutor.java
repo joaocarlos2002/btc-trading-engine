@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 public class BinanceOrderExecutor {
     private static final Logger logger = LoggerFactory.getLogger(BinanceOrderExecutor.class);
@@ -34,14 +35,22 @@ public class BinanceOrderExecutor {
     }
 
     public OrderResult executeBuyMarket(String symbol, BigDecimal quantity) {
-        return executeMarketOrder(symbol, quantity, "BUY");
+        return executeBuyMarket(symbol, quantity, null);
+    }
+
+    public OrderResult executeBuyMarket(String symbol, BigDecimal quantity, String clientOrderId) {
+        return executeMarketOrder(symbol, quantity, "BUY", clientOrderId);
     }
 
     public OrderResult executeSellMarket(String symbol, BigDecimal quantity) {
-        return executeMarketOrder(symbol, quantity, "SELL");
+        return executeSellMarket(symbol, quantity, null);
     }
 
-    private OrderResult executeMarketOrder(String symbol, BigDecimal quantity, String side) {
+    public OrderResult executeSellMarket(String symbol, BigDecimal quantity, String clientOrderId) {
+        return executeMarketOrder(symbol, quantity, "SELL", clientOrderId);
+    }
+
+    private OrderResult executeMarketOrder(String symbol, BigDecimal quantity, String side, String clientOrderId) {
         if (symbol == null || symbol.isBlank()) {
             return failedOrder("Symbol cannot be blank");
         }
@@ -60,6 +69,9 @@ public class BinanceOrderExecutor {
             params.put("quantity", formatQuantity(quantity));
             params.put("timestamp", String.valueOf(System.currentTimeMillis()));
             params.put("recvWindow", "5000");
+            if (clientOrderId != null && !clientOrderId.isBlank()) {
+                params.put("newClientOrderId", clientOrderId);
+            }
 
             String queryString = buildQueryString(params);
             String signature = generateSignature(queryString);
@@ -103,6 +115,14 @@ public class BinanceOrderExecutor {
             }
 
         } catch (Exception e) {
+            
+            if (clientOrderId != null && !clientOrderId.isBlank()) {
+                Optional<OrderResult> recovered = findOrderByClientOrderId(symbol, clientOrderId);
+                if (recovered.isPresent()) {
+                    logger.warn("Recovered order after ambiguous request: clientOrderId={}", clientOrderId);
+                    return recovered.get();
+                }
+            }
             logger.error("âœ— Order execution error: {}", e.getMessage(), e);
             return new OrderResult(false, null, BigDecimal.ZERO, BigDecimal.ZERO, e.getMessage());
         }
@@ -241,6 +261,8 @@ public class BinanceOrderExecutor {
                     String price = order.get("price").asText();
                     String status = order.get("status").asText();
                     long time = order.get("time").asLong();
+                        String clientOrderId = order.has("clientOrderId")
+                            ? order.get("clientOrderId").asText() : "";
 
                     orders.add(new OpenOrder(
                             orderId,
@@ -249,8 +271,9 @@ public class BinanceOrderExecutor {
                             new BigDecimal(origQty),
                             new BigDecimal(executedQty),
                             new BigDecimal(price),
-                            status,
-                            time
+                                status,
+                                time,
+                                clientOrderId
                     ));
                 }
                 logger.debug("Found {} open orders for {}", orders.size(), symbol);
@@ -271,8 +294,61 @@ public class BinanceOrderExecutor {
             BigDecimal executedQuantity,
             BigDecimal price,
             String status,
-            long time
+            long time,
+            String clientOrderId
     ) {}
+
+    public boolean cancelOrder(String symbol, String orderId) {
+        try {
+            Map<String, String> params = new TreeMap<>();
+            params.put("symbol", symbol);
+            params.put("orderId", orderId);
+            params.put("timestamp", String.valueOf(System.currentTimeMillis()));
+            params.put("recvWindow", "5000");
+            String queryString = buildQueryString(params);
+            String signature = generateSignature(queryString);
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "/api/v3/order?" + queryString + "&signature=" + signature))
+                    .header("X-MBX-APIKEY", apiKey)
+                    .method("DELETE", HttpRequest.BodyPublishers.noBody())
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            boolean success = response.statusCode() == 200;
+            if (!success) {
+                logger.error("Failed to cancel order {}: {}", orderId, response.body());
+            }
+            return success;
+        } catch (Exception e) {
+            logger.error("Error cancelling order {}: {}", orderId, e.getMessage(), e);
+            return false;
+        }
+    }
+
+    public Optional<OrderResult> findOrderByClientOrderId(String symbol, String clientOrderId) {
+        try {
+            Map<String, String> params = new TreeMap<>();
+            params.put("symbol", symbol);
+            params.put("origClientOrderId", clientOrderId);
+            params.put("timestamp", String.valueOf(System.currentTimeMillis()));
+            params.put("recvWindow", "5000");
+            String queryString = buildQueryString(params);
+            String signature = generateSignature(queryString);
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "/api/v3/order?" + queryString + "&signature=" + signature))
+                    .header("X-MBX-APIKEY", apiKey)
+                    .GET().build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) return Optional.empty();
+            JsonNode json = mapper.readTree(response.body());
+            BigDecimal qty = new BigDecimal(json.path("executedQty").asText("0"));
+            BigDecimal quote = new BigDecimal(json.path("cummulativeQuoteQty").asText("0"));
+            BigDecimal price = qty.signum() > 0
+                    ? quote.divide(qty, 8, java.math.RoundingMode.HALF_UP) : BigDecimal.ZERO;
+            return Optional.of(new OrderResult(true, json.path("orderId").asText(), qty, price, null));
+        } catch (Exception ignored) {
+            return Optional.empty();
+        }
+    }
 
     public SymbolFilters getSymbolFilters(String symbol) {
         try {

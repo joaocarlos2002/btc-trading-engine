@@ -17,8 +17,8 @@ import java.util.function.Consumer;
 public class PositionManager {
     private static final Logger logger = LoggerFactory.getLogger(PositionManager.class);
 
-    private final BigDecimal targetPercent;           // ex: 2.0 = vender quando ganhar +2%
-    private final BigDecimal stopLossPercent;         // ex: 1.5 = vender quando perder -1.5%
+    private final BigDecimal targetPercent;
+    private final BigDecimal stopLossPercent;
     private final AtomicInteger positionCounter = new AtomicInteger(0);
     private final Consumer<Position> positionPersistence;
     private final Consumer<ExecutionEvent> executionPersistence;
@@ -33,6 +33,7 @@ public class PositionManager {
     private Optional<OrderConfirmationManager> confirmationManager = Optional.empty();
     private String symbol = "BTCUSDT";
     private boolean simulationMode = true;
+    private volatile boolean reconciliationComplete = true;
 
     public PositionManager(BigDecimal targetPercent, BigDecimal stopLossPercent) {
         this(targetPercent, stopLossPercent, position -> {}, event -> {});
@@ -58,6 +59,7 @@ public class PositionManager {
         this.validationService = Optional.of(new BinanceSymbolValidationService(executor));
         this.symbol = symbol;
         this.simulationMode = false;
+        this.reconciliationComplete = false;
         logger.info("âœ“ Real trading mode ENABLED: {} with executor and portfolio manager", symbol);
     }
 
@@ -90,12 +92,10 @@ public class PositionManager {
     }
 
     public synchronized void processPrediction(PredictionVector prediction, CandleEvent candle) {
-        // Atualizar preÃ§o da posiÃ§Ã£o aberta
         if (openPosition.isPresent()) {
             Position pos = openPosition.get();
             pos.updatePrice(candle.close(), candle.closeTime());
 
-            // Verificar se hit target
             if (pos.hasHitTarget()) {
                 closePosition(pos, candle.close(), candle.closeTime(), "TARGET_HIT");
                 logger.info("âœ“ TARGET HIT: {} closed at {} (P&L: {}%)",
@@ -103,7 +103,6 @@ public class PositionManager {
                 return;
             }
 
-            // Verificar se hit stop loss
             if (pos.hasHitStopLoss()) {
                 closePosition(pos, candle.close(), candle.closeTime(), "STOP_LOSS");
                 logger.warn("âœ— STOP LOSS: {} closed at {} (P&L: {}%)",
@@ -111,7 +110,6 @@ public class PositionManager {
                 return;
             }
 
-            // Verificar reversÃ£o de sinal (manual close)
             if (shouldReversePosition(pos, prediction)) {
                 closePosition(pos, candle.close(), candle.closeTime(), "SIGNAL_REVERSAL");
                 logger.info("â†’ REVERSAL: {} closed at {} for new signal",
@@ -119,8 +117,11 @@ public class PositionManager {
             }
         }
 
-        // Abrir nova posiÃ§Ã£o se sinal de entrada
         if (!openPosition.isPresent() && prediction.signal() != Signal.HOLD) {
+            if (!simulationMode && !reconciliationComplete) {
+                logger.warn("Ignoring entry: Binance reconciliation is not complete");
+                return;
+            }
             if (portfolioManager.isPresent() && !portfolioManager.get().canTrade()) {
                 logger.warn("âš  Portfolio stop-loss active - blocking new {} entry", prediction.signal());
                 return;
@@ -201,11 +202,9 @@ public class PositionManager {
     }
 
     private boolean shouldReversePosition(Position pos, PredictionVector pred) {
-        // BUY posiÃ§Ã£o com SELL signal â†’ reverter
         if (pos.getSignal() == Signal.BUY && pred.signal() == Signal.SELL) {
             return true;
         }
-        // SELL posiÃ§Ã£o com BUY signal â†’ reverter
         if (pos.getSignal() == Signal.SELL && pred.signal() == Signal.BUY) {
             return true;
         }
@@ -248,7 +247,6 @@ public class PositionManager {
                 java.math.BigDecimal.valueOf(confidence).multiply(new java.math.BigDecimal("100"))
                         .setScale(0, java.math.RoundingMode.HALF_UP));
 
-        // Execute real order if in production mode
         if (!simulationMode && orderExecutor.isPresent()) {
             executeRealOrder(pos, signal);
         }
@@ -256,7 +254,7 @@ public class PositionManager {
 
     private void executeRealOrder(Position pos, Signal signal) {
         try {
-            // Calculate quantity based on portfolio - allocate 50% of current balance per trade
+            logger.info("Executing real order for position: {}", pos.getPositionId());
             PortfolioManager pm = portfolioManager.get();
             BigDecimal allocatedCapital = pm.getCurrentBalance()
                     .multiply(new java.math.BigDecimal("0.5"))
@@ -265,7 +263,6 @@ public class PositionManager {
             BigDecimal quantity = allocatedCapital
                     .divide(pos.getEntryPrice(), 4, java.math.RoundingMode.DOWN);
 
-            // Validate and adjust quantity according to Binance filters
             if (validationService.isPresent()) {
                 java.util.Optional<BigDecimal> validatedQty = validationService.get()
                         .validateAndAdjustQuantity(symbol, quantity, pos.getEntryPrice());
@@ -281,22 +278,21 @@ public class PositionManager {
 
             BinanceOrderExecutor executor = orderExecutor.get();
             BinanceOrderExecutor.OrderResult result;
+            String clientOrderId = "btce-" + symbol + "-" + pos.getPositionId() + "-entry";
 
             if (signal == Signal.BUY) {
-                result = executor.executeBuyMarket(symbol, quantity);
+                result = executor.executeBuyMarket(symbol, quantity, clientOrderId);
             } else {
-                result = executor.executeSellMarket(symbol, quantity);
+                result = executor.executeSellMarket(symbol, quantity, clientOrderId);
             }
 
             if (result.success()) {
                 long orderId = Long.parseLong(result.orderId());
 
-                // Register order for confirmation tracking
                 if (confirmationManager.isPresent()) {
                     confirmationManager.get().registerOrder(orderId, symbol, signal.toString(), quantity, pos.getEntryPrice());
                 }
 
-                // Update position with actual execution details
                 pos.setQuantity(result.executedQuantity());
                 if (result.averagePrice().compareTo(BigDecimal.ZERO) > 0) {
                     pos.setEntryPrice(result.averagePrice());
@@ -389,6 +385,11 @@ public class PositionManager {
         return openPosition;
     }
 
+    public void markReconciliationComplete() {
+        reconciliationComplete = true;
+        logger.info("Binance reconciliation complete; new entries enabled");
+    }
+
     public synchronized List<Position> getClosedPositions() {
         return new ArrayList<>(closedPositions);
     }
@@ -413,14 +414,13 @@ public class PositionManager {
                 .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
     }
 
-    // Record para log de execuÃ§Ã£o
     public record ExecutionEvent(
             String positionId,
-            String action,  // ENTRY, EXIT
+            String action,
             Signal signal,
             java.math.BigDecimal price,
             java.time.Instant time,
-            double value  // confidence (entry) ou PnL (exit)
+            double value
     ) {}
 }
 
