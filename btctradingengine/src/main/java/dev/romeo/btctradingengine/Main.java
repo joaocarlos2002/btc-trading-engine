@@ -1,35 +1,21 @@
 package dev.romeo.btctradingengine;
 
-import dev.romeo.btctradingengine.adapter.BinanceAdapter;
-import dev.romeo.btctradingengine.adapter.BinanceKlineClient;
-import dev.romeo.btctradingengine.adapter.CandleAggregator;
-import dev.romeo.btctradingengine.adapter.MarketDataSource;
-import dev.romeo.btctradingengine.adapter.PriceEventBus;
+import dev.romeo.btctradingengine.adapter.*;
 import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.dashboard.DashboardApplication;
 import dev.romeo.btctradingengine.dashboard.DashboardState;
 import dev.romeo.btctradingengine.feature.FeatureExtractor;
-import dev.romeo.btctradingengine.persistence.DatabaseInitializer;
-import dev.romeo.btctradingengine.persistence.DatabaseCandleReader;
-import dev.romeo.btctradingengine.persistence.DatabaseWriter;
 import dev.romeo.btctradingengine.persistence.DataSourceManager;
+import dev.romeo.btctradingengine.persistence.DatabaseCandleReader;
+import dev.romeo.btctradingengine.persistence.DatabaseInitializer;
+import dev.romeo.btctradingengine.persistence.DatabaseWriter;
 import dev.romeo.btctradingengine.prediction.RuleBasedPredictor;
-import dev.romeo.btctradingengine.prediction.rules.AtrRule;
-import dev.romeo.btctradingengine.prediction.rules.MacdRule;
-import dev.romeo.btctradingengine.prediction.rules.RsiRule;
-import dev.romeo.btctradingengine.prediction.rules.SmaMomentumRule;
-import dev.romeo.btctradingengine.prediction.rules.VolatilityRule;
-import dev.romeo.btctradingengine.trading.PositionManager;
-import dev.romeo.btctradingengine.trading.BinanceOrderExecutor;
-import dev.romeo.btctradingengine.trading.PortfolioManager;
-import dev.romeo.btctradingengine.trading.TradeJournal;
-import dev.romeo.btctradingengine.trading.BinanceReconciliationService;
-import dev.romeo.btctradingengine.trading.BinanceUserDataStreamClient;
-import dev.romeo.btctradingengine.trading.OrderConfirmationManager;
+import dev.romeo.btctradingengine.prediction.rules.*;
+import dev.romeo.btctradingengine.trading.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.boot.SpringApplication;
+import org.springframework.context.ConfigurableApplicationContext;
 
 import java.math.BigDecimal;
 import java.util.concurrent.CountDownLatch;
@@ -37,7 +23,7 @@ import java.util.concurrent.CountDownLatch;
 public class Main {
     private static final Logger logger = LoggerFactory.getLogger(Main.class);
 
-    public static void main(String[] args) throws InterruptedException {
+    static void main(String[] args) {
         try {
             Config.validate();
             ConfigurableApplicationContext dashboardContext = SpringApplication.run(DashboardApplication.class, args);
@@ -58,7 +44,13 @@ public class Main {
                     event -> tradeJournal.recordExecutionLog(event, Config.getMarketSymbol())
             );
             dashboardState.attachPositionManager(positionManager);
-                if (Config.isRealTradingEnabled()) {
+            tradeJournal.loadOpenPosition(
+                    Config.getMarketSymbol(),
+                    Config.getTradingTargetPercent(),
+                    Config.getTradingStopLossPercent()
+            ).ifPresent(positionManager::restoreOpenPosition);
+
+            if (Config.isRealTradingEnabled()) {
                 BinanceOrderExecutor executor = new BinanceOrderExecutor(
                     Config.getBinanceApiKey(), Config.getBinanceApiSecret());
                 BinanceOrderExecutor.BalanceResult balance = executor.getBalance("USDT");
@@ -85,35 +77,26 @@ public class Main {
                     reconcileResult.message(),
                     reconcileResult.ordersFound(),
                     reconcileResult.restoredPosition() != null);
+                if (!reconcileResult.success()) {
+                    throw new IllegalStateException("Trading disabled: Binance reconciliation failed: "
+                            + reconcileResult.message());
+                }
+                positionManager.markReconciliationComplete();
 
                 OrderConfirmationManager confirmationManager = new OrderConfirmationManager(executor);
                 positionManager.setOrderConfirmationManager(confirmationManager);
                 dashboardState.attachOrderConfirmationManager(confirmationManager);
 
-                BinanceUserDataStreamClient userDataStream = new BinanceUserDataStreamClient(Config.getBinanceApiKey());
-                userDataStream.setExecutionReportListener(
-                    report -> {
-                        logger.debug("Execution report received: orderId={} status={}", report.orderId(), report.orderStatus());
-                        confirmationManager.processExecutionReport(report);
-                    });
-                userDataStream.setConnectionStatusListener(
-                    status -> logger.info("User Data Stream: {}", status));
+                BinanceUserDataStreamClient userDataStream = getBinanceUserDataStreamClient(confirmationManager);
 
                 if (!userDataStream.connect()) {
-                    logger.warn("âš  Failed to connect User Data Stream; will use polling fallback");
+                    logger.warn("Failed to connect User Data Stream; will use polling fallback");
                 }
 
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                     userDataStream.disconnect();
                     confirmationManager.shutdown();
                 }));
-                }
-                if (!Config.isRealTradingEnabled()) {
-                    tradeJournal.loadOpenPosition(
-                            Config.getMarketSymbol(),
-                            Config.getTradingTargetPercent(),
-                            Config.getTradingStopLossPercent()
-                    ).ifPresent(positionManager::restoreOpenPosition);
                 }
                     positionManager.restoreClosedPositions(tradeJournal.loadClosedPositions(
                         Config.getMarketSymbol(),
@@ -216,7 +199,7 @@ public class Main {
                     tradeJournal.recordTrade(pos, symbol)
                 );
 
-                logger.info("âœ“ Trades saved: {}", positionManager.getTotalTrades());
+                logger.info("Trades saved: {}", positionManager.getTotalTrades());
 
                 dbWriter.stop();
                 DataSourceManager.close();
@@ -230,6 +213,18 @@ public class Main {
             logger.error("Application failed", e);
             System.exit(1);
         }
+    }
+
+    private static BinanceUserDataStreamClient getBinanceUserDataStreamClient(OrderConfirmationManager confirmationManager) {
+        BinanceUserDataStreamClient userDataStream = new BinanceUserDataStreamClient(Config.getBinanceApiKey());
+        userDataStream.setExecutionReportListener(
+            report -> {
+                logger.debug("Execution report received: orderId={} status={}", report.orderId(), report.orderStatus());
+                confirmationManager.processExecutionReport(report);
+            });
+        userDataStream.setConnectionStatusListener(
+            status -> logger.info("User Data Stream: {}", status));
+        return userDataStream;
     }
 
     private static void initializeDatabase() {

@@ -74,11 +74,13 @@ public class RuleBasedPredictorTest {
         predictor.addRule(new SmaMomentumRule());
 
         // RSI oversold + SMA distance bullish
-        FeatureVector features = createFeatures("100", "25", smaDistance("-2.0"));
+        FeatureVector features = createFeatures("100", "25", smaDistance("-3.0"));
+        predictor.onEvent(features);
         predictor.onEvent(features);
 
-        assertEquals(1, predictions.size());
-        PredictionVector pred = predictions.get(0);
+        assertEquals(2, predictions.size());
+        assertEquals(Signal.HOLD, predictions.get(0).signal(), "First snapshot needs confirmation");
+        PredictionVector pred = predictions.get(1);
         assertEquals(Signal.BUY, pred.signal(), "Strong buy signal");
         assertTrue(pred.confidence().compareTo(BigDecimal.ZERO) > 0, "Should have confidence");
         assertTrue(pred.probabilityUp().compareTo(pred.probabilityDown()) > 0, "Up should be more likely");
@@ -97,11 +99,10 @@ public class RuleBasedPredictorTest {
 
         assertEquals(1, predictions.size());
         PredictionVector pred = predictions.get(0);
-        // Conflicting signals â†’ HOLD or weak signal
-        assertTrue(
-                pred.confidence().compareTo(BigDecimal.valueOf(0.3)) < 0,
-                "Low confidence due to conflict"
-        );
+        // RSI contributes -0.8 and SMA is neutral, so the average score is -0.4.
+        assertEquals(Signal.HOLD, pred.signal(), "One snapshot must not confirm a SELL");
+        assertEquals(0, pred.confidence().compareTo(BigDecimal.valueOf(0.4)),
+            "Confidence should reflect the average rule score");
     }
 
     @Test

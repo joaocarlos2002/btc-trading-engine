@@ -1,0 +1,31 @@
+name: Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: btctradingengine
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: btctradingengine/pom.xml
+
+      - name: Run tests
+        run: mvn test

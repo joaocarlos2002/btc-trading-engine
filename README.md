@@ -1,5 +1,3 @@
-BTC Trading Engine
-
 ![Java 25](https://img.shields.io/badge/Java-25-orange?style=flat-square&logo=openjdk)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.x-brightgreen?style=flat-square&logo=springboot)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue?style=flat-square&logo=postgresql)
@@ -7,20 +5,10 @@ BTC Trading Engine
 
 Bot de alta performance para trading em tempo real no par **BTCUSDT**. O sistema processa trades via WebSocket da Binance, agrega candles de 15 minutos, calcula indicadores técnicos avançados, produz sinais heurísticos e executa ordens simuladas ou reais na Binance Testnet/Mainnet com monitoramento contínuo de risco e dashboard em tempo real.
 
-> ℹ️ **Nota sobre o Predictor:** O motor preditivo atual é determinístico e baseado em regras heurísticas. Os valores `probabilityUp` e `probabilityDown` representam probabilidades implícitas derivadas do score técnico, e não probabilidades estatísticas calibradas por machine learning.
-
+> **Nota sobre o Predictor:** O motor preditivo atual é determinístico e baseado em regras heurísticas. Os valores `probabilityUp` e `probabilityDown` representam probabilidades implícitas derivadas do score técnico, e não probabilidades estatísticas calibradas por machine learning.
 ---
 
-
-<p align="center">
-  <img width="600" height="400" alt="image" src="https://github.com/user-attachments/assets/637d2da6-07d1-48b9-8982-0ac38ed2de96" />
-</p>
-
-> **eu depois de conseguir 50 reais**
-
----
-
-## ⚡ Estado Atual do Sistema
+## Estado Atual do Sistema
 
 | Parâmetro / Recurso | Configuração Padrão / Estado |
 | :--- | :--- |
@@ -34,7 +22,7 @@ Bot de alta performance para trading em tempo real no par **BTCUSDT**. O sistema
 
 ---
 
-## 🏗️ Arquitetura do Fluxo de Dados
+## Arquitetura do Fluxo de Dados
 
 ### 1. Processamento em Tempo Real
 ```text
@@ -68,7 +56,7 @@ API Binance REST / WS
 
 ---
 
-## 📊 Indicadores e Features
+## Indicadores e Features
 
 O histórico inicial é carregado via Binance REST (com fallback para o PostgreSQL) para aquecer os indicadores antes da abertura do WebSocket.
 
@@ -90,7 +78,7 @@ O histórico inicial é carregado via Binance REST (com fallback para o PostgreS
 
 ---
 
-## 🧠 Predictor e Tomada de Decisão
+## Predictor e Tomada de Decisão
 
 O `RuleBasedPredictor` combina cinco regras individuais. Cada regra gera um score no intervalo $[-1, +1]$:
 
@@ -121,7 +109,7 @@ probabilityDown = 1 - probabilityUp
 
 ---
 
-## 📈 Métricas do Dashboard e Backtest
+## Métricas do Dashboard e Backtest
 
 ### Métricas de Predição & Mercado
 * `probabilityUp` / `probabilityDown`: Probabilidades implícitas heurísticas.
@@ -137,7 +125,7 @@ O motor de replay valida a estratégia sobre dados históricos considerando comi
 
 ---
 
-## 🛡️ Gestão de Risco e Saídas
+## Gestão de Risco e Saídas
 
 ```properties
 trading.target.percent=2.0
@@ -146,15 +134,15 @@ trading.max.drawdown.percent=5.0
 ```
 
 Uma posição é encerrada automaticamente sob as seguintes condições:
-* 🎯 Target de Lucro atingido
-* 🛑 Stop Loss atingido
-* 🔄 Reversão do sinal preditivo
-* ✋ Intervenção manual via Dashboard
-* ⚠️ Falha na execução da ordem
+* Target de Lucro atingido
+* Stop Loss atingido
+* Reversão do sinal preditivo
+* Intervenção manual via Dashboard
+* Falha na execução da ordem
 
 ---
 
-## 🖥️ Dashboard & API REST
+## Dashboard & API REST
 
 O sistema provê uma interface web dinamicamente atualizada via WebSocket (`/ws/live`).
 
@@ -173,7 +161,7 @@ O sistema provê uma interface web dinamicamente atualizada via WebSocket (`/ws/
 
 ---
 
-## 🗄️ Modelo de Persistência
+## Modelo de Persistência
 
 O PostgreSQL armazena o histórico do sistema com suporte a `UPSERT` e recuperação de estado após reinício:
 
@@ -184,7 +172,7 @@ O PostgreSQL armazena o histórico do sistema com suporte a `UPSERT` e recupera�
 
 ---
 
-## ⚙️ Configuração do Sistema
+## Configuração do Sistema
 
 As configurações estão centralizadas em `btctradingengine/src/main/resources/application.properties`.
 
@@ -205,12 +193,12 @@ db.user=polymarket
 db.password=senha@123
 ```
 
-> 🔑 **Variáveis de Ambiente Recomendadas:**
+> **Variáveis de Ambiente Recomendadas:**
 > Setar `POLYMARKET_BINANCE_API_KEY`, `POLYMARKET_BINANCE_API_SECRET` e `POLYMARKET_DB_PASSWORD` para evitar expor credenciais no repositório.
 
 ---
 
-## 🚀 Como Executar
+## Como Executar
 
 ### Pré-requisitos
 * **Java SDK 25**
@@ -241,7 +229,7 @@ db.password=senha@123
 
 ---
 
-## 🧪 Simulação vs. Trading Real
+## Simulação vs. Trading Real
 
 Por padrão, a aplicação roda em modo **Simulação** (`trading.real.enabled=false`).
 
@@ -256,7 +244,7 @@ Para ativar operações com dinheiro real ou na Testnet da Binance:
 
 ---
 
-## 📂 Estrutura do Projeto
+## Estrutura do Projeto
 
 ```text
 btctradingengine/src/main/java/dev/romeo/btctradingengine/
@@ -273,7 +261,3 @@ btctradingengine/src/main/java/dev/romeo/btctradingengine/
 ```
 
 ---
-
-## ⚠️ Aviso Legal
-
-> 🚨 **Aviso Importante:** Este software é experimental e destinado a fins educacionais e de pesquisa. O mercado de criptomoedas é highly volátil. O uso deste robô em ambiente de produção com saldo real é de inteira responsabilidade do operador. Os desenvolvedores não se responsabilizam por potenciais perdas financeiras.
