@@ -28,4 +28,4 @@ jobs:
           cache-dependency-path: btctradingengine/pom.xml
 
       - name: Run lint
-        run: ./mvnw spotless:check
+        run: mvn spotless:check
