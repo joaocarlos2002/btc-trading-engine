@@ -14,11 +14,20 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class BinanceKlineClient {
     // Historical backtests must reflect real market conditions - binance.rest.url may point
     // at testnet, whose price/volume is synthetic and not representative of actual BTC trading.
     private static final String MAINNET_REST_URL = "https://api.binance.com";
+
+    // Closed candles never change, so re-fetching the exact same (symbol, interval, days)
+    // window on every backtest call is pure waste - especially at 1m, where 180 days is
+    // ~260k candles across ~260 paginated requests. A short TTL still rolls the window
+    // forward as time passes without hammering Binance on repeated threshold experiments.
+    private static final Duration CACHE_TTL = Duration.ofMinutes(5);
+    private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final HttpClient client = HttpClient.newHttpClient();
@@ -31,9 +40,17 @@ public class BinanceKlineClient {
      * Fetches all closed candles for the last {@code days} directly from Binance mainnet's
      * public klines endpoint, paginating backwards in pages of 1000 via {@code endTime}.
      * Used for on-demand backtests, independent of whatever binance.rest.url is configured for
-     * live trading (testnet or mainnet).
+     * live trading (testnet or mainnet). Results are cached in memory for a few minutes per
+     * (symbol, interval, days) so re-running a backtest with different strategy parameters but
+     * the same window doesn't re-fetch the same candles from Binance every time.
      */
     public List<CandleEvent> loadClosedCandlesRange(String symbol, String interval, int days) throws Exception {
+        String key = symbol + ":" + interval + ":" + days;
+        CacheEntry cached = cache.get(key);
+        if (cached != null && Duration.between(cached.fetchedAt(), Instant.now()).compareTo(CACHE_TTL) < 0) {
+            return cached.candles();
+        }
+
         List<CandleEvent> all = new ArrayList<>();
         long endTime = System.currentTimeMillis();
         long targetStart = endTime - Duration.ofDays(days).toMillis();
@@ -58,6 +75,7 @@ public class BinanceKlineClient {
         }
 
         all.removeIf(c -> c.openTime().toEpochMilli() < targetStart);
+        cache.put(key, new CacheEntry(all, Instant.now()));
         return all;
     }
 
@@ -100,4 +118,6 @@ public class BinanceKlineClient {
         }
         return candles;
     }
+
+    private record CacheEntry(List<CandleEvent> candles, Instant fetchedAt) {}
 }
