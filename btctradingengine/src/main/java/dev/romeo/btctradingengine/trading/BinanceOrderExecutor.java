@@ -22,16 +22,92 @@ import java.util.Optional;
 
 public class BinanceOrderExecutor {
     private static final Logger logger = LoggerFactory.getLogger(BinanceOrderExecutor.class);
+    private static final int HTTP_TOO_MANY_REQUESTS = 429;
+    private static final int HTTP_IP_BANNED = 418;
 
     private final String apiKey;
     private final String apiSecret;
-    private final String baseUrl = Config.getBinanceRestUrl();
+    private final String baseUrl;
     private final HttpClient client = HttpClient.newHttpClient();
     private final ObjectMapper mapper = new ObjectMapper();
+    private final int maxRetries;
+    private final long initialBackoffMs;
+    private final long maxBackoffMs;
 
     public BinanceOrderExecutor(String apiKey, String apiSecret) {
+        this(apiKey, apiSecret, Config.getBinanceRestUrl(),
+                Config.getBinanceMaxRetries(), Config.getBinanceInitialBackoffMs(), Config.getBinanceMaxBackoffMs());
+    }
+
+    // Visible for testing: allows pointing at a local HTTP server with fast retry timings.
+    BinanceOrderExecutor(String apiKey, String apiSecret, String baseUrl,
+                          int maxRetries, long initialBackoffMs, long maxBackoffMs) {
         this.apiKey = apiKey;
         this.apiSecret = apiSecret;
+        this.baseUrl = baseUrl;
+        this.maxRetries = maxRetries;
+        this.initialBackoffMs = initialBackoffMs;
+        this.maxBackoffMs = maxBackoffMs;
+    }
+
+    /**
+     * Envia a requisicao com retry/backoff. Rate-limit (429/418) e sempre retentado,
+     * respeitando o header Retry-After quando presente. Falhas de rede (timeout,
+     * conexao) so sao retentadas quando {@code retryOnIOException} e true - chamadas
+     * nao-idempotentes (como o POST de ordem) mantem o comportamento original nesse
+     * caso, para nao arriscar reenviar uma ordem cujo resultado ficou ambiguo.
+     */
+    private HttpResponse<String> send(HttpRequest request, boolean retryOnIOException) throws Exception {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                if (!isRateLimited(response) || attempt >= maxRetries) {
+                    return response;
+                }
+                long backoffMs = retryAfterMs(response).orElse(calculateBackoff(attempt + 1));
+                logger.warn("Binance rate limit ({}) on attempt {}/{}; retrying in {}ms",
+                        response.statusCode(), attempt + 1, maxRetries, backoffMs);
+                sleep(backoffMs);
+            } catch (java.io.IOException e) {
+                if (!retryOnIOException || attempt >= maxRetries) {
+                    throw e;
+                }
+                long backoffMs = calculateBackoff(attempt + 1);
+                logger.warn("Binance request error on attempt {}/{}: {}; retrying in {}ms",
+                        attempt + 1, maxRetries, e.getMessage(), backoffMs);
+                sleep(backoffMs);
+            }
+        }
+    }
+
+    private boolean isRateLimited(HttpResponse<String> response) {
+        return response.statusCode() == HTTP_TOO_MANY_REQUESTS || response.statusCode() == HTTP_IP_BANNED;
+    }
+
+    private Optional<Long> retryAfterMs(HttpResponse<String> response) {
+        return response.headers().firstValue("Retry-After")
+                .map(value -> {
+                    try {
+                        return Long.parseLong(value.trim()) * 1000;
+                    } catch (NumberFormatException e) {
+                        return null;
+                    }
+                })
+                .filter(java.util.Objects::nonNull);
+    }
+
+    private long calculateBackoff(int attempt) {
+        long backoff = initialBackoffMs * (1L << Math.min(attempt - 1, 6));
+        return Math.min(backoff, maxBackoffMs);
+    }
+
+    private void sleep(long ms) throws java.io.IOException {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new java.io.IOException("Interrupted during retry backoff", ie);
+        }
     }
 
     public OrderResult executeBuyMarket(String symbol, BigDecimal quantity) {
@@ -84,7 +160,7 @@ public class BinanceOrderExecutor {
                     .POST(HttpRequest.BodyPublishers.noBody())
                     .build();
 
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = send(request, false);
 
             if (response.statusCode() == 200) {
                 JsonNode json = mapper.readTree(response.body());
@@ -150,7 +226,7 @@ public class BinanceOrderExecutor {
                     .GET()
                     .build();
 
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = send(request, true);
 
             if (response.statusCode() == 200) {
                 JsonNode json = mapper.readTree(response.body());
@@ -248,7 +324,7 @@ public class BinanceOrderExecutor {
                     .GET()
                     .build();
 
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = send(request, true);
 
             if (response.statusCode() == 200) {
                 JsonNode jsonArray = mapper.readTree(response.body());
@@ -312,7 +388,7 @@ public class BinanceOrderExecutor {
                     .header("X-MBX-APIKEY", apiKey)
                     .method("DELETE", HttpRequest.BodyPublishers.noBody())
                     .build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = send(request, true);
             boolean success = response.statusCode() == 200;
             if (!success) {
                 logger.error("Failed to cancel order {}: {}", orderId, response.body());
@@ -337,7 +413,7 @@ public class BinanceOrderExecutor {
                     .uri(URI.create(baseUrl + "/api/v3/order?" + queryString + "&signature=" + signature))
                     .header("X-MBX-APIKEY", apiKey)
                     .GET().build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = send(request, true);
             if (response.statusCode() != 200) return Optional.empty();
             JsonNode json = mapper.readTree(response.body());
             BigDecimal qty = new BigDecimal(json.path("executedQty").asText("0"));
@@ -359,7 +435,7 @@ public class BinanceOrderExecutor {
                     .GET()
                     .build();
 
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = send(request, true);
 
             if (response.statusCode() == 200) {
                 JsonNode json = mapper.readTree(response.body());
