@@ -1,5 +1,10 @@
 package dev.romeo.btctradingengine.dashboard;
 
+import dev.romeo.btctradingengine.adapter.BinanceKlineClient;
+import dev.romeo.btctradingengine.backtest.BacktestReport;
+import dev.romeo.btctradingengine.backtest.BacktestRunner;
+import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.model.CandleEvent;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -7,10 +12,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api")
 public class DashboardController {
     private final DashboardState state;
+    private final BinanceKlineClient klineClient = new BinanceKlineClient();
 
     public DashboardController(DashboardState state) {
         this.state = state;
@@ -52,4 +61,38 @@ public class DashboardController {
 
     @GetMapping("/stats")
     public DashboardState.Stats stats() { return state.stats(); }
+
+    /**
+     * Runs the current strategy config (indicator periods, thresholds, target/stop) against
+     * real Binance mainnet history and returns the resulting report - lets you re-validate
+     * the strategy's edge on demand, e.g. after tuning thresholds or periodically over time.
+     * Always uses mainnet data regardless of binance.rest.url, since testnet price/volume
+     * does not reflect the real market.
+     */
+    @GetMapping("/backtest")
+    public ResponseEntity<?> backtest(@RequestParam(defaultValue = "30") int days) {
+        int clampedDays = Math.max(1, Math.min(days, 180));
+        try {
+            List<CandleEvent> candles = klineClient.loadClosedCandlesRange(
+                    Config.getMarketSymbol(), Config.getBinanceKlineInterval(), clampedDays);
+            if (candles.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "error", "No candles returned for " + Config.getMarketSymbol() + " over " + clampedDays + " days"));
+            }
+
+            BacktestReport report = new BacktestRunner().run(candles, Config.getTradingInitialCapital());
+            return ResponseEntity.ok(Map.of(
+                    "symbol", Config.getMarketSymbol(),
+                    "interval", Config.getBinanceKlineInterval(),
+                    "requestedDays", clampedDays,
+                    "candleCount", candles.size(),
+                    "rangeStart", candles.get(0).openTime(),
+                    "rangeEnd", candles.get(candles.size() - 1).closeTime(),
+                    "report", report
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of(
+                    "error", "Backtest failed: " + e.getMessage()));
+        }
+    }
 }
