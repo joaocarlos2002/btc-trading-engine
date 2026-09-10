@@ -88,6 +88,9 @@ public class Config {
     public static BigDecimal getTradingMaxDrawdownPercent() { return getDecimal("trading.max.drawdown.percent", "5"); }
     public static long getMaxDataStalenessSeconds() { return Long.parseLong(getProperty("trading.max.data.staleness.seconds", "60")); }
     public static BigDecimal getBacktestCommissionRate() { return getDecimal("backtest.commission.rate", "0.001"); }
+    public static String getAlertDiscordWebhookUrl() {
+        return getEnvironmentOrProperty("btc-trading-engine_ALERT_DISCORD_WEBHOOK_URL", "alert.discord.webhook.url", "");
+    }
 
     public static void validate() {
         if (getMarketSymbol().isBlank()) {
