@@ -57,6 +57,17 @@ public class Main {
                 if (!balance.success() || balance.total().compareTo(BigDecimal.ZERO) <= 0) {
                     throw new IllegalStateException("Could not validate positive USDT balance: " + balance.error());
                 }
+
+                BinanceOrderExecutor.SymbolFilters symbolFilters = executor.getSymbolFilters(Config.getMarketSymbol());
+                if (symbolFilters == null || symbolFilters.minQty().compareTo(BigDecimal.ZERO) <= 0
+                        || symbolFilters.stepSize().compareTo(BigDecimal.ZERO) <= 0) {
+                    throw new IllegalStateException(
+                            "Could not validate exchange symbol filters for " + Config.getMarketSymbol());
+                }
+                logger.info("Symbol filters validated for {}: minNotional={} minQty={} maxQty={} stepSize={}",
+                        Config.getMarketSymbol(), symbolFilters.minNotional(), symbolFilters.minQty(),
+                        symbolFilters.maxQty(), symbolFilters.stepSize());
+
                 PortfolioManager portfolio = new PortfolioManager(
                     balance.total(),
                     Config.getTradingMaxDrawdownPercent());
