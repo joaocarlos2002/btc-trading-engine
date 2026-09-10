@@ -423,6 +423,10 @@ public class PositionManager {
                 .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
     }
 
+    public synchronized TestnetValidationReport getValidationReport() {
+        return new TestnetValidationReport(getClosedPositions());
+    }
+
     public record ExecutionEvent(
             String positionId,
             String action,
