@@ -7,11 +7,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-/**
- * Agrega as posicoes fechadas de uma sessao (real ou testnet) para validar o
- * criterio da issue #4: volume minimo de trades, confirmacao de fills e
- * acuracia do P&amp;L antes de liberar producao.
- */
 public class TestnetValidationReport {
     private final List<Position> closedPositions;
 
@@ -39,15 +34,13 @@ public class TestnetValidationReport {
                 .divide(BigDecimal.valueOf(getTotalTrades()), 4, RoundingMode.HALF_UP)
                 .multiply(BigDecimal.valueOf(100));
     }
-
-    /** Soma do P&amp;L por unidade de preco (mesma convencao do PositionManager). */
+    
     public BigDecimal getTotalPnL() {
         return closedPositions.stream()
                 .map(Position::getPnL)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    /** P&amp;L ponderado pela quantidade realmente preenchida em cada posicao. */
     public BigDecimal getTotalNotionalPnL() {
         return closedPositions.stream()
                 .map(p -> p.getPnL().multiply(p.getQuantity()))
@@ -59,7 +52,6 @@ public class TestnetValidationReport {
         return getTotalPnL().divide(BigDecimal.valueOf(getTotalTrades()), 6, RoundingMode.HALF_UP);
     }
 
-    /** Numero de posicoes cujo fill nunca atingiu a quantidade alvo (fill parcial/zero). */
     public long getIncompleteFillCount() {
         return closedPositions.stream()
                 .filter(p -> p.getTargetQuantity().compareTo(BigDecimal.ZERO) > 0)
@@ -86,12 +78,10 @@ public class TestnetValidationReport {
         return Duration.ofSeconds(totalSeconds / withTimes.size());
     }
 
-    /** Criterio "100+ trades" da issue #4. */
     public boolean meetsMinimumTradeCount(int minTrades) {
         return getTotalTrades() >= minTrades;
     }
 
-    /** Criterio "Fill confirmation check": nenhuma posicao deveria ficar com fill incompleto ao fechar. */
     public boolean allFillsConfirmed() {
         return getIncompleteFillCount() == 0;
     }
