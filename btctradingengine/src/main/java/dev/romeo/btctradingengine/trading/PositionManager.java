@@ -31,6 +31,7 @@ public class PositionManager {
     private Optional<PortfolioManager> portfolioManager = Optional.empty();
     private Optional<BinanceSymbolValidationService> validationService = Optional.empty();
     private Optional<OrderConfirmationManager> confirmationManager = Optional.empty();
+    private Optional<ConnectivityGuard> connectivityGuard = Optional.empty();
     private String symbol = "BTCUSDT";
     private boolean simulationMode = true;
     private volatile boolean reconciliationComplete = true;
@@ -67,6 +68,12 @@ public class PositionManager {
         this.confirmationManager = Optional.of(manager);
         manager.setConfirmationListener(this::onOrderConfirmed);
         logger.info("Order confirmation manager attached");
+    }
+
+    public void setConnectivityGuard(ConnectivityGuard guard) {
+        this.connectivityGuard = Optional.of(guard);
+        guard.setOpenPositionSupplier(() -> openPosition.isPresent());
+        logger.info("Connectivity guard attached");
     }
 
     private void onOrderConfirmed(OrderConfirmationManager.OrderConfirmation confirmation) {
@@ -132,6 +139,11 @@ public class PositionManager {
             }
             if (portfolioManager.isPresent() && !portfolioManager.get().canTrade()) {
                 logger.warn("âš  Portfolio stop-loss active - blocking new {} entry", prediction.signal());
+                return;
+            }
+            if (connectivityGuard.isPresent() && !connectivityGuard.get().isHealthy()) {
+                logger.warn("Connectivity guard unhealthy ({}) - blocking new {} entry",
+                        connectivityGuard.get().getUnhealthyReason(), prediction.signal());
                 return;
             }
             openNewPosition(prediction, candle);

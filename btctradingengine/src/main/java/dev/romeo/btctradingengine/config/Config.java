@@ -84,6 +84,7 @@ public class Config {
     public static boolean isRealTradingEnabled() { return Boolean.parseBoolean(getProperty("trading.real.enabled", "false")); }
     public static BigDecimal getTradingInitialCapital() { return getDecimal("trading.initial.capital.usdt", "10"); }
     public static BigDecimal getTradingMaxDrawdownPercent() { return getDecimal("trading.max.drawdown.percent", "5"); }
+    public static long getMaxDataStalenessSeconds() { return Long.parseLong(getProperty("trading.max.data.staleness.seconds", "60")); }
     public static BigDecimal getBacktestCommissionRate() { return getDecimal("backtest.commission.rate", "0.001"); }
 
     public static void validate() {
@@ -122,6 +123,7 @@ public class Config {
                 || getTradingMaxDrawdownPercent().compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("Trading capital and max drawdown must be positive");
         }
+        requirePositive("trading.max.data.staleness.seconds", getMaxDataStalenessSeconds());
         if (isRealTradingEnabled()
                 && (getBinanceApiKey().isBlank() || getBinanceApiSecret().isBlank())) {
             throw new IllegalArgumentException("Real trading requires Binance API credentials");
