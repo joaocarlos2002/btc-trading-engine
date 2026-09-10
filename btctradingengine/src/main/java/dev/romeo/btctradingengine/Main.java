@@ -1,6 +1,8 @@
 package dev.romeo.btctradingengine;
 
 import dev.romeo.btctradingengine.adapter.*;
+import dev.romeo.btctradingengine.alerting.AlertNotifier;
+import dev.romeo.btctradingengine.alerting.DiscordAlertNotifier;
 import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.dashboard.DashboardApplication;
 import dev.romeo.btctradingengine.dashboard.DashboardState;
@@ -50,6 +52,9 @@ public class Main {
                     Config.isRealTradingEnabled());
             positionManager.setConnectivityGuard(connectivityGuard);
 
+            AlertNotifier alertNotifier = new DiscordAlertNotifier(Config.getAlertDiscordWebhookUrl());
+            positionManager.setAlertNotifier(alertNotifier);
+
             tradeJournal.loadOpenPosition(
                     Config.getMarketSymbol(),
                     Config.getTradingTargetPercent(),
@@ -61,6 +66,7 @@ public class Main {
                     Config.getBinanceApiKey(), Config.getBinanceApiSecret());
                 BinanceOrderExecutor.BalanceResult balance = executor.getBalance("USDT");
                 if (!balance.success() || balance.total().compareTo(BigDecimal.ZERO) <= 0) {
+                    alertNotifier.alert("Startup aborted: could not validate positive USDT balance: " + balance.error());
                     throw new IllegalStateException("Could not validate positive USDT balance: " + balance.error());
                 }
 
@@ -99,6 +105,7 @@ public class Main {
                     reconcileResult.ordersFound(),
                     reconcileResult.restoredPosition() != null);
                 if (!reconcileResult.success()) {
+                    alertNotifier.alert("Startup aborted: Binance reconciliation failed: " + reconcileResult.message());
                     throw new IllegalStateException("Trading disabled: Binance reconciliation failed: "
                             + reconcileResult.message());
                 }
@@ -108,10 +115,12 @@ public class Main {
                 positionManager.setOrderConfirmationManager(confirmationManager);
                 dashboardState.attachOrderConfirmationManager(confirmationManager);
 
-                BinanceUserDataStreamClient userDataStream = getBinanceUserDataStreamClient(confirmationManager, connectivityGuard);
+                BinanceUserDataStreamClient userDataStream =
+                        getBinanceUserDataStreamClient(confirmationManager, connectivityGuard, alertNotifier);
 
                 if (!userDataStream.connect()) {
                     logger.warn("Failed to connect User Data Stream; will use polling fallback");
+                    alertNotifier.alert("Failed to connect User Data Stream on startup; falling back to REST polling for fills");
                 }
 
                 Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -186,7 +195,13 @@ public class Main {
             }
 
             BinanceAdapter source = new BinanceAdapter();
-            source.setStatusListener(connectivityGuard::onMarketDataStatus);
+            source.setStatusListener(status -> {
+                connectivityGuard.onMarketDataStatus(status);
+                if ("failed".equals(status)) {
+                    alertNotifier.alert("Market data stream reconnection exhausted its retries and gave up; "
+                            + "the bot may be blind to price movements until it recovers");
+                }
+            });
             CandleAggregator aggregator = new CandleAggregator(
                     Config.getMarketInterval(),
                     candle -> {
@@ -239,7 +254,7 @@ public class Main {
     }
 
     private static BinanceUserDataStreamClient getBinanceUserDataStreamClient(
-            OrderConfirmationManager confirmationManager, ConnectivityGuard connectivityGuard) {
+            OrderConfirmationManager confirmationManager, ConnectivityGuard connectivityGuard, AlertNotifier alertNotifier) {
         BinanceUserDataStreamClient userDataStream = new BinanceUserDataStreamClient(Config.getBinanceApiKey());
         userDataStream.setExecutionReportListener(
             report -> {
@@ -250,6 +265,10 @@ public class Main {
             status -> {
                 logger.info("User Data Stream: {}", status);
                 connectivityGuard.onUserDataStreamStatus(status);
+                if ("failed".equals(status)) {
+                    alertNotifier.alert("User Data Stream reconnection exhausted its retries and gave up; "
+                            + "order fill notifications may be delayed until the next REST poll");
+                }
             });
         return userDataStream;
     }
