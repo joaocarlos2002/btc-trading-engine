@@ -8,19 +8,20 @@ import java.time.Instant;
 
 public class Position {
     private final String positionId;
-    private final Signal signal;  // BUY ou SELL
+    private final Signal signal;                                    // BUY ou SELL
     private BigDecimal entryPrice;
     private final Instant entryTime;
-    private final BigDecimal targetPercent;   // ex: 2.0 = +2%
-    private final BigDecimal stopLossPercent; // ex: 1.5 = -1.5%
+    private final BigDecimal targetPercent;                         // ex: 2.0 = +2%
+    private final BigDecimal stopLossPercent;                       // ex: 1.5 = -1.5%
 
     private BigDecimal currentPrice;
     private Instant lastUpdateTime;
     private PositionStatus status;
     private BigDecimal exitPrice;
     private Instant exitTime;
-    private String exitReason; // "TARGET_HIT", "STOP_LOSS", "MANUAL_CLOSE"
-    private BigDecimal quantity = BigDecimal.ZERO;
+    private String exitReason;                                      // "TARGET_HIT", "STOP_LOSS", "MANUAL_CLOSE"
+    private BigDecimal quantity = BigDecimal.ZERO;                  // quantidade preenchida (cumulativa)
+    private BigDecimal targetQuantity = BigDecimal.ZERO;            // quantidade total solicitada na ordem
 
     public enum PositionStatus {
         OPEN, CLOSED, STOPPED_OUT
@@ -142,6 +143,21 @@ public class Position {
     public BigDecimal getStopLossPercent() { return stopLossPercent; }
     public BigDecimal getQuantity() { return quantity; }
     public void setQuantity(BigDecimal quantity) { this.quantity = quantity; }
+    public BigDecimal getTargetQuantity() { return targetQuantity; }
+    public void setTargetQuantity(BigDecimal targetQuantity) { this.targetQuantity = targetQuantity; }
+
+    public void applyFill(BigDecimal cumulativeFilledQuantity) {
+        this.quantity = cumulativeFilledQuantity;
+    }
+
+    public BigDecimal getRemainingQuantity() {
+        BigDecimal remaining = targetQuantity.subtract(quantity);
+        return remaining.compareTo(BigDecimal.ZERO) > 0 ? remaining : BigDecimal.ZERO;
+    }
+
+    public boolean isFullyFilled() {
+        return targetQuantity.compareTo(BigDecimal.ZERO) > 0 && quantity.compareTo(targetQuantity) >= 0;
+    }
 
     public BigDecimal getTargetPrice() {
         BigDecimal percentage = targetPercent.divide(BigDecimal.valueOf(100), 8, RoundingMode.HALF_UP);

@@ -80,10 +80,18 @@ public class PositionManager {
                 confirmation.orderId(), confirmation.status(), confirmation.filledQuantity(), confirmation.lastFillPrice());
 
         if (confirmation.isFilled()) {
-            pos.setQuantity(confirmation.filledQuantity());
+            pos.applyFill(confirmation.filledQuantity());
             if (confirmation.lastFillPrice().compareTo(BigDecimal.ZERO) > 0) {
                 pos.updatePrice(confirmation.lastFillPrice(), confirmation.confirmedAt());
             }
+            positionPersistence.accept(pos);
+        } else if (confirmation.isPartial()) {
+            pos.applyFill(confirmation.filledQuantity());
+            if (confirmation.lastFillPrice().compareTo(BigDecimal.ZERO) > 0) {
+                pos.updatePrice(confirmation.lastFillPrice(), confirmation.confirmedAt());
+            }
+            logger.info("â³ Partial fill: {} filled={}/{} remaining={}",
+                    confirmation.orderId(), pos.getQuantity(), pos.getTargetQuantity(), pos.getRemainingQuantity());
             positionPersistence.accept(pos);
         } else if (confirmation.isFailed()) {
             logger.error("âœ— Order {} failed: {}", confirmation.orderId(), confirmation.status());
@@ -275,6 +283,7 @@ public class PositionManager {
             }
 
             logger.info("Executing real {} order: qty={} {} @ {}", signal, quantity, symbol, pos.getEntryPrice());
+            pos.setTargetQuantity(quantity);
 
             BinanceOrderExecutor executor = orderExecutor.get();
             BinanceOrderExecutor.OrderResult result;
@@ -293,7 +302,7 @@ public class PositionManager {
                     confirmationManager.get().registerOrder(orderId, symbol, signal.toString(), quantity, pos.getEntryPrice());
                 }
 
-                pos.setQuantity(result.executedQuantity());
+                pos.applyFill(result.executedQuantity());
                 if (result.averagePrice().compareTo(BigDecimal.ZERO) > 0) {
                     pos.setEntryPrice(result.averagePrice());
                     positionPersistence.accept(pos);
@@ -412,6 +421,10 @@ public class PositionManager {
         return closedPositions.stream()
                 .map(Position::getPnL)
                 .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
+    }
+
+    public synchronized TestnetValidationReport getValidationReport() {
+        return new TestnetValidationReport(getClosedPositions());
     }
 
     public record ExecutionEvent(
