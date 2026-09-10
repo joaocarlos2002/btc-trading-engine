@@ -44,6 +44,12 @@ public class Main {
                     event -> tradeJournal.recordExecutionLog(event, Config.getMarketSymbol())
             );
             dashboardState.attachPositionManager(positionManager);
+
+            ConnectivityGuard connectivityGuard = new ConnectivityGuard(
+                    java.time.Duration.ofSeconds(Config.getMaxDataStalenessSeconds()),
+                    Config.isRealTradingEnabled());
+            positionManager.setConnectivityGuard(connectivityGuard);
+
             tradeJournal.loadOpenPosition(
                     Config.getMarketSymbol(),
                     Config.getTradingTargetPercent(),
@@ -87,7 +93,7 @@ public class Main {
                 positionManager.setOrderConfirmationManager(confirmationManager);
                 dashboardState.attachOrderConfirmationManager(confirmationManager);
 
-                BinanceUserDataStreamClient userDataStream = getBinanceUserDataStreamClient(confirmationManager);
+                BinanceUserDataStreamClient userDataStream = getBinanceUserDataStreamClient(confirmationManager, connectivityGuard);
 
                 if (!userDataStream.connect()) {
                     logger.warn("Failed to connect User Data Stream; will use polling fallback");
@@ -105,7 +111,6 @@ public class Main {
                         500
                     ));
 
-            // Store last candle para usar no predictor â†’ positionManager
             var lastCandle = new Object() { dev.romeo.btctradingengine.model.CandleEvent value = null; };
 
             RuleBasedPredictor predictor = new RuleBasedPredictor(
@@ -165,7 +170,8 @@ public class Main {
                 }
             }
 
-            MarketDataSource source = new BinanceAdapter();
+            BinanceAdapter source = new BinanceAdapter();
+            source.setStatusListener(connectivityGuard::onMarketDataStatus);
             CandleAggregator aggregator = new CandleAggregator(
                     Config.getMarketInterval(),
                     candle -> {
@@ -179,6 +185,7 @@ public class Main {
             priceEventBus.subscribe(aggregator);
             priceEventBus.subscribe(dbWriter);
             priceEventBus.subscribe(event -> {
+                connectivityGuard.recordPriceEvent();
                 positionManager.processPriceEvent(event);
                 dashboardState.refreshPositions();
             });
@@ -204,6 +211,7 @@ public class Main {
                 dbWriter.stop();
                 DataSourceManager.close();
                 dashboardState.close();
+                connectivityGuard.shutdown();
                 dashboardContext.close();
             }));
 
@@ -215,7 +223,8 @@ public class Main {
         }
     }
 
-    private static BinanceUserDataStreamClient getBinanceUserDataStreamClient(OrderConfirmationManager confirmationManager) {
+    private static BinanceUserDataStreamClient getBinanceUserDataStreamClient(
+            OrderConfirmationManager confirmationManager, ConnectivityGuard connectivityGuard) {
         BinanceUserDataStreamClient userDataStream = new BinanceUserDataStreamClient(Config.getBinanceApiKey());
         userDataStream.setExecutionReportListener(
             report -> {
@@ -223,7 +232,10 @@ public class Main {
                 confirmationManager.processExecutionReport(report);
             });
         userDataStream.setConnectionStatusListener(
-            status -> logger.info("User Data Stream: {}", status));
+            status -> {
+                logger.info("User Data Stream: {}", status);
+                connectivityGuard.onUserDataStreamStatus(status);
+            });
         return userDataStream;
     }
 
