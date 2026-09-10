@@ -66,6 +66,10 @@ public class Main {
                     Config.getMarketSymbol());
                 logger.warn("REAL TRADING ENABLED for {} with validated USDT balance={}",
                     Config.getMarketSymbol(), balance.total());
+                if (!Config.isBinanceTestnetEndpoint()) {
+                    logger.warn("!!! MAINNET TRADING CONFIRMED (binance.rest.url={}) - REAL MONEY IS AT RISK !!!",
+                        Config.getBinanceRestUrl());
+                }
 
                 BinanceReconciliationService reconciliation = new BinanceReconciliationService(
                     executor,
