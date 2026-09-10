@@ -7,6 +7,20 @@ import dev.romeo.btctradingengine.prediction.SignalRule;
 import java.math.BigDecimal;
 
 public class AtrRule implements SignalRule {
+    private final BigDecimal volatilityLow;
+    private final BigDecimal volatilityNormal;
+    private final BigDecimal volatilityHigh;
+
+    public AtrRule() {
+        this(Config.getAtrVolatilityLow(), Config.getAtrVolatilityNormal(), Config.getAtrVolatilityHigh());
+    }
+
+    /** Allows overriding thresholds without touching global Config - used by on-demand backtests. */
+    public AtrRule(BigDecimal volatilityLow, BigDecimal volatilityNormal, BigDecimal volatilityHigh) {
+        this.volatilityLow = volatilityLow;
+        this.volatilityNormal = volatilityNormal;
+        this.volatilityHigh = volatilityHigh;
+    }
 
     @Override
     public double evaluate(FeatureVector features) {
@@ -25,18 +39,17 @@ public class AtrRule implements SignalRule {
         // ATR baixo: movimento baixo (confianÃ§a baixa nas regras)
         // ATR alto: movimento esperado maior (confianÃ§a mÃ©dia)
 
-        if (atrPercent.compareTo(Config.getAtrVolatilityLow()) < 0) {
-            // ATR < 2% do preÃ§o: baixÃ­ssima volatilidade
-            // Desconfiar de sinais (pouco movimento esperado)
+        if (atrPercent.compareTo(volatilityLow) < 0) {
+            // BaixÃ­ssima volatilidade: desconfiar de sinais (pouco movimento esperado)
             return -0.3;
-        } else if (atrPercent.compareTo(Config.getAtrVolatilityNormal()) < 0) {
-            // 2-4%: volatilidade normal
+        } else if (atrPercent.compareTo(volatilityNormal) < 0) {
+            // Volatilidade normal
             return 0.0;
-        } else if (atrPercent.compareTo(Config.getAtrVolatilityHigh()) < 0) {
-            // 4-6%: volatilidade moderada
+        } else if (atrPercent.compareTo(volatilityHigh) < 0) {
+            // Volatilidade moderada
             return 0.1;
         } else {
-            // > 6%: volatilidade alta (possÃ­vel breakout)
+            // Volatilidade alta (possÃ­vel breakout)
             return 0.2;
         }
     }

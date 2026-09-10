@@ -7,6 +7,16 @@ import dev.romeo.btctradingengine.prediction.SignalRule;
 import java.math.BigDecimal;
 
 public class VolatilityRule implements SignalRule {
+    private final BigDecimal ratioHigh;
+
+    public VolatilityRule() {
+        this(Config.getVolatilityRatioHigh());
+    }
+
+    /** Allows overriding the threshold without touching global Config - used by on-demand backtests. */
+    public VolatilityRule(BigDecimal ratioHigh) {
+        this.ratioHigh = ratioHigh;
+    }
 
     @Override
     public double evaluate(FeatureVector features) {
@@ -19,7 +29,7 @@ public class VolatilityRule implements SignalRule {
 
         BigDecimal ratio = vol5m.divide(vol20m, 4, java.math.RoundingMode.HALF_UP);
 
-        if (ratio.compareTo(Config.getVolatilityRatioHigh()) > 0) {
+        if (ratio.compareTo(ratioHigh) > 0) {
             return 0.0;
         } else if (ratio.compareTo(BigDecimal.ONE) > 0) {
             return 0.1;

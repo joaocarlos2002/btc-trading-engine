@@ -7,6 +7,16 @@ import dev.romeo.btctradingengine.prediction.SignalRule;
 import java.math.BigDecimal;
 
 public class MacdRule implements SignalRule {
+    private final BigDecimal strongHistogramAtrRatio;
+
+    public MacdRule() {
+        this(Config.getMacdStrongHistogramAtrRatio());
+    }
+
+    /** Allows overriding the threshold without touching global Config - used by on-demand backtests. */
+    public MacdRule(BigDecimal strongHistogramAtrRatio) {
+        this.strongHistogramAtrRatio = strongHistogramAtrRatio;
+    }
 
     @Override
     public double evaluate(FeatureVector features) {
@@ -30,14 +40,14 @@ public class MacdRule implements SignalRule {
         if (histogram.compareTo(BigDecimal.ZERO) > 0) {
             // MACD acima do sinal: bullish
             // A forÃ§a Ã© relativa ao ATR do candle.
-            if (histogramAtrRatio.compareTo(Config.getMacdStrongHistogramAtrRatio()) > 0) {
+            if (histogramAtrRatio.compareTo(strongHistogramAtrRatio) > 0) {
                 return 0.7;  // Forte bullish
             } else {
                 return 0.3;  // Fraco bullish
             }
         } else {
             // MACD abaixo do sinal: bearish
-            if (histogramAtrRatio.compareTo(Config.getMacdStrongHistogramAtrRatio()) > 0) {
+            if (histogramAtrRatio.compareTo(strongHistogramAtrRatio) > 0) {
                 return -0.7; // Forte bearish
             } else {
                 return -0.3; // Fraco bearish

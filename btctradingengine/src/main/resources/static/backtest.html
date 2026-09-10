@@ -271,6 +271,39 @@
             color: var(--muted);
             font-size: 12.5px;
         }
+
+        details.group {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin-bottom: 10px;
+            background: rgba(255, 255, 255, 0.012);
+        }
+        details.group summary {
+            padding: 10px 14px;
+            cursor: pointer;
+            font-size: 11.5px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--muted-light);
+            list-style: none;
+        }
+        details.group summary::-webkit-details-marker { display: none; }
+        details.group summary::before {
+            content: '▸';
+            display: inline-block;
+            margin-right: 8px;
+            color: var(--muted);
+            transition: transform 0.15s ease;
+        }
+        details.group[open] summary::before { transform: rotate(90deg); }
+        details.group .group-body {
+            padding: 4px 14px 14px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+        }
+        details.group .field input { width: 100px; }
     </style>
 </head>
 <body>
@@ -304,39 +337,87 @@
             </p>
 
             <div class="divider">
-                <div class="divider-label" style="margin-bottom:12px;">Parametros da estrategia (opcional)</div>
-                <div class="field-row">
-                    <div class="field">
-                        <label for="buyThreshold">Buy threshold</label>
-                        <input type="number" id="buyThreshold" class="narrow" step="0.01" min="0" max="1" placeholder="config" />
+                <div class="divider-label" style="margin-bottom:10px;">Parametros da estrategia (todos opcionais)</div>
+
+                <details class="group" open>
+                    <summary>Entrada &amp; confirmacao</summary>
+                    <div class="group-body">
+                        <div class="field">
+                            <label for="buyThreshold">Buy threshold</label>
+                            <input type="number" id="buyThreshold" step="0.01" min="0" max="1" placeholder="config" />
+                        </div>
+                        <div class="field">
+                            <label for="sellThreshold">Sell threshold</label>
+                            <input type="number" id="sellThreshold" step="0.01" min="-1" max="0" placeholder="config" />
+                        </div>
+                        <div class="field">
+                            <label for="confirmationSnapshots">Confirmacoes</label>
+                            <input type="number" id="confirmationSnapshots" min="1" placeholder="config" />
+                        </div>
                     </div>
-                    <div class="field">
-                        <label for="sellThreshold">Sell threshold</label>
-                        <input type="number" id="sellThreshold" class="narrow" step="0.01" min="-1" max="0" placeholder="config" />
+                </details>
+
+                <details class="group">
+                    <summary>Periodos dos indicadores</summary>
+                    <div class="group-body">
+                        <div class="field"><label for="smaPeriod">SMA</label><input type="number" id="smaPeriod" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="emaPeriod">EMA</label><input type="number" id="emaPeriod" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="rsiPeriod">RSI</label><input type="number" id="rsiPeriod" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="atrPeriod">ATR</label><input type="number" id="atrPeriod" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="macdFastPeriod">MACD fast</label><input type="number" id="macdFastPeriod" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="macdSlowPeriod">MACD slow</label><input type="number" id="macdSlowPeriod" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="macdSignalPeriod">MACD signal</label><input type="number" id="macdSignalPeriod" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="volatilityShortPeriods">Vol curta</label><input type="number" id="volatilityShortPeriods" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="volatilityLongPeriods">Vol longa</label><input type="number" id="volatilityLongPeriods" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="volumeAveragePeriods">Vol. media</label><input type="number" id="volumeAveragePeriods" min="1" placeholder="config" /></div>
                     </div>
-                    <div class="field">
-                        <label for="confirmationSnapshots">Confirmacoes</label>
-                        <input type="number" id="confirmationSnapshots" class="narrow" min="1" placeholder="config" />
+                </details>
+
+                <details class="group">
+                    <summary>Sub-thresholds RSI</summary>
+                    <div class="group-body">
+                        <div class="field"><label for="rsiOversold">Oversold</label><input type="number" id="rsiOversold" step="0.1" placeholder="config" /></div>
+                        <div class="field"><label for="rsiNeutralLow">Neutro baixo</label><input type="number" id="rsiNeutralLow" step="0.1" placeholder="config" /></div>
+                        <div class="field"><label for="rsiNeutralHigh">Neutro alto</label><input type="number" id="rsiNeutralHigh" step="0.1" placeholder="config" /></div>
+                        <div class="field"><label for="rsiOverbought">Overbought</label><input type="number" id="rsiOverbought" step="0.1" placeholder="config" /></div>
                     </div>
-                    <div class="field">
-                        <label for="smaPeriod">SMA period</label>
-                        <input type="number" id="smaPeriod" class="narrow" min="1" placeholder="config" />
+                </details>
+
+                <details class="group">
+                    <summary>Sub-thresholds SMA &amp; MACD</summary>
+                    <div class="group-body">
+                        <div class="field"><label for="smaDistanceExtreme">SMA dist. extrema</label><input type="number" id="smaDistanceExtreme" step="0.1" placeholder="config" /></div>
+                        <div class="field"><label for="smaDistanceModerate">SMA dist. moderada</label><input type="number" id="smaDistanceModerate" step="0.1" placeholder="config" /></div>
+                        <div class="field"><label for="macdStrongHistogramAtrRatio">MACD forte (ratio ATR)</label><input type="number" id="macdStrongHistogramAtrRatio" step="0.01" placeholder="config" /></div>
                     </div>
-                    <div class="field">
-                        <label for="emaPeriod">EMA period</label>
-                        <input type="number" id="emaPeriod" class="narrow" min="1" placeholder="config" />
+                </details>
+
+                <details class="group">
+                    <summary>Sub-thresholds ATR &amp; Volatility (filtro/veto)</summary>
+                    <div class="group-body">
+                        <div class="field"><label for="atrVolatilityLow">ATR baixo</label><input type="number" id="atrVolatilityLow" step="0.001" placeholder="config" /></div>
+                        <div class="field"><label for="atrVolatilityNormal">ATR normal</label><input type="number" id="atrVolatilityNormal" step="0.001" placeholder="config" /></div>
+                        <div class="field"><label for="atrVolatilityHigh">ATR alto</label><input type="number" id="atrVolatilityHigh" step="0.001" placeholder="config" /></div>
+                        <div class="field"><label for="volatilityRatioHigh">Vol. ratio alto</label><input type="number" id="volatilityRatioHigh" step="0.1" placeholder="config" /></div>
                     </div>
-                    <div class="field">
-                        <label for="rsiPeriod">RSI period</label>
-                        <input type="number" id="rsiPeriod" class="narrow" min="1" placeholder="config" />
+                </details>
+
+                <details class="group">
+                    <summary>Risco &amp; custo</summary>
+                    <div class="group-body">
+                        <div class="field"><label for="targetPercent">Target %</label><input type="number" id="targetPercent" step="0.1" placeholder="config" /></div>
+                        <div class="field"><label for="stopLossPercent">Stop loss %</label><input type="number" id="stopLossPercent" step="0.1" placeholder="config" /></div>
+                        <div class="field"><label for="commissionRate">Comissao</label><input type="number" id="commissionRate" step="0.0001" placeholder="config" /></div>
                     </div>
-                    <button class="reset" id="resetBtn" type="button">Limpar overrides</button>
+                </details>
+
+                <div class="field-row" style="margin-top:12px;">
+                    <button class="reset" id="resetBtn" type="button">Limpar todos os overrides</button>
                 </div>
                 <p class="hint">
                     Deixe em branco pra usar o valor atual do <code>application.properties</code>.
-                    Sell threshold precisa ser negativo. Sub-thresholds internos de cada regra
-                    (RSI oversold, distancia da SMA, faixas de ATR etc.) nao sao afetados por isso -
-                    so periodo dos indicadores e o threshold de entrada/confirmacao.
+                    Sell threshold precisa ser negativo. Nada aqui muda o arquivo nem afeta o bot
+                    rodando ao vivo - cada rodada usa os valores só nessa chamada.
                 </p>
             </div>
 
@@ -370,12 +451,20 @@ document.querySelectorAll('.preset-btn').forEach(btn => {
 });
 $('runBtn').addEventListener('click', runBacktest);
 $('days').addEventListener('keydown', e => { if (e.key === 'Enter') runBacktest(); });
-$('resetBtn').addEventListener('click', () => {
-    ['buyThreshold', 'sellThreshold', 'confirmationSnapshots', 'smaPeriod', 'emaPeriod', 'rsiPeriod']
-        .forEach(id => { $(id).value = ''; });
-});
+const OVERRIDE_FIELDS = [
+    'smaPeriod', 'emaPeriod', 'rsiPeriod', 'atrPeriod',
+    'macdFastPeriod', 'macdSlowPeriod', 'macdSignalPeriod',
+    'volatilityShortPeriods', 'volatilityLongPeriods', 'volumeAveragePeriods',
+    'rsiOversold', 'rsiNeutralLow', 'rsiNeutralHigh', 'rsiOverbought',
+    'smaDistanceExtreme', 'smaDistanceModerate', 'macdStrongHistogramAtrRatio',
+    'atrVolatilityLow', 'atrVolatilityNormal', 'atrVolatilityHigh', 'volatilityRatioHigh',
+    'buyThreshold', 'sellThreshold', 'confirmationSnapshots',
+    'targetPercent', 'stopLossPercent', 'commissionRate',
+];
 
-const OVERRIDE_FIELDS = ['smaPeriod', 'emaPeriod', 'rsiPeriod', 'buyThreshold', 'sellThreshold', 'confirmationSnapshots'];
+$('resetBtn').addEventListener('click', () => {
+    OVERRIDE_FIELDS.forEach(id => { $(id).value = ''; });
+});
 
 async function runBacktest() {
     const days = Math.max(1, Math.min(180, Number($('days').value) || 30));
@@ -423,11 +512,13 @@ function render(data) {
         <span>${new Date(data.rangeStart).toLocaleDateString('pt-BR')} &rarr; ${new Date(data.rangeEnd).toLocaleDateString('pt-BR')}</span>
     `;
 
-    $('paramsUsed').innerHTML = `
-        buy=<b>${p.buyThreshold}</b> · sell=<b>${p.sellThreshold}</b> ·
-        confirms=<b>${p.confirmationSnapshots}</b> ·
-        sma=<b>${p.smaPeriod}</b> · ema=<b>${p.emaPeriod}</b> · rsi=<b>${p.rsiPeriod}</b>
-    `;
+    const p2 = (k, v) => `${k}=<b>${v}</b>`;
+    $('paramsUsed').innerHTML = [
+        p2('buy', p.buyThreshold), p2('sell', p.sellThreshold), p2('confirms', p.confirmationSnapshots),
+        p2('sma', p.smaPeriod), p2('ema', p.emaPeriod), p2('rsi', p.rsiPeriod), p2('atr', p.atrPeriod),
+        p2('macd', `${p.macdFastPeriod}/${p.macdSlowPeriod}/${p.macdSignalPeriod}`),
+        p2('target', p.targetPercent + '%'), p2('stop', p.stopLossPercent + '%'),
+    ].join(' · ');
 
     const metrics = [
         ['Total Trades', r.totalTrades, null],

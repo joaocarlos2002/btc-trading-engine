@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -76,9 +77,30 @@ public class DashboardController {
             @RequestParam(required = false) Integer smaPeriod,
             @RequestParam(required = false) Integer emaPeriod,
             @RequestParam(required = false) Integer rsiPeriod,
+            @RequestParam(required = false) Integer atrPeriod,
+            @RequestParam(required = false) Integer macdFastPeriod,
+            @RequestParam(required = false) Integer macdSlowPeriod,
+            @RequestParam(required = false) Integer macdSignalPeriod,
+            @RequestParam(required = false) Integer volatilityShortPeriods,
+            @RequestParam(required = false) Integer volatilityLongPeriods,
+            @RequestParam(required = false) Integer volumeAveragePeriods,
+            @RequestParam(required = false) BigDecimal rsiOversold,
+            @RequestParam(required = false) BigDecimal rsiNeutralLow,
+            @RequestParam(required = false) BigDecimal rsiNeutralHigh,
+            @RequestParam(required = false) BigDecimal rsiOverbought,
+            @RequestParam(required = false) BigDecimal smaDistanceExtreme,
+            @RequestParam(required = false) BigDecimal smaDistanceModerate,
+            @RequestParam(required = false) BigDecimal macdStrongHistogramAtrRatio,
+            @RequestParam(required = false) BigDecimal atrVolatilityLow,
+            @RequestParam(required = false) BigDecimal atrVolatilityNormal,
+            @RequestParam(required = false) BigDecimal atrVolatilityHigh,
+            @RequestParam(required = false) BigDecimal volatilityRatioHigh,
             @RequestParam(required = false) Double buyThreshold,
             @RequestParam(required = false) Double sellThreshold,
-            @RequestParam(required = false) Integer confirmationSnapshots) {
+            @RequestParam(required = false) Integer confirmationSnapshots,
+            @RequestParam(required = false) BigDecimal targetPercent,
+            @RequestParam(required = false) BigDecimal stopLossPercent,
+            @RequestParam(required = false) BigDecimal commissionRate) {
         int clampedDays = Math.max(1, Math.min(days, 180));
         try {
             List<CandleEvent> candles = klineClient.loadClosedCandlesRange(
@@ -93,9 +115,30 @@ public class DashboardController {
                     smaPeriod != null ? smaPeriod : defaults.smaPeriod(),
                     emaPeriod != null ? emaPeriod : defaults.emaPeriod(),
                     rsiPeriod != null ? rsiPeriod : defaults.rsiPeriod(),
+                    atrPeriod != null ? atrPeriod : defaults.atrPeriod(),
+                    macdFastPeriod != null ? macdFastPeriod : defaults.macdFastPeriod(),
+                    macdSlowPeriod != null ? macdSlowPeriod : defaults.macdSlowPeriod(),
+                    macdSignalPeriod != null ? macdSignalPeriod : defaults.macdSignalPeriod(),
+                    volatilityShortPeriods != null ? volatilityShortPeriods : defaults.volatilityShortPeriods(),
+                    volatilityLongPeriods != null ? volatilityLongPeriods : defaults.volatilityLongPeriods(),
+                    volumeAveragePeriods != null ? volumeAveragePeriods : defaults.volumeAveragePeriods(),
+                    rsiOversold != null ? rsiOversold : defaults.rsiOversold(),
+                    rsiNeutralLow != null ? rsiNeutralLow : defaults.rsiNeutralLow(),
+                    rsiNeutralHigh != null ? rsiNeutralHigh : defaults.rsiNeutralHigh(),
+                    rsiOverbought != null ? rsiOverbought : defaults.rsiOverbought(),
+                    smaDistanceExtreme != null ? smaDistanceExtreme : defaults.smaDistanceExtreme(),
+                    smaDistanceModerate != null ? smaDistanceModerate : defaults.smaDistanceModerate(),
+                    macdStrongHistogramAtrRatio != null ? macdStrongHistogramAtrRatio : defaults.macdStrongHistogramAtrRatio(),
+                    atrVolatilityLow != null ? atrVolatilityLow : defaults.atrVolatilityLow(),
+                    atrVolatilityNormal != null ? atrVolatilityNormal : defaults.atrVolatilityNormal(),
+                    atrVolatilityHigh != null ? atrVolatilityHigh : defaults.atrVolatilityHigh(),
+                    volatilityRatioHigh != null ? volatilityRatioHigh : defaults.volatilityRatioHigh(),
                     buyThreshold != null ? buyThreshold : defaults.buyThreshold(),
                     sellThreshold != null ? sellThreshold : defaults.sellThreshold(),
-                    confirmationSnapshots != null ? confirmationSnapshots : defaults.confirmationSnapshots());
+                    confirmationSnapshots != null ? confirmationSnapshots : defaults.confirmationSnapshots(),
+                    targetPercent != null ? targetPercent : defaults.targetPercent(),
+                    stopLossPercent != null ? stopLossPercent : defaults.stopLossPercent(),
+                    commissionRate != null ? commissionRate : defaults.commissionRate());
 
             BacktestReport report = new BacktestRunner().run(candles, Config.getTradingInitialCapital(), params);
             return ResponseEntity.ok(Map.of(
