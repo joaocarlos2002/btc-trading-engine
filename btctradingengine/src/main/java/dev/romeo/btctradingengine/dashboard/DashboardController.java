@@ -1,6 +1,7 @@
 package dev.romeo.btctradingengine.dashboard;
 
 import dev.romeo.btctradingengine.adapter.BinanceKlineClient;
+import dev.romeo.btctradingengine.backtest.BacktestParams;
 import dev.romeo.btctradingengine.backtest.BacktestReport;
 import dev.romeo.btctradingengine.backtest.BacktestRunner;
 import dev.romeo.btctradingengine.config.Config;
@@ -70,7 +71,14 @@ public class DashboardController {
      * does not reflect the real market.
      */
     @GetMapping("/backtest")
-    public ResponseEntity<?> backtest(@RequestParam(defaultValue = "30") int days) {
+    public ResponseEntity<?> backtest(
+            @RequestParam(defaultValue = "30") int days,
+            @RequestParam(required = false) Integer smaPeriod,
+            @RequestParam(required = false) Integer emaPeriod,
+            @RequestParam(required = false) Integer rsiPeriod,
+            @RequestParam(required = false) Double buyThreshold,
+            @RequestParam(required = false) Double sellThreshold,
+            @RequestParam(required = false) Integer confirmationSnapshots) {
         int clampedDays = Math.max(1, Math.min(days, 180));
         try {
             List<CandleEvent> candles = klineClient.loadClosedCandlesRange(
@@ -80,7 +88,16 @@ public class DashboardController {
                         "error", "No candles returned for " + Config.getMarketSymbol() + " over " + clampedDays + " days"));
             }
 
-            BacktestReport report = new BacktestRunner().run(candles, Config.getTradingInitialCapital());
+            BacktestParams defaults = BacktestParams.fromConfig();
+            BacktestParams params = new BacktestParams(
+                    smaPeriod != null ? smaPeriod : defaults.smaPeriod(),
+                    emaPeriod != null ? emaPeriod : defaults.emaPeriod(),
+                    rsiPeriod != null ? rsiPeriod : defaults.rsiPeriod(),
+                    buyThreshold != null ? buyThreshold : defaults.buyThreshold(),
+                    sellThreshold != null ? sellThreshold : defaults.sellThreshold(),
+                    confirmationSnapshots != null ? confirmationSnapshots : defaults.confirmationSnapshots());
+
+            BacktestReport report = new BacktestRunner().run(candles, Config.getTradingInitialCapital(), params);
             return ResponseEntity.ok(Map.of(
                     "symbol", Config.getMarketSymbol(),
                     "interval", Config.getBinanceKlineInterval(),
@@ -88,6 +105,7 @@ public class DashboardController {
                     "candleCount", candles.size(),
                     "rangeStart", candles.get(0).openTime(),
                     "rangeEnd", candles.get(candles.size() - 1).closeTime(),
+                    "params", params,
                     "report", report
             ));
         } catch (Exception e) {

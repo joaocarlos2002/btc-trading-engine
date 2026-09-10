@@ -223,6 +223,48 @@
 
         #resultsWrap { display: none; }
 
+        .divider {
+            margin: 18px 0 14px;
+            padding-top: 16px;
+            border-top: 1px dashed var(--border);
+        }
+        .divider-label {
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        .field input.narrow { width: 110px; }
+        .field small {
+            font-size: 10px;
+            color: var(--muted);
+            font-family: var(--font-mono);
+        }
+
+        button.reset {
+            padding: 9px 14px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--muted-light);
+            font-family: var(--font-sans);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        button.reset:hover { background: var(--surface-hover); color: var(--text); }
+
+        .params-used {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            color: var(--muted);
+            padding: 10px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+        .params-used b { color: var(--muted-light); font-weight: 600; }
+
         .empty-state {
             padding: 40px 20px;
             text-align: center;
@@ -259,8 +301,45 @@
             <p class="hint">
                 Maximo de 180 dias por chamada (limite da API publica da Binance + tempo de resposta).
                 Sempre usa dados reais da mainnet, mesmo se o bot estiver configurado pra operar na testnet.
-                Pra testar outro threshold/periodo de indicador, edite o <code>application.properties</code> e rode de novo.
             </p>
+
+            <div class="divider">
+                <div class="divider-label" style="margin-bottom:12px;">Parametros da estrategia (opcional)</div>
+                <div class="field-row">
+                    <div class="field">
+                        <label for="buyThreshold">Buy threshold</label>
+                        <input type="number" id="buyThreshold" class="narrow" step="0.01" min="0" max="1" placeholder="config" />
+                    </div>
+                    <div class="field">
+                        <label for="sellThreshold">Sell threshold</label>
+                        <input type="number" id="sellThreshold" class="narrow" step="0.01" min="-1" max="0" placeholder="config" />
+                    </div>
+                    <div class="field">
+                        <label for="confirmationSnapshots">Confirmacoes</label>
+                        <input type="number" id="confirmationSnapshots" class="narrow" min="1" placeholder="config" />
+                    </div>
+                    <div class="field">
+                        <label for="smaPeriod">SMA period</label>
+                        <input type="number" id="smaPeriod" class="narrow" min="1" placeholder="config" />
+                    </div>
+                    <div class="field">
+                        <label for="emaPeriod">EMA period</label>
+                        <input type="number" id="emaPeriod" class="narrow" min="1" placeholder="config" />
+                    </div>
+                    <div class="field">
+                        <label for="rsiPeriod">RSI period</label>
+                        <input type="number" id="rsiPeriod" class="narrow" min="1" placeholder="config" />
+                    </div>
+                    <button class="reset" id="resetBtn" type="button">Limpar overrides</button>
+                </div>
+                <p class="hint">
+                    Deixe em branco pra usar o valor atual do <code>application.properties</code>.
+                    Sell threshold precisa ser negativo. Sub-thresholds internos de cada regra
+                    (RSI oversold, distancia da SMA, faixas de ATR etc.) nao sao afetados por isso -
+                    so periodo dos indicadores e o threshold de entrada/confirmacao.
+                </p>
+            </div>
+
             <div id="status"></div>
         </div>
     </div>
@@ -268,6 +347,7 @@
     <div id="resultsWrap">
         <div class="panel">
             <div class="meta-line" id="metaLine"></div>
+            <div class="params-used" id="paramsUsed"></div>
             <div class="metrics-grid" id="metricsGrid"></div>
         </div>
     </div>
@@ -290,10 +370,22 @@ document.querySelectorAll('.preset-btn').forEach(btn => {
 });
 $('runBtn').addEventListener('click', runBacktest);
 $('days').addEventListener('keydown', e => { if (e.key === 'Enter') runBacktest(); });
+$('resetBtn').addEventListener('click', () => {
+    ['buyThreshold', 'sellThreshold', 'confirmationSnapshots', 'smaPeriod', 'emaPeriod', 'rsiPeriod']
+        .forEach(id => { $(id).value = ''; });
+});
+
+const OVERRIDE_FIELDS = ['smaPeriod', 'emaPeriod', 'rsiPeriod', 'buyThreshold', 'sellThreshold', 'confirmationSnapshots'];
 
 async function runBacktest() {
     const days = Math.max(1, Math.min(180, Number($('days').value) || 30));
     $('days').value = days;
+
+    const params = new URLSearchParams({ days });
+    OVERRIDE_FIELDS.forEach(id => {
+        const raw = $(id).value.trim();
+        if (raw !== '') params.set(id, raw);
+    });
 
     const btn = $('runBtn');
     btn.disabled = true;
@@ -303,7 +395,7 @@ async function runBacktest() {
     $('emptyPanel').style.display = 'none';
 
     try {
-        const res = await fetch(`/api/backtest?days=${days}`);
+        const res = await fetch(`/api/backtest?${params.toString()}`);
         const body = await res.json();
 
         if (!res.ok) {
@@ -323,11 +415,18 @@ async function runBacktest() {
 
 function render(data) {
     const r = data.report;
+    const p = data.params;
 
     $('metaLine').innerHTML = `
         <span>${data.symbol} · ${data.interval}</span>
         <span><b>${data.candleCount}</b> candles</span>
         <span>${new Date(data.rangeStart).toLocaleDateString('pt-BR')} &rarr; ${new Date(data.rangeEnd).toLocaleDateString('pt-BR')}</span>
+    `;
+
+    $('paramsUsed').innerHTML = `
+        buy=<b>${p.buyThreshold}</b> · sell=<b>${p.sellThreshold}</b> ·
+        confirms=<b>${p.confirmationSnapshots}</b> ·
+        sma=<b>${p.smaPeriod}</b> · ema=<b>${p.emaPeriod}</b> · rsi=<b>${p.rsiPeriod}</b>
     `;
 
     const metrics = [
