@@ -33,8 +33,8 @@ public class BacktestRunner {
         predictor.addRule(new RsiRule());
         predictor.addRule(new SmaMomentumRule());
         predictor.addRule(new MacdRule());
-        predictor.addRule(new AtrRule());
-        predictor.addRule(new VolatilityRule());
+        predictor.addFilterRule(new AtrRule());
+        predictor.addFilterRule(new VolatilityRule());
 
         FeatureExtractor extractor = new FeatureExtractor(
                 Config.getSmaPeriod(),

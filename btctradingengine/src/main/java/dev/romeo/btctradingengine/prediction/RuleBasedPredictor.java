@@ -18,6 +18,12 @@ public class RuleBasedPredictor implements FeatureEventListener {
     // Hysteresis thresholds - Ã©vita oscilaÃ§Ã£o
     // Temporal confirmation - evita entrada em um Ãºnico snapshot
     private final List<SignalRule> rules;
+    // Regras de filtro (ex: ATR, Volatility) nao entram na media direcional -
+    // sua faixa de score e muito menor que a das regras direcionais (RSI/SMA/MACD),
+    // entao inclui-las na mesma media tornava o threshold de entrada matematicamente
+    // inatingivel (o teto teorico da media ficava abaixo do proprio threshold).
+    // Em vez disso, atuam como veto: score medio negativo bloqueia a entrada.
+    private final List<SignalRule> filterRules;
     private final PredictionEventListener listener;
 
     // Estado para confirmaÃ§Ã£o temporal
@@ -26,12 +32,18 @@ public class RuleBasedPredictor implements FeatureEventListener {
 
     public RuleBasedPredictor(PredictionEventListener listener) {
         this.rules = new ArrayList<>();
+        this.filterRules = new ArrayList<>();
         this.listener = listener;
     }
 
     public void addRule(SignalRule rule) {
         rules.add(rule);
         logger.debug("Added rule: {}", rule.getName());
+    }
+
+    public void addFilterRule(SignalRule rule) {
+        filterRules.add(rule);
+        logger.debug("Added filter rule: {}", rule.getName());
     }
 
     @Override
@@ -75,6 +87,11 @@ public class RuleBasedPredictor implements FeatureEventListener {
                     candidateSignal, signalConfirmationCount, Config.getConfirmationSnapshots());
         }
 
+        if (finalSignal != Signal.HOLD && isVetoedByFilters(features, reasonBuilder)) {
+            confirmationStatus += " [blocked by filter rules]";
+            finalSignal = Signal.HOLD;
+        }
+
         return PredictionVector.builder()
                 .instrument(features.instrument())
                 .timestamp(features.timestamp())
@@ -86,6 +103,23 @@ public class RuleBasedPredictor implements FeatureEventListener {
                 .modelVersion(MODEL_VERSION)
                 .reason(reasonBuilder.toString() + confirmationStatus)
                 .build();
+    }
+
+    private boolean isVetoedByFilters(FeatureVector features, StringBuilder reasonBuilder) {
+        if (filterRules.isEmpty()) {
+            return false;
+        }
+
+        double filterSum = 0.0;
+        for (SignalRule rule : filterRules) {
+            double score = rule.evaluate(features);
+            filterSum += score;
+            reasonBuilder.append(String.format("%s=%.2f; ", rule.getName(), score));
+        }
+
+        double filterAvg = filterSum / filterRules.size();
+        reasonBuilder.append(String.format("filterAvg=%.3f; ", filterAvg));
+        return filterAvg < 0;
     }
 
     private Signal applyTemporalConfirmation(Signal candidateSignal) {

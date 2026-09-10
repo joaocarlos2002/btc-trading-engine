@@ -67,15 +67,15 @@ public class Config {
     public static BigDecimal getRsiOverbought() { return getDecimal("prediction.rsi.overbought", "70"); }
     public static BigDecimal getSmaDistanceExtreme() { return getDecimal("prediction.sma.distance.extreme", "3"); }
     public static BigDecimal getSmaDistanceModerate() { return getDecimal("prediction.sma.distance.moderate", "1"); }
-    public static BigDecimal getAtrVolatilityLow() { return getDecimal("prediction.atr.volatility.low", "2"); }
-    public static BigDecimal getAtrVolatilityNormal() { return getDecimal("prediction.atr.volatility.normal", "4"); }
-    public static BigDecimal getAtrVolatilityHigh() { return getDecimal("prediction.atr.volatility.high", "6"); }
+    public static BigDecimal getAtrVolatilityLow() { return getDecimal("prediction.atr.volatility.low", "0.15"); }
+    public static BigDecimal getAtrVolatilityNormal() { return getDecimal("prediction.atr.volatility.normal", "0.35"); }
+    public static BigDecimal getAtrVolatilityHigh() { return getDecimal("prediction.atr.volatility.high", "0.55"); }
     public static BigDecimal getMacdStrongHistogramAtrRatio() {
         return getDecimal("prediction.macd.histogram.strong.atr.ratio", "0.20");
     }
     public static BigDecimal getVolatilityRatioHigh() { return getDecimal("prediction.volatility.ratio.high", "1.5"); }
-    public static double getBuyThreshold() { return Double.parseDouble(getProperty("prediction.buy.threshold", "0.65")); }
-    public static double getSellThreshold() { return Double.parseDouble(getProperty("prediction.sell.threshold", "-0.65")); }
+    public static double getBuyThreshold() { return Double.parseDouble(getProperty("prediction.buy.threshold", "0.35")); }
+    public static double getSellThreshold() { return Double.parseDouble(getProperty("prediction.sell.threshold", "-0.35")); }
     public static double getHoldMin() { return Double.parseDouble(getProperty("prediction.hold.min", "-0.3")); }
     public static double getHoldMax() { return Double.parseDouble(getProperty("prediction.hold.max", "0.3")); }
     public static int getConfirmationSnapshots() { return Integer.parseInt(getProperty("prediction.confirmation.snapshots", "2")); }
