@@ -11,16 +11,17 @@ import static org.junit.jupiter.api.Assertions.*;
 
 public class AtrRuleTest {
 
-    // Thresholds (0.15 / 0.35 / 0.55) are calibrated for the real 15m BTCUSDT ATR%
-    // distribution (median ~0.24%, p95 ~0.54% over a 180-day sample) - not the 2/4/6%
-    // used for daily candles, which the 15m ATR% never reaches.
+    // Thresholds (0.023 / 0.060 / 0.119) are calibrated for the rescaled 1m ATR(210) %
+    // distribution on BTCUSDT (p25/p75/p95 over a 90-day sample) - this project already
+    // got bitten once by reusing thresholds from a different timeframe, so these are NOT
+    // portable if indicator.atr.period or the candle interval changes again.
 
     @Test
     public void lowAtrLowVolatility() {
         AtrRule rule = new AtrRule();
 
-        // ATR = 0.1, Price = 100 â†’ ATR% = 0.1%
-        FeatureVector features = createFeatures("100", "0.1");
+        // ATR = 0.01, Price = 100 â†’ ATR% = 0.01%
+        FeatureVector features = createFeatures("100", "0.01");
         double score = rule.evaluate(features);
 
         assertTrue(score < 0, "Low ATR should reduce confidence");
@@ -31,8 +32,8 @@ public class AtrRuleTest {
     public void normalAtrNeutral() {
         AtrRule rule = new AtrRule();
 
-        // ATR = 0.25, Price = 100 â†’ ATR% = 0.25%
-        FeatureVector features = createFeatures("100", "0.25");
+        // ATR = 0.04, Price = 100 â†’ ATR% = 0.04%
+        FeatureVector features = createFeatures("100", "0.04");
         double score = rule.evaluate(features);
 
         assertEquals(0.0, score, 0.01);
@@ -42,8 +43,8 @@ public class AtrRuleTest {
     public void moderateAtrPositive() {
         AtrRule rule = new AtrRule();
 
-        // ATR = 0.45, Price = 100 â†’ ATR% = 0.45%
-        FeatureVector features = createFeatures("100", "0.45");
+        // ATR = 0.08, Price = 100 â†’ ATR% = 0.08%
+        FeatureVector features = createFeatures("100", "0.08");
         double score = rule.evaluate(features);
 
         assertTrue(score > 0 && score < 0.2, "Moderate ATR should be slightly positive");
@@ -54,8 +55,8 @@ public class AtrRuleTest {
     public void highAtrBreakout() {
         AtrRule rule = new AtrRule();
 
-        // ATR = 0.7, Price = 100 â†’ ATR% = 0.7%
-        FeatureVector features = createFeatures("100", "0.7");
+        // ATR = 0.15, Price = 100 â†’ ATR% = 0.15%
+        FeatureVector features = createFeatures("100", "0.15");
         double score = rule.evaluate(features);
 
         assertTrue(score > 0.1, "High ATR should be more positive (breakout potential)");

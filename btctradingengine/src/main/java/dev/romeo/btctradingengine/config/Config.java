@@ -30,32 +30,32 @@ public class Config {
     }
 
     public static String getBinanceKlineInterval() {
-        return getProperty("market.binance.interval", "15m");
+        return getProperty("market.binance.interval", "1m");
     }
 
     public static int getHistoryCandles() {
-        return Integer.parseInt(getProperty("market.history.candles", "200"));
+        return Integer.parseInt(getProperty("market.history.candles", "1000"));
     }
 
     public static int getSmaPeriod() {
-        return Integer.parseInt(getProperty("indicator.sma.period", "50"));
+        return Integer.parseInt(getProperty("indicator.sma.period", "750"));
     }
 
     public static int getEmaPeriod() {
-        return Integer.parseInt(getProperty("indicator.ema.period", "26"));
+        return Integer.parseInt(getProperty("indicator.ema.period", "390"));
     }
 
     public static int getRsiPeriod() {
-        return Integer.parseInt(getProperty("indicator.rsi.period", "14"));
+        return Integer.parseInt(getProperty("indicator.rsi.period", "210"));
     }
 
-    public static int getAtrPeriod() { return Integer.parseInt(getProperty("indicator.atr.period", "14")); }
-    public static int getMacdFastPeriod() { return Integer.parseInt(getProperty("indicator.macd.fast.period", "12")); }
-    public static int getMacdSlowPeriod() { return Integer.parseInt(getProperty("indicator.macd.slow.period", "26")); }
-    public static int getMacdSignalPeriod() { return Integer.parseInt(getProperty("indicator.macd.signal.period", "9")); }
-    public static int getVolatilityShortPeriods() { return Integer.parseInt(getProperty("feature.volatility.short.periods", "5")); }
-    public static int getVolatilityLongPeriods() { return Integer.parseInt(getProperty("feature.volatility.long.periods", "20")); }
-    public static int getVolumeAveragePeriods() { return Integer.parseInt(getProperty("feature.volume.average.periods", "20")); }
+    public static int getAtrPeriod() { return Integer.parseInt(getProperty("indicator.atr.period", "210")); }
+    public static int getMacdFastPeriod() { return Integer.parseInt(getProperty("indicator.macd.fast.period", "180")); }
+    public static int getMacdSlowPeriod() { return Integer.parseInt(getProperty("indicator.macd.slow.period", "390")); }
+    public static int getMacdSignalPeriod() { return Integer.parseInt(getProperty("indicator.macd.signal.period", "135")); }
+    public static int getVolatilityShortPeriods() { return Integer.parseInt(getProperty("feature.volatility.short.periods", "75")); }
+    public static int getVolatilityLongPeriods() { return Integer.parseInt(getProperty("feature.volatility.long.periods", "300")); }
+    public static int getVolumeAveragePeriods() { return Integer.parseInt(getProperty("feature.volume.average.periods", "300")); }
 
     public static BigDecimal getDecimal(String key, String defaultValue) {
         return new BigDecimal(getProperty(key, defaultValue));
@@ -67,15 +67,15 @@ public class Config {
     public static BigDecimal getRsiOverbought() { return getDecimal("prediction.rsi.overbought", "70"); }
     public static BigDecimal getSmaDistanceExtreme() { return getDecimal("prediction.sma.distance.extreme", "3"); }
     public static BigDecimal getSmaDistanceModerate() { return getDecimal("prediction.sma.distance.moderate", "1"); }
-    public static BigDecimal getAtrVolatilityLow() { return getDecimal("prediction.atr.volatility.low", "0.15"); }
-    public static BigDecimal getAtrVolatilityNormal() { return getDecimal("prediction.atr.volatility.normal", "0.35"); }
-    public static BigDecimal getAtrVolatilityHigh() { return getDecimal("prediction.atr.volatility.high", "0.55"); }
+    public static BigDecimal getAtrVolatilityLow() { return getDecimal("prediction.atr.volatility.low", "0.023"); }
+    public static BigDecimal getAtrVolatilityNormal() { return getDecimal("prediction.atr.volatility.normal", "0.060"); }
+    public static BigDecimal getAtrVolatilityHigh() { return getDecimal("prediction.atr.volatility.high", "0.119"); }
     public static BigDecimal getMacdStrongHistogramAtrRatio() {
         return getDecimal("prediction.macd.histogram.strong.atr.ratio", "0.20");
     }
     public static BigDecimal getVolatilityRatioHigh() { return getDecimal("prediction.volatility.ratio.high", "1.5"); }
-    public static double getBuyThreshold() { return Double.parseDouble(getProperty("prediction.buy.threshold", "0.35")); }
-    public static double getSellThreshold() { return Double.parseDouble(getProperty("prediction.sell.threshold", "-0.35")); }
+    public static double getBuyThreshold() { return Double.parseDouble(getProperty("prediction.buy.threshold", "0.28")); }
+    public static double getSellThreshold() { return Double.parseDouble(getProperty("prediction.sell.threshold", "-0.28")); }
     public static double getHoldMin() { return Double.parseDouble(getProperty("prediction.hold.min", "-0.3")); }
     public static double getHoldMax() { return Double.parseDouble(getProperty("prediction.hold.max", "0.3")); }
     public static int getConfirmationSnapshots() { return Integer.parseInt(getProperty("prediction.confirmation.snapshots", "2")); }
