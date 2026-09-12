@@ -87,6 +87,40 @@ public class RuleBasedPredictorTest {
     }
 
     @Test
+    public void filterRuleVetoesConfirmedSignal() {
+        List<PredictionVector> predictions = new ArrayList<>();
+        RuleBasedPredictor predictor = new RuleBasedPredictor(predictions::add);
+        predictor.addRule(new RsiRule());
+        predictor.addRule(new SmaMomentumRule());
+        predictor.addFilterRule(new FixedScoreRule(-0.5));
+
+        FeatureVector features = createFeatures("100", "25", smaDistance("-3.0"));
+        predictor.onEvent(features);
+        predictor.onEvent(features);
+
+        assertEquals(2, predictions.size());
+        assertEquals(Signal.HOLD, predictions.get(1).signal(),
+                "A negative filter rule average must veto an otherwise-confirmed BUY");
+    }
+
+    @Test
+    public void filterRuleAllowsSignalWhenNonNegative() {
+        List<PredictionVector> predictions = new ArrayList<>();
+        RuleBasedPredictor predictor = new RuleBasedPredictor(predictions::add);
+        predictor.addRule(new RsiRule());
+        predictor.addRule(new SmaMomentumRule());
+        predictor.addFilterRule(new FixedScoreRule(0.1));
+
+        FeatureVector features = createFeatures("100", "25", smaDistance("-3.0"));
+        predictor.onEvent(features);
+        predictor.onEvent(features);
+
+        assertEquals(2, predictions.size());
+        assertEquals(Signal.BUY, predictions.get(1).signal(),
+                "A non-negative filter rule average must not block a confirmed BUY");
+    }
+
+    @Test
     public void predictorHoldOnConflictingSignals() {
         List<PredictionVector> predictions = new ArrayList<>();
         RuleBasedPredictor predictor = new RuleBasedPredictor(predictions::add);
@@ -164,6 +198,24 @@ public class RuleBasedPredictorTest {
 
     private BigDecimal smaDistance(String value) {
         return new BigDecimal(value);
+    }
+
+    private static class FixedScoreRule implements SignalRule {
+        private final double score;
+
+        FixedScoreRule(double score) {
+            this.score = score;
+        }
+
+        @Override
+        public double evaluate(FeatureVector features) {
+            return score;
+        }
+
+        @Override
+        public String getName() {
+            return "Fixed(" + score + ")";
+        }
     }
 }
 

@@ -67,23 +67,26 @@ public class Config {
     public static BigDecimal getRsiOverbought() { return getDecimal("prediction.rsi.overbought", "70"); }
     public static BigDecimal getSmaDistanceExtreme() { return getDecimal("prediction.sma.distance.extreme", "3"); }
     public static BigDecimal getSmaDistanceModerate() { return getDecimal("prediction.sma.distance.moderate", "1"); }
-    public static BigDecimal getAtrVolatilityLow() { return getDecimal("prediction.atr.volatility.low", "2"); }
-    public static BigDecimal getAtrVolatilityNormal() { return getDecimal("prediction.atr.volatility.normal", "4"); }
-    public static BigDecimal getAtrVolatilityHigh() { return getDecimal("prediction.atr.volatility.high", "6"); }
+    public static BigDecimal getAtrVolatilityLow() { return getDecimal("prediction.atr.volatility.low", "0.15"); }
+    public static BigDecimal getAtrVolatilityNormal() { return getDecimal("prediction.atr.volatility.normal", "0.35"); }
+    public static BigDecimal getAtrVolatilityHigh() { return getDecimal("prediction.atr.volatility.high", "0.55"); }
     public static BigDecimal getMacdStrongHistogramAtrRatio() {
         return getDecimal("prediction.macd.histogram.strong.atr.ratio", "0.20");
     }
     public static BigDecimal getVolatilityRatioHigh() { return getDecimal("prediction.volatility.ratio.high", "1.5"); }
-    public static double getBuyThreshold() { return Double.parseDouble(getProperty("prediction.buy.threshold", "0.65")); }
-    public static double getSellThreshold() { return Double.parseDouble(getProperty("prediction.sell.threshold", "-0.65")); }
+    public static double getBuyThreshold() { return Double.parseDouble(getProperty("prediction.buy.threshold", "0.35")); }
+    public static double getSellThreshold() { return Double.parseDouble(getProperty("prediction.sell.threshold", "-0.35")); }
     public static double getHoldMin() { return Double.parseDouble(getProperty("prediction.hold.min", "-0.3")); }
     public static double getHoldMax() { return Double.parseDouble(getProperty("prediction.hold.max", "0.3")); }
     public static int getConfirmationSnapshots() { return Integer.parseInt(getProperty("prediction.confirmation.snapshots", "2")); }
     public static BigDecimal getTradingTargetPercent() { return getDecimal("trading.target.percent", "2.0"); }
     public static BigDecimal getTradingStopLossPercent() { return getDecimal("trading.stop.loss.percent", "1.5"); }
     public static boolean isRealTradingEnabled() { return Boolean.parseBoolean(getProperty("trading.real.enabled", "false")); }
+    public static boolean isBinanceTestnetEndpoint() { return getBinanceRestUrl().toLowerCase().contains("testnet"); }
+    public static boolean isMainnetTradingConfirmed() { return Boolean.parseBoolean(getProperty("trading.confirm.mainnet", "false")); }
     public static BigDecimal getTradingInitialCapital() { return getDecimal("trading.initial.capital.usdt", "10"); }
     public static BigDecimal getTradingMaxDrawdownPercent() { return getDecimal("trading.max.drawdown.percent", "5"); }
+    public static long getMaxDataStalenessSeconds() { return Long.parseLong(getProperty("trading.max.data.staleness.seconds", "60")); }
     public static BigDecimal getBacktestCommissionRate() { return getDecimal("backtest.commission.rate", "0.001"); }
 
     public static void validate() {
@@ -122,9 +125,17 @@ public class Config {
                 || getTradingMaxDrawdownPercent().compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("Trading capital and max drawdown must be positive");
         }
+        requirePositive("trading.max.data.staleness.seconds", getMaxDataStalenessSeconds());
         if (isRealTradingEnabled()
                 && (getBinanceApiKey().isBlank() || getBinanceApiSecret().isBlank())) {
             throw new IllegalArgumentException("Real trading requires Binance API credentials");
+        }
+        if (isRealTradingEnabled() && !isBinanceTestnetEndpoint() && !isMainnetTradingConfirmed()) {
+            throw new IllegalArgumentException(
+                    "Real trading is enabled against a non-testnet Binance endpoint (" + getBinanceRestUrl() + ") "
+                    + "but trading.confirm.mainnet is not set to true. This is a safety guard against "
+                    + "accidentally trading with real funds - set trading.confirm.mainnet=true only when "
+                    + "you deliberately intend to go live on mainnet.");
         }
         if (getBacktestCommissionRate().compareTo(BigDecimal.ZERO) < 0) {
             throw new IllegalArgumentException("backtest.commission.rate cannot be negative");

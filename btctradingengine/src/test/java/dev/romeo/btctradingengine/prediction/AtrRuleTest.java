@@ -11,12 +11,16 @@ import static org.junit.jupiter.api.Assertions.*;
 
 public class AtrRuleTest {
 
+    // Thresholds (0.15 / 0.35 / 0.55) are calibrated for the real 15m BTCUSDT ATR%
+    // distribution (median ~0.24%, p95 ~0.54% over a 180-day sample) - not the 2/4/6%
+    // used for daily candles, which the 15m ATR% never reaches.
+
     @Test
     public void lowAtrLowVolatility() {
         AtrRule rule = new AtrRule();
 
-        // ATR = 1, Price = 100 â†’ ATR% = 1%
-        FeatureVector features = createFeatures("100", "1");
+        // ATR = 0.1, Price = 100 â†’ ATR% = 0.1%
+        FeatureVector features = createFeatures("100", "0.1");
         double score = rule.evaluate(features);
 
         assertTrue(score < 0, "Low ATR should reduce confidence");
@@ -27,8 +31,8 @@ public class AtrRuleTest {
     public void normalAtrNeutral() {
         AtrRule rule = new AtrRule();
 
-        // ATR = 3, Price = 100 â†’ ATR% = 3%
-        FeatureVector features = createFeatures("100", "3");
+        // ATR = 0.25, Price = 100 â†’ ATR% = 0.25%
+        FeatureVector features = createFeatures("100", "0.25");
         double score = rule.evaluate(features);
 
         assertEquals(0.0, score, 0.01);
@@ -38,8 +42,8 @@ public class AtrRuleTest {
     public void moderateAtrPositive() {
         AtrRule rule = new AtrRule();
 
-        // ATR = 5, Price = 100 â†’ ATR% = 5%
-        FeatureVector features = createFeatures("100", "5");
+        // ATR = 0.45, Price = 100 â†’ ATR% = 0.45%
+        FeatureVector features = createFeatures("100", "0.45");
         double score = rule.evaluate(features);
 
         assertTrue(score > 0 && score < 0.2, "Moderate ATR should be slightly positive");
@@ -50,8 +54,8 @@ public class AtrRuleTest {
     public void highAtrBreakout() {
         AtrRule rule = new AtrRule();
 
-        // ATR = 8, Price = 100 â†’ ATR% = 8%
-        FeatureVector features = createFeatures("100", "8");
+        // ATR = 0.7, Price = 100 â†’ ATR% = 0.7%
+        FeatureVector features = createFeatures("100", "0.7");
         double score = rule.evaluate(features);
 
         assertTrue(score > 0.1, "High ATR should be more positive (breakout potential)");

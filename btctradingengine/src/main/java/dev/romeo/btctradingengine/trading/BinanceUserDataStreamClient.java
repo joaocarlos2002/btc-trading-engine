@@ -13,6 +13,7 @@ import java.net.URI;
 import java.net.http.WebSocket;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 public class BinanceUserDataStreamClient {
@@ -22,12 +23,17 @@ public class BinanceUserDataStreamClient {
     private final String baseUrl;
     private final ObjectMapper mapper = new ObjectMapper();
     private final HttpClient httpClient;
+    private final int maxRetries = Config.getBinanceMaxRetries();
+    private final long initialBackoffMs = Config.getBinanceInitialBackoffMs();
+    private final long maxBackoffMs = Config.getBinanceMaxBackoffMs();
+    private final AtomicInteger reconnectAttempts = new AtomicInteger(0);
 
     private WebSocket webSocket;
     private String listenKey;
     private Consumer<ExecutionReport> executionReportListener;
     private Consumer<String> connectionStatusListener;
     private volatile boolean connected = false;
+    private volatile boolean running = false;
     private static final long LISTEN_KEY_REFRESH_INTERVAL_MS = 20 * 60 * 1000; // 20 minutes
 
     public BinanceUserDataStreamClient(String apiKey) {
@@ -37,6 +43,15 @@ public class BinanceUserDataStreamClient {
     }
 
     public boolean connect() {
+        running = true;
+        boolean success = attemptConnect();
+        if (success) {
+            reconnectAttempts.set(0);
+        }
+        return success;
+    }
+
+    private boolean attemptConnect() {
         try {
             // Step 1: Get listenKey
             listenKey = createListenKey();
@@ -69,6 +84,7 @@ public class BinanceUserDataStreamClient {
     }
 
     public void disconnect() {
+        running = false;
         try {
             if (webSocket != null) {
                 webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "Closing");
@@ -82,6 +98,41 @@ public class BinanceUserDataStreamClient {
         } catch (Exception e) {
             logger.warn("Error during disconnect: {}", e.getMessage());
         }
+    }
+
+    private void scheduleReconnect() {
+        if (!running) {
+            return;
+        }
+
+        int attempt = reconnectAttempts.incrementAndGet();
+        if (attempt > maxRetries) {
+            logger.error("âœ— Max reconnect attempts ({}) reached for User Data Stream. Giving up; falling back to polling.", maxRetries);
+            notifyConnectionStatus("failed");
+            return;
+        }
+
+        long backoffMs = calculateBackoff(attempt);
+        logger.warn("Reconnecting User Data Stream (attempt {}/{}) in {}ms", attempt, maxRetries, backoffMs);
+
+        Thread reconnectThread = new Thread(() -> {
+            try {
+                Thread.sleep(backoffMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            if (running && attemptConnect()) {
+                reconnectAttempts.set(0);
+            }
+        }, "UserDataStreamReconnect");
+        reconnectThread.setDaemon(true);
+        reconnectThread.start();
+    }
+
+    private long calculateBackoff(int attempt) {
+        long backoff = initialBackoffMs * (1L << Math.min(attempt - 1, 6));
+        return Math.min(backoff, maxBackoffMs);
     }
 
     public void setExecutionReportListener(Consumer<ExecutionReport> listener) {
@@ -195,6 +246,7 @@ public class BinanceUserDataStreamClient {
             logger.error("âœ— WebSocket error: {}", error.getMessage());
             connected = false;
             notifyConnectionStatus("error");
+            scheduleReconnect();
         }
 
         @Override
@@ -202,6 +254,7 @@ public class BinanceUserDataStreamClient {
             logger.warn("âœ— WebSocket closed: {} {}", statusCode, reason);
             connected = false;
             notifyConnectionStatus("closed");
+            scheduleReconnect();
             return null;
         }
     }

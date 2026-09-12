@@ -7,6 +7,18 @@ import dev.romeo.btctradingengine.prediction.SignalRule;
 import java.math.BigDecimal;
 
 public class SmaMomentumRule implements SignalRule {
+    private final BigDecimal distanceExtreme;
+    private final BigDecimal distanceModerate;
+
+    public SmaMomentumRule() {
+        this(Config.getSmaDistanceExtreme(), Config.getSmaDistanceModerate());
+    }
+
+    /** Allows overriding thresholds without touching global Config - used by on-demand backtests. */
+    public SmaMomentumRule(BigDecimal distanceExtreme, BigDecimal distanceModerate) {
+        this.distanceExtreme = distanceExtreme;
+        this.distanceModerate = distanceModerate;
+    }
 
     @Override
     public double evaluate(FeatureVector features) {
@@ -16,16 +28,16 @@ public class SmaMomentumRule implements SignalRule {
         // Positivo: acima da SMA (bullish)
         // Negativo: abaixo da SMA (bearish)
 
-        if (smaDistance.compareTo(Config.getSmaDistanceExtreme()) > 0) {
+        if (smaDistance.compareTo(distanceExtreme) > 0) {
             // Muito acima da SMA (possÃ­vel reversÃ£o para baixo)
             return -0.5;
-        } else if (smaDistance.compareTo(Config.getSmaDistanceModerate()) > 0) {
+        } else if (smaDistance.compareTo(distanceModerate) > 0) {
             // Moderadamente acima (manutenÃ§Ã£o)
             return 0.2;
-        } else if (smaDistance.compareTo(Config.getSmaDistanceModerate().negate()) >= 0) {
+        } else if (smaDistance.compareTo(distanceModerate.negate()) >= 0) {
             // Perto da SMA (neutro)
             return 0.0;
-        } else if (smaDistance.compareTo(Config.getSmaDistanceExtreme().negate()) > 0) {
+        } else if (smaDistance.compareTo(distanceExtreme.negate()) > 0) {
             // Moderadamente abaixo (possÃ­vel reversÃ£o para cima)
             return 0.3;
         } else {

@@ -27,13 +27,30 @@ public class FeatureExtractor implements CandleEventListener {
     private final MacdIndicator macdIndicator;
     private final AtrIndicator atrIndicator;
     private final FeatureEventListener listener;
+    private final int volatilityShortPeriods;
+    private final int volatilityLongPeriods;
+    private final int volumeAveragePeriods;
 
     public FeatureExtractor(int smaPeriod, int emaPeriod, int rsiPeriod, FeatureEventListener listener) {
+        this(smaPeriod, emaPeriod, rsiPeriod, Config.getAtrPeriod(),
+                Config.getMacdFastPeriod(), Config.getMacdSlowPeriod(), Config.getMacdSignalPeriod(),
+                Config.getVolatilityShortPeriods(), Config.getVolatilityLongPeriods(), Config.getVolumeAveragePeriods(),
+                listener);
+    }
+
+    /** Allows overriding every period without touching global Config - used by on-demand backtests. */
+    public FeatureExtractor(int smaPeriod, int emaPeriod, int rsiPeriod, int atrPeriod,
+                             int macdFastPeriod, int macdSlowPeriod, int macdSignalPeriod,
+                             int volatilityShortPeriods, int volatilityLongPeriods, int volumeAveragePeriods,
+                             FeatureEventListener listener) {
         this.smaIncremental = new SmaIncremental(smaPeriod);
         this.emaIncremental = new Ema(emaPeriod);
         this.rsiIncremental = new Rsi(rsiPeriod);
-        this.macdIndicator = new MacdIndicator(Config.getMacdFastPeriod(), Config.getMacdSlowPeriod(), Config.getMacdSignalPeriod());
-        this.atrIndicator = new AtrIndicator(Config.getAtrPeriod());
+        this.macdIndicator = new MacdIndicator(macdFastPeriod, macdSlowPeriod, macdSignalPeriod);
+        this.atrIndicator = new AtrIndicator(atrPeriod);
+        this.volatilityShortPeriods = volatilityShortPeriods;
+        this.volatilityLongPeriods = volatilityLongPeriods;
+        this.volumeAveragePeriods = volumeAveragePeriods;
         this.listener = listener;
     }
 
@@ -72,8 +89,8 @@ public class FeatureExtractor implements CandleEventListener {
                                           Optional<BigDecimal> atr) {
 
         BigDecimal returnPct1m = calculateReturn(candle);
-        BigDecimal volatility5m = buffer.volatility(Config.getVolatilityShortPeriods()).orElse(BigDecimal.ZERO);
-        BigDecimal volatility20m = buffer.volatility(Config.getVolatilityLongPeriods()).orElse(BigDecimal.ZERO);
+        BigDecimal volatility5m = buffer.volatility(volatilityShortPeriods).orElse(BigDecimal.ZERO);
+        BigDecimal volatility20m = buffer.volatility(volatilityLongPeriods).orElse(BigDecimal.ZERO);
         BigDecimal smaDistance = calculateSmaDistance(candle.close(), sma);
         BigDecimal emaDistance = calculateEmaDistance(candle.close(), ema);
         BigDecimal rsiValue = rsi.orElse(BigDecimal.valueOf(50));
@@ -141,7 +158,7 @@ public class FeatureExtractor implements CandleEventListener {
     }
 
     private BigDecimal calculateVolumeRatio(CandleEvent candle) {
-        var avgVolume = buffer.averageVolume(Config.getVolumeAveragePeriods());
+        var avgVolume = buffer.averageVolume(volumeAveragePeriods);
         if (avgVolume.isEmpty() || avgVolume.get().compareTo(BigDecimal.ZERO) == 0) {
             return BigDecimal.ONE;
         }

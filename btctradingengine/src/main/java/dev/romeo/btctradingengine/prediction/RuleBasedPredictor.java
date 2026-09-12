@@ -18,20 +18,43 @@ public class RuleBasedPredictor implements FeatureEventListener {
     // Hysteresis thresholds - Ã©vita oscilaÃ§Ã£o
     // Temporal confirmation - evita entrada em um Ãºnico snapshot
     private final List<SignalRule> rules;
+    // Regras de filtro (ex: ATR, Volatility) nao entram na media direcional -
+    // sua faixa de score e muito menor que a das regras direcionais (RSI/SMA/MACD),
+    // entao inclui-las na mesma media tornava o threshold de entrada matematicamente
+    // inatingivel (o teto teorico da media ficava abaixo do proprio threshold).
+    // Em vez disso, atuam como veto: score medio negativo bloqueia a entrada.
+    private final List<SignalRule> filterRules;
     private final PredictionEventListener listener;
+    private final double buyThreshold;
+    private final double sellThreshold;
+    private final int confirmationSnapshots;
 
     // Estado para confirmaÃ§Ã£o temporal
     private Signal lastSignal = Signal.HOLD;
     private int signalConfirmationCount = 0;
 
     public RuleBasedPredictor(PredictionEventListener listener) {
+        this(listener, Config.getBuyThreshold(), Config.getSellThreshold(), Config.getConfirmationSnapshots());
+    }
+
+    /** Allows overriding the entry threshold/confirmation without touching global Config - used by on-demand backtests. */
+    public RuleBasedPredictor(PredictionEventListener listener, double buyThreshold, double sellThreshold, int confirmationSnapshots) {
         this.rules = new ArrayList<>();
+        this.filterRules = new ArrayList<>();
         this.listener = listener;
+        this.buyThreshold = buyThreshold;
+        this.sellThreshold = sellThreshold;
+        this.confirmationSnapshots = confirmationSnapshots;
     }
 
     public void addRule(SignalRule rule) {
         rules.add(rule);
         logger.debug("Added rule: {}", rule.getName());
+    }
+
+    public void addFilterRule(SignalRule rule) {
+        filterRules.add(rule);
+        logger.debug("Added filter rule: {}", rule.getName());
     }
 
     @Override
@@ -72,7 +95,12 @@ public class RuleBasedPredictor implements FeatureEventListener {
         String confirmationStatus = "";
         if (finalSignal != candidateSignal) {
             confirmationStatus = String.format(" [candidate=%s, need=%d/%d confirms]",
-                    candidateSignal, signalConfirmationCount, Config.getConfirmationSnapshots());
+                    candidateSignal, signalConfirmationCount, confirmationSnapshots);
+        }
+
+        if (finalSignal != Signal.HOLD && isVetoedByFilters(features, reasonBuilder)) {
+            confirmationStatus += " [blocked by filter rules]";
+            finalSignal = Signal.HOLD;
         }
 
         return PredictionVector.builder()
@@ -88,6 +116,23 @@ public class RuleBasedPredictor implements FeatureEventListener {
                 .build();
     }
 
+    private boolean isVetoedByFilters(FeatureVector features, StringBuilder reasonBuilder) {
+        if (filterRules.isEmpty()) {
+            return false;
+        }
+
+        double filterSum = 0.0;
+        for (SignalRule rule : filterRules) {
+            double score = rule.evaluate(features);
+            filterSum += score;
+            reasonBuilder.append(String.format("%s=%.2f; ", rule.getName(), score));
+        }
+
+        double filterAvg = filterSum / filterRules.size();
+        reasonBuilder.append(String.format("filterAvg=%.3f; ", filterAvg));
+        return filterAvg < 0;
+    }
+
     private Signal applyTemporalConfirmation(Signal candidateSignal) {
         // Se o sinal mudou, reseta o contador de confirmaÃ§Ã£o
         if (candidateSignal != lastSignal) {
@@ -100,16 +145,16 @@ public class RuleBasedPredictor implements FeatureEventListener {
             }
 
             // BUY/SELL candidato: precisa de confirmaÃ§Ã£o
-            logger.debug("Signal candidate: {} (1/{} confirms)", candidateSignal, Config.getConfirmationSnapshots());
+            logger.debug("Signal candidate: {} (1/{} confirms)", candidateSignal, confirmationSnapshots);
             return Signal.HOLD; // Retorna HOLD atÃ© ter confirmaÃ§Ãµes
         }
 
         // Mesmo sinal, incrementa contador
         if (candidateSignal != Signal.HOLD) {
             signalConfirmationCount++;
-            logger.debug("Signal confirmation: {} ({}/{})", candidateSignal, signalConfirmationCount, Config.getConfirmationSnapshots());
+            logger.debug("Signal confirmation: {} ({}/{})", candidateSignal, signalConfirmationCount, confirmationSnapshots);
 
-            if (signalConfirmationCount >= Config.getConfirmationSnapshots()) {
+            if (signalConfirmationCount >= confirmationSnapshots) {
                 logger.info("âœ“ Signal CONFIRMED: {} after {} snapshots", candidateSignal, signalConfirmationCount);
                 return candidateSignal;
             }
@@ -127,9 +172,9 @@ public class RuleBasedPredictor implements FeatureEventListener {
         // SELL: score < -0.65
         // HOLD: tudo no meio
 
-        if (avgScore >= Config.getBuyThreshold()) {
+        if (avgScore >= buyThreshold) {
             return Signal.BUY;
-        } else if (avgScore <= Config.getSellThreshold()) {
+        } else if (avgScore <= sellThreshold) {
             return Signal.SELL;
         } else if (avgScore > Config.getHoldMax()) {
             // Score positivo mas abaixo de BUY_THRESHOLD â†’ lean BUY (but hold)

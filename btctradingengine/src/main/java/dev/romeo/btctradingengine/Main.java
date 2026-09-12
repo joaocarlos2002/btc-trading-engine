@@ -44,6 +44,12 @@ public class Main {
                     event -> tradeJournal.recordExecutionLog(event, Config.getMarketSymbol())
             );
             dashboardState.attachPositionManager(positionManager);
+
+            ConnectivityGuard connectivityGuard = new ConnectivityGuard(
+                    java.time.Duration.ofSeconds(Config.getMaxDataStalenessSeconds()),
+                    Config.isRealTradingEnabled());
+            positionManager.setConnectivityGuard(connectivityGuard);
+
             tradeJournal.loadOpenPosition(
                     Config.getMarketSymbol(),
                     Config.getTradingTargetPercent(),
@@ -57,6 +63,17 @@ public class Main {
                 if (!balance.success() || balance.total().compareTo(BigDecimal.ZERO) <= 0) {
                     throw new IllegalStateException("Could not validate positive USDT balance: " + balance.error());
                 }
+
+                BinanceOrderExecutor.SymbolFilters symbolFilters = executor.getSymbolFilters(Config.getMarketSymbol());
+                if (symbolFilters == null || symbolFilters.minQty().compareTo(BigDecimal.ZERO) <= 0
+                        || symbolFilters.stepSize().compareTo(BigDecimal.ZERO) <= 0) {
+                    throw new IllegalStateException(
+                            "Could not validate exchange symbol filters for " + Config.getMarketSymbol());
+                }
+                logger.info("Symbol filters validated for {}: minNotional={} minQty={} maxQty={} stepSize={}",
+                        Config.getMarketSymbol(), symbolFilters.minNotional(), symbolFilters.minQty(),
+                        symbolFilters.maxQty(), symbolFilters.stepSize());
+
                 PortfolioManager portfolio = new PortfolioManager(
                     balance.total(),
                     Config.getTradingMaxDrawdownPercent());
@@ -66,6 +83,10 @@ public class Main {
                     Config.getMarketSymbol());
                 logger.warn("REAL TRADING ENABLED for {} with validated USDT balance={}",
                     Config.getMarketSymbol(), balance.total());
+                if (!Config.isBinanceTestnetEndpoint()) {
+                    logger.warn("!!! MAINNET TRADING CONFIRMED (binance.rest.url={}) - REAL MONEY IS AT RISK !!!",
+                        Config.getBinanceRestUrl());
+                }
 
                 BinanceReconciliationService reconciliation = new BinanceReconciliationService(
                     executor,
@@ -87,7 +108,7 @@ public class Main {
                 positionManager.setOrderConfirmationManager(confirmationManager);
                 dashboardState.attachOrderConfirmationManager(confirmationManager);
 
-                BinanceUserDataStreamClient userDataStream = getBinanceUserDataStreamClient(confirmationManager);
+                BinanceUserDataStreamClient userDataStream = getBinanceUserDataStreamClient(confirmationManager, connectivityGuard);
 
                 if (!userDataStream.connect()) {
                     logger.warn("Failed to connect User Data Stream; will use polling fallback");
@@ -105,7 +126,6 @@ public class Main {
                         500
                     ));
 
-            // Store last candle para usar no predictor â†’ positionManager
             var lastCandle = new Object() { dev.romeo.btctradingengine.model.CandleEvent value = null; };
 
             RuleBasedPredictor predictor = new RuleBasedPredictor(
@@ -126,8 +146,8 @@ public class Main {
             predictor.addRule(new RsiRule());
             predictor.addRule(new SmaMomentumRule());
             predictor.addRule(new MacdRule());
-            predictor.addRule(new AtrRule());
-            predictor.addRule(new VolatilityRule());
+            predictor.addFilterRule(new AtrRule());
+            predictor.addFilterRule(new VolatilityRule());
 
             FeatureExtractor featureExtractor = new FeatureExtractor(
                     Config.getSmaPeriod(),
@@ -165,7 +185,8 @@ public class Main {
                 }
             }
 
-            MarketDataSource source = new BinanceAdapter();
+            BinanceAdapter source = new BinanceAdapter();
+            source.setStatusListener(connectivityGuard::onMarketDataStatus);
             CandleAggregator aggregator = new CandleAggregator(
                     Config.getMarketInterval(),
                     candle -> {
@@ -179,6 +200,7 @@ public class Main {
             priceEventBus.subscribe(aggregator);
             priceEventBus.subscribe(dbWriter);
             priceEventBus.subscribe(event -> {
+                connectivityGuard.recordPriceEvent();
                 positionManager.processPriceEvent(event);
                 dashboardState.refreshPositions();
             });
@@ -204,6 +226,7 @@ public class Main {
                 dbWriter.stop();
                 DataSourceManager.close();
                 dashboardState.close();
+                connectivityGuard.shutdown();
                 dashboardContext.close();
             }));
 
@@ -215,7 +238,8 @@ public class Main {
         }
     }
 
-    private static BinanceUserDataStreamClient getBinanceUserDataStreamClient(OrderConfirmationManager confirmationManager) {
+    private static BinanceUserDataStreamClient getBinanceUserDataStreamClient(
+            OrderConfirmationManager confirmationManager, ConnectivityGuard connectivityGuard) {
         BinanceUserDataStreamClient userDataStream = new BinanceUserDataStreamClient(Config.getBinanceApiKey());
         userDataStream.setExecutionReportListener(
             report -> {
@@ -223,7 +247,10 @@ public class Main {
                 confirmationManager.processExecutionReport(report);
             });
         userDataStream.setConnectionStatusListener(
-            status -> logger.info("User Data Stream: {}", status));
+            status -> {
+                logger.info("User Data Stream: {}", status);
+                connectivityGuard.onUserDataStreamStatus(status);
+            });
         return userDataStream;
     }
 

@@ -12,6 +12,7 @@ import java.net.http.WebSocket;
 import java.time.Instant;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 
 public class BinanceAdapter implements MarketDataSource {
 
@@ -24,12 +25,19 @@ public class BinanceAdapter implements MarketDataSource {
 
     private WebSocket webSocket;
     private PriceEventListener priceListener;
+    private Consumer<String> statusListener;
     private volatile boolean running = false;
 
     private final ReentrantLock fragmentLock = new ReentrantLock();
     private final StringBuilder fragmentBuffer = new StringBuilder();
 
     private final WebSocket.Listener listener = new WebSocket.Listener() {
+        @Override
+        public void onOpen(WebSocket webSocket) {
+            notifyStatus("connected");
+            WebSocket.Listener.super.onOpen(webSocket);
+        }
+
         @Override
         public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
             fragmentLock.lock();
@@ -72,6 +80,7 @@ public class BinanceAdapter implements MarketDataSource {
         @Override
         public void onError(WebSocket webSocket, Throwable error) {
             System.err.println("WebSocket error: " + error.getMessage());
+            notifyStatus("error");
             if (running) {
                 reconnectAsync();
             }
@@ -80,12 +89,23 @@ public class BinanceAdapter implements MarketDataSource {
         @Override
         public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
             System.out.println("WebSocket closed: " + statusCode + " - " + reason);
+            notifyStatus("closed");
             if (running) {
                 reconnectAsync();
             }
             return WebSocket.Listener.super.onClose(webSocket, statusCode, reason);
         }
     };
+
+    public void setStatusListener(Consumer<String> statusListener) {
+        this.statusListener = statusListener;
+    }
+
+    private void notifyStatus(String status) {
+        if (statusListener != null) {
+            statusListener.accept(status);
+        }
+    }
 
     @Override
     public void start(PriceEventListener priceEventListener) {
@@ -127,6 +147,7 @@ public class BinanceAdapter implements MarketDataSource {
             System.out.println("Connection attempts stopped.");
         } else {
             System.err.println("Max retries reached. Giving up.");
+            notifyStatus("failed");
         }
     }
 

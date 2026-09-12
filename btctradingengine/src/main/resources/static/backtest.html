@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Backtest Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg: #07090e;
+            --surface: #0e131f;
+            --surface-hover: #141b2b;
+            --border: rgba(255, 255, 255, 0.07);
+            --border-hover: rgba(255, 255, 255, 0.15);
+            --text: #f1f5f9;
+            --muted: #64748b;
+            --muted-light: #94a3b8;
+            --green: #10b981;
+            --green-glow: rgba(16, 185, 129, 0.15);
+            --red: #f43f5e;
+            --red-glow: rgba(244, 63, 94, 0.15);
+            --yellow: #f59e0b;
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            color: var(--text);
+            background: radial-gradient(circle at 50% -10%, #152238 0%, var(--bg) 60%);
+            background-attachment: fixed;
+            font-family: var(--font-sans);
+            font-size: 13px;
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        main {
+            max-width: 880px;
+            margin: 0 auto;
+            padding: 32px 24px 60px;
+        }
+
+        .mono { font-family: var(--font-mono); }
+        .positive { color: var(--green) !important; }
+        .negative { color: var(--red) !important; }
+
+        header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            padding-bottom: 20px;
+            margin-bottom: 24px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 800;
+            letter-spacing: 0.02em;
+        }
+
+        header p {
+            margin: 4px 0 0;
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        a.back-link {
+            color: var(--muted-light);
+            text-decoration: none;
+            font-size: 12px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        a.back-link:hover { color: var(--text); }
+
+        .panel {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--surface);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+
+        .panel-body { padding: 20px; }
+
+        .field-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            align-items: flex-end;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .field label {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        .field input {
+            width: 140px;
+            padding: 9px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: #0b0e15;
+            color: var(--text);
+            font-family: var(--font-mono);
+            font-size: 13px;
+        }
+        .field input:focus {
+            outline: none;
+            border-color: var(--border-hover);
+        }
+
+        .presets {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .preset-btn {
+            padding: 6px 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--muted-light);
+            font-size: 11px;
+            font-family: var(--font-mono);
+            cursor: pointer;
+        }
+        .preset-btn:hover { background: var(--surface-hover); color: var(--text); }
+
+        button.run {
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: 1px solid rgba(16, 185, 129, 0.35);
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.18), rgba(16, 185, 129, 0.05));
+            color: var(--green);
+            font-family: var(--font-sans);
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.15s ease;
+        }
+        button.run:hover:not(:disabled) { background: rgba(16, 185, 129, 0.28); }
+        button.run:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .hint {
+            margin-top: 12px;
+            font-size: 11.5px;
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        #status {
+            font-size: 12.5px;
+            color: var(--muted-light);
+            margin-top: 14px;
+            min-height: 18px;
+        }
+        #status.error { color: var(--red); }
+
+        .meta-line {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px 18px;
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.015);
+            font-family: var(--font-mono);
+            font-size: 11.5px;
+            color: var(--muted-light);
+        }
+        .meta-line b { color: var(--text); font-weight: 600; }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+        }
+        .metric {
+            padding: 16px 18px;
+            border-right: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+        .metric:nth-child(4n) { border-right: none; }
+        .metric label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+        .metric b {
+            font-family: var(--font-mono);
+            font-size: 19px;
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        @media (max-width: 640px) {
+            .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+            .metric:nth-child(2n) { border-right: none; }
+        }
+
+        #resultsWrap { display: none; }
+
+        .divider {
+            margin: 18px 0 14px;
+            padding-top: 16px;
+            border-top: 1px dashed var(--border);
+        }
+        .divider-label {
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        .field input.narrow { width: 110px; }
+        .field small {
+            font-size: 10px;
+            color: var(--muted);
+            font-family: var(--font-mono);
+        }
+
+        button.reset {
+            padding: 9px 14px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--muted-light);
+            font-family: var(--font-sans);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        button.reset:hover { background: var(--surface-hover); color: var(--text); }
+
+        .params-used {
+            font-family: var(--font-mono);
+            font-size: 10.5px;
+            color: var(--muted);
+            padding: 10px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+        .params-used b { color: var(--muted-light); font-weight: 600; }
+
+        .empty-state {
+            padding: 40px 20px;
+            text-align: center;
+            color: var(--muted);
+            font-size: 12.5px;
+        }
+
+        details.group {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin-bottom: 10px;
+            background: rgba(255, 255, 255, 0.012);
+        }
+        details.group summary {
+            padding: 10px 14px;
+            cursor: pointer;
+            font-size: 11.5px;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--muted-light);
+            list-style: none;
+        }
+        details.group summary::-webkit-details-marker { display: none; }
+        details.group summary::before {
+            content: '▸';
+            display: inline-block;
+            margin-right: 8px;
+            color: var(--muted);
+            transition: transform 0.15s ease;
+        }
+        details.group[open] summary::before { transform: rotate(90deg); }
+        details.group .group-body {
+            padding: 4px 14px 14px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+        }
+        details.group .field input { width: 100px; }
+    </style>
+</head>
+<body>
+<main>
+    <header>
+        <div>
+            <h1>Backtest Lab</h1>
+            <p>Roda a estrategia atual (config do application.properties) contra historico real da Binance mainnet.</p>
+        </div>
+        <a class="back-link" href="/index.html">&larr; voltar ao dashboard</a>
+    </header>
+
+    <div class="panel">
+        <div class="panel-body">
+            <div class="field-row">
+                <div class="field">
+                    <label for="days">Dias de historico</label>
+                    <input type="number" id="days" min="1" max="180" value="30" />
+                </div>
+                <button class="run" id="runBtn" type="button">Rodar backtest</button>
+                <div class="presets">
+                    <button class="preset-btn" type="button" data-days="7">7d</button>
+                    <button class="preset-btn" type="button" data-days="30">30d</button>
+                    <button class="preset-btn" type="button" data-days="90">90d</button>
+                    <button class="preset-btn" type="button" data-days="180">180d</button>
+                </div>
+            </div>
+            <p class="hint">
+                Maximo de 180 dias por chamada (limite da API publica da Binance + tempo de resposta).
+                Sempre usa dados reais da mainnet, mesmo se o bot estiver configurado pra operar na testnet.
+            </p>
+
+            <div class="divider">
+                <div class="divider-label" style="margin-bottom:10px;">Parametros da estrategia (todos opcionais)</div>
+
+                <details class="group" open>
+                    <summary>Entrada &amp; confirmacao</summary>
+                    <div class="group-body">
+                        <div class="field">
+                            <label for="buyThreshold">Buy threshold</label>
+                            <input type="number" id="buyThreshold" step="0.01" min="0" max="1" placeholder="config" />
+                        </div>
+                        <div class="field">
+                            <label for="sellThreshold">Sell threshold</label>
+                            <input type="number" id="sellThreshold" step="0.01" min="-1" max="0" placeholder="config" />
+                        </div>
+                        <div class="field">
+                            <label for="confirmationSnapshots">Confirmacoes</label>
+                            <input type="number" id="confirmationSnapshots" min="1" placeholder="config" />
+                        </div>
+                    </div>
+                </details>
+
+                <details class="group">
+                    <summary>Periodos dos indicadores</summary>
+                    <div class="group-body">
+                        <div class="field"><label for="smaPeriod">SMA</label><input type="number" id="smaPeriod" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="emaPeriod">EMA</label><input type="number" id="emaPeriod" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="rsiPeriod">RSI</label><input type="number" id="rsiPeriod" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="atrPeriod">ATR</label><input type="number" id="atrPeriod" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="macdFastPeriod">MACD fast</label><input type="number" id="macdFastPeriod" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="macdSlowPeriod">MACD slow</label><input type="number" id="macdSlowPeriod" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="macdSignalPeriod">MACD signal</label><input type="number" id="macdSignalPeriod" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="volatilityShortPeriods">Vol curta</label><input type="number" id="volatilityShortPeriods" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="volatilityLongPeriods">Vol longa</label><input type="number" id="volatilityLongPeriods" min="1" placeholder="config" /></div>
+                        <div class="field"><label for="volumeAveragePeriods">Vol. media</label><input type="number" id="volumeAveragePeriods" min="1" placeholder="config" /></div>
+                    </div>
+                </details>
+
+                <details class="group">
+                    <summary>Sub-thresholds RSI</summary>
+                    <div class="group-body">
+                        <div class="field"><label for="rsiOversold">Oversold</label><input type="number" id="rsiOversold" step="0.1" placeholder="config" /></div>
+                        <div class="field"><label for="rsiNeutralLow">Neutro baixo</label><input type="number" id="rsiNeutralLow" step="0.1" placeholder="config" /></div>
+                        <div class="field"><label for="rsiNeutralHigh">Neutro alto</label><input type="number" id="rsiNeutralHigh" step="0.1" placeholder="config" /></div>
+                        <div class="field"><label for="rsiOverbought">Overbought</label><input type="number" id="rsiOverbought" step="0.1" placeholder="config" /></div>
+                    </div>
+                </details>
+
+                <details class="group">
+                    <summary>Sub-thresholds SMA &amp; MACD</summary>
+                    <div class="group-body">
+                        <div class="field"><label for="smaDistanceExtreme">SMA dist. extrema</label><input type="number" id="smaDistanceExtreme" step="0.1" placeholder="config" /></div>
+                        <div class="field"><label for="smaDistanceModerate">SMA dist. moderada</label><input type="number" id="smaDistanceModerate" step="0.1" placeholder="config" /></div>
+                        <div class="field"><label for="macdStrongHistogramAtrRatio">MACD forte (ratio ATR)</label><input type="number" id="macdStrongHistogramAtrRatio" step="0.01" placeholder="config" /></div>
+                    </div>
+                </details>
+
+                <details class="group">
+                    <summary>Sub-thresholds ATR &amp; Volatility (filtro/veto)</summary>
+                    <div class="group-body">
+                        <div class="field"><label for="atrVolatilityLow">ATR baixo</label><input type="number" id="atrVolatilityLow" step="0.001" placeholder="config" /></div>
+                        <div class="field"><label for="atrVolatilityNormal">ATR normal</label><input type="number" id="atrVolatilityNormal" step="0.001" placeholder="config" /></div>
+                        <div class="field"><label for="atrVolatilityHigh">ATR alto</label><input type="number" id="atrVolatilityHigh" step="0.001" placeholder="config" /></div>
+                        <div class="field"><label for="volatilityRatioHigh">Vol. ratio alto</label><input type="number" id="volatilityRatioHigh" step="0.1" placeholder="config" /></div>
+                    </div>
+                </details>
+
+                <details class="group">
+                    <summary>Risco &amp; custo</summary>
+                    <div class="group-body">
+                        <div class="field"><label for="targetPercent">Target %</label><input type="number" id="targetPercent" step="0.1" placeholder="config" /></div>
+                        <div class="field"><label for="stopLossPercent">Stop loss %</label><input type="number" id="stopLossPercent" step="0.1" placeholder="config" /></div>
+                        <div class="field"><label for="commissionRate">Comissao</label><input type="number" id="commissionRate" step="0.0001" placeholder="config" /></div>
+                    </div>
+                </details>
+
+                <div class="field-row" style="margin-top:12px;">
+                    <button class="reset" id="resetBtn" type="button">Limpar todos os overrides</button>
+                </div>
+                <p class="hint">
+                    Deixe em branco pra usar o valor atual do <code>application.properties</code>.
+                    Sell threshold precisa ser negativo. Nada aqui muda o arquivo nem afeta o bot
+                    rodando ao vivo - cada rodada usa os valores só nessa chamada.
+                </p>
+            </div>
+
+            <div id="status"></div>
+        </div>
+    </div>
+
+    <div id="resultsWrap">
+        <div class="panel">
+            <div class="meta-line" id="metaLine"></div>
+            <div class="params-used" id="paramsUsed"></div>
+            <div class="metrics-grid" id="metricsGrid"></div>
+        </div>
+    </div>
+
+    <div class="panel" id="emptyPanel">
+        <div class="empty-state">Escolha o periodo e clique em "Rodar backtest".</div>
+    </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = (v, d = 2) => (v == null || Number.isNaN(Number(v))) ? '—' : Number(v).toFixed(d);
+const cls = v => Number(v) >= 0 ? 'positive' : 'negative';
+
+document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        $('days').value = btn.dataset.days;
+        runBacktest();
+    });
+});
+$('runBtn').addEventListener('click', runBacktest);
+$('days').addEventListener('keydown', e => { if (e.key === 'Enter') runBacktest(); });
+const OVERRIDE_FIELDS = [
+    'smaPeriod', 'emaPeriod', 'rsiPeriod', 'atrPeriod',
+    'macdFastPeriod', 'macdSlowPeriod', 'macdSignalPeriod',
+    'volatilityShortPeriods', 'volatilityLongPeriods', 'volumeAveragePeriods',
+    'rsiOversold', 'rsiNeutralLow', 'rsiNeutralHigh', 'rsiOverbought',
+    'smaDistanceExtreme', 'smaDistanceModerate', 'macdStrongHistogramAtrRatio',
+    'atrVolatilityLow', 'atrVolatilityNormal', 'atrVolatilityHigh', 'volatilityRatioHigh',
+    'buyThreshold', 'sellThreshold', 'confirmationSnapshots',
+    'targetPercent', 'stopLossPercent', 'commissionRate',
+];
+
+$('resetBtn').addEventListener('click', () => {
+    OVERRIDE_FIELDS.forEach(id => { $(id).value = ''; });
+});
+
+async function runBacktest() {
+    const days = Math.max(1, Math.min(180, Number($('days').value) || 30));
+    $('days').value = days;
+
+    const params = new URLSearchParams({ days });
+    OVERRIDE_FIELDS.forEach(id => {
+        const raw = $(id).value.trim();
+        if (raw !== '') params.set(id, raw);
+    });
+
+    const btn = $('runBtn');
+    btn.disabled = true;
+    $('status').className = '';
+    $('status').textContent = `Buscando ${days}d de historico real na Binance e rodando o backtest...`;
+    $('resultsWrap').style.display = 'none';
+    $('emptyPanel').style.display = 'none';
+
+    try {
+        const res = await fetch(`/api/backtest?${params.toString()}`);
+        const body = await res.json();
+
+        if (!res.ok) {
+            throw new Error(body.error || `HTTP ${res.status}`);
+        }
+
+        render(body);
+        $('status').textContent = `Concluido as ${new Date().toLocaleTimeString('pt-BR')}.`;
+    } catch (e) {
+        $('status').className = 'error';
+        $('status').textContent = 'Erro: ' + e.message;
+        $('emptyPanel').style.display = 'block';
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function render(data) {
+    const r = data.report;
+    const p = data.params;
+
+    $('metaLine').innerHTML = `
+        <span>${data.symbol} · ${data.interval}</span>
+        <span><b>${data.candleCount}</b> candles</span>
+        <span>${new Date(data.rangeStart).toLocaleDateString('pt-BR')} &rarr; ${new Date(data.rangeEnd).toLocaleDateString('pt-BR')}</span>
+    `;
+
+    const p2 = (k, v) => `${k}=<b>${v}</b>`;
+    $('paramsUsed').innerHTML = [
+        p2('buy', p.buyThreshold), p2('sell', p.sellThreshold), p2('confirms', p.confirmationSnapshots),
+        p2('sma', p.smaPeriod), p2('ema', p.emaPeriod), p2('rsi', p.rsiPeriod), p2('atr', p.atrPeriod),
+        p2('macd', `${p.macdFastPeriod}/${p.macdSlowPeriod}/${p.macdSignalPeriod}`),
+        p2('target', p.targetPercent + '%'), p2('stop', p.stopLossPercent + '%'),
+    ].join(' · ');
+
+    const metrics = [
+        ['Total Trades', r.totalTrades, null],
+        ['Win Rate', fmt(r.winRate) + '%', null],
+        ['Win / Lose', `${r.winTrades} / ${r.loseTrades}`, null],
+        ['Profit Factor', fmt(r.profitFactor), r.profitFactor >= 1 ? 'positive' : 'negative'],
+        ['Total P&amp;L', fmt(r.totalPnL), cls(r.totalPnL)],
+        ['Return %', fmt(r.returnPercent) + '%', cls(r.returnPercent)],
+        ['Avg P&amp;L / Trade', fmt(r.averagePnL), cls(r.averagePnL)],
+        ['Max Drawdown', fmt(r.maxDrawdown) + '%', null],
+        ['Sharpe Ratio', fmt(r.sharpeRatio, 4), null],
+        ['Avg Bars / Trade', fmt(r.averageBarsPerTrade, 1), null],
+    ];
+
+    $('metricsGrid').innerHTML = metrics.map(([label, value, klass]) => `
+        <div class="metric">
+            <label>${label}</label>
+            <b class="${klass || ''}">${value}</b>
+        </div>
+    `).join('');
+
+    $('resultsWrap').style.display = 'block';
+}
+</script>
+</body>
+</html>
