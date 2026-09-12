@@ -1,5 +1,6 @@
 package dev.romeo.btctradingengine.trading;
 
+import dev.romeo.btctradingengine.alerting.AlertNotifier;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
 import dev.romeo.btctradingengine.prediction.PredictionVector;
@@ -32,6 +33,7 @@ public class PositionManager {
     private Optional<BinanceSymbolValidationService> validationService = Optional.empty();
     private Optional<OrderConfirmationManager> confirmationManager = Optional.empty();
     private Optional<ConnectivityGuard> connectivityGuard = Optional.empty();
+    private Optional<AlertNotifier> alertNotifier = Optional.empty();
     private String symbol = "BTCUSDT";
     private boolean simulationMode = true;
     private volatile boolean reconciliationComplete = true;
@@ -76,6 +78,10 @@ public class PositionManager {
         logger.info("Connectivity guard attached");
     }
 
+    public void setAlertNotifier(AlertNotifier notifier) {
+        this.alertNotifier = Optional.of(notifier);
+    }
+
     private void onOrderConfirmed(OrderConfirmationManager.OrderConfirmation confirmation) {
         if (openPosition.isEmpty()) {
             logger.warn("Received order confirmation but no open position: {}", confirmation.orderId());
@@ -102,6 +108,8 @@ public class PositionManager {
             positionPersistence.accept(pos);
         } else if (confirmation.isFailed()) {
             logger.error("âœ— Order {} failed: {}", confirmation.orderId(), confirmation.status());
+            alertNotifier.ifPresent(a -> a.alert(String.format(
+                    "Order %s for position %s failed: %s", confirmation.orderId(), pos.getPositionId(), confirmation.status())));
             closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), "ORDER_FAILED");
         }
     }
@@ -288,6 +296,8 @@ public class PositionManager {
                         .validateAndAdjustQuantity(symbol, quantity, pos.getEntryPrice());
                 if (validatedQty.isEmpty()) {
                     logger.error("âœ— Order rejected: quantity validation failed for {}", symbol);
+                    alertNotifier.ifPresent(a -> a.alert(String.format(
+                            "Order rejected for position %s: quantity validation failed for %s", pos.getPositionId(), symbol)));
                     closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), "VALIDATION_FAILED");
                     return;
                 }
@@ -325,10 +335,14 @@ public class PositionManager {
                 pos.updatePrice(result.averagePrice(), pos.getEntryTime());
             } else {
                 logger.error("âœ— Real order failed: {}", result.error());
+                alertNotifier.ifPresent(a -> a.alert(String.format(
+                        "Real order failed for position %s: %s", pos.getPositionId(), result.error())));
                 closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), "ORDER_FAILED");
             }
         } catch (Exception e) {
             logger.error("âœ— Error executing real order: {}", e.getMessage(), e);
+            alertNotifier.ifPresent(a -> a.alert(String.format(
+                    "Exception executing real order for position %s: %s", pos.getPositionId(), e.getMessage())));
             closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), "ERROR");
         }
     }
@@ -338,6 +352,9 @@ public class PositionManager {
             Optional<BinanceOrderExecutor.OrderResult> result = closeRealPosition(pos);
             if (result.isEmpty()) {
                 logger.error("âœ— Position {} remains open locally because the real exit order failed", pos.getPositionId());
+                alertNotifier.ifPresent(a -> a.alert(String.format(
+                        "CRITICAL: exit order failed for position %s (reason: %s) - position remains OPEN and unmanaged, manual intervention required",
+                        pos.getPositionId(), reason)));
                 return false;
             }
             if (result.get().averagePrice().compareTo(BigDecimal.ZERO) > 0) {
