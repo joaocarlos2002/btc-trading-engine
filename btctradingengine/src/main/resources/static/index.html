@@ -591,7 +591,7 @@ footer{
   <div class="row">
     <div class="panel">
       <div class="panel-head">
-        <h3>Technical features · 32</h3>
+        <h3>Technical features · 37</h3>
         <span class="meta" id="lastUpdate">—</span>
       </div>
       <div class="metrics">
@@ -714,6 +714,26 @@ footer{
         <div class="metric">
           <label data-tip="Distância % até a resistência mais próxima: o nível de pivô (topo ou fundo) mais baixo acima do preço. 0 = nenhuma resistência na janela.">Resistance</label>
           <b id="resistanceDistance">—</b><small>% above</small>
+        </div>
+        <div class="metric">
+          <label data-tip="(Volume comprador agressor − vendedor agressor) ÷ volume da candle. +1 = só compra a mercado, −1 = só venda a mercado, 0 = equilíbrio ou sem dados de fluxo.">Delta ratio</label>
+          <b id="deltaRatio">—</b><small>−1 — 1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Cumulative Volume Delta: soma do delta (compra − venda agressora, em BTC) na janela rolante de N velas. Subindo com o preço confirma; divergindo do preço sugere exaustão.">CVD</label>
+          <b id="cvd">—</b><small>BTC · window</small>
+        </div>
+        <div class="metric">
+          <label data-tip="CVD dividido pelo volume agressor da janela. Versão normalizada do CVD, comparável entre mercado calmo e agitado.">CVD ratio</label>
+          <b id="cvdRatio">—</b><small>−1 — 1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="CVD só das agressões grandes (valor ≥ feature.flow.large.trade.notional). Baleia vs varejo é heurística. Só ao vivo: fica 0 no backtest e no warmup.">Large CVD</label>
+          <b id="largeCvd">—</b><small>BTC · live only</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Parcela do volume agressor da janela que veio de trades grandes. Só ao vivo: klines não trazem o tamanho dos trades.">Large share</label>
+          <b id="largeVolumeShare">—</b><small>0 — 1 · live only</small>
         </div>
         <div class="metric">
           <label data-tip="Hora do dia em UTC. Útil para identificar sessões mais voláteis (Ásia, Europa, EUA).">Hour</label>
@@ -1134,7 +1154,8 @@ function renderMetrics(m){
    'adx','atrPercent','bbWidth','bbPercentB','mfi','vwapDistance',
    'donchianPosition',
    'bodyRatio','upperWickRatio','lowerWickRatio','recentHighDistance','recentLowDistance',
-   'supportDistance','resistanceDistance'].forEach(id => text(id, fmt(f[id])));
+   'supportDistance','resistanceDistance',
+   'deltaRatio','cvd','cvdRatio','largeCvd','largeVolumeShare'].forEach(id => text(id, fmt(f[id])));
   // Integer price action signals, shown as-is like hour/day
   ['candleStreak','previousCandleBreak','swingHighTrend','swingLowTrend']
     .forEach(id => text(id, f[id] ?? '—'));

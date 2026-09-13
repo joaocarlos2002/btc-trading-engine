@@ -31,6 +31,14 @@ CREATE INDEX IF NOT EXISTS idx_candles_close_time
 CREATE UNIQUE INDEX IF NOT EXISTS uq_candles_symbol_open_time
     ON candles(symbol, open_time_ms);
 
+-- Aggressor flow (issue #11). Nullable: rows written before these columns existed, and candles
+-- whose source reports no aggressor side, have flow_source NULL (no flow data).
+-- Taker sell volume is volume - taker_buy_volume. large_* are only set when flow_source = 'TRADES'.
+ALTER TABLE candles ADD COLUMN IF NOT EXISTS taker_buy_volume NUMERIC(20, 8);
+ALTER TABLE candles ADD COLUMN IF NOT EXISTS large_buy_volume NUMERIC(20, 8);
+ALTER TABLE candles ADD COLUMN IF NOT EXISTS large_sell_volume NUMERIC(20, 8);
+ALTER TABLE candles ADD COLUMN IF NOT EXISTS flow_source VARCHAR(10);
+
 -- Create ticks table for storing raw price data
 CREATE TABLE IF NOT EXISTS ticks (
     id BIGSERIAL PRIMARY KEY,
@@ -48,6 +56,10 @@ CREATE INDEX IF NOT EXISTS idx_ticks_symbol_time
 -- Index for time-based queries
 CREATE INDEX IF NOT EXISTS idx_ticks_time
     ON ticks(time_ms DESC);
+
+-- Raw aggressor side per tick (BUY/SELL, NULL when unknown). Kept so the heuristic large-trade
+-- threshold can be re-applied to past ticks instead of being frozen into the candles.
+ALTER TABLE ticks ADD COLUMN IF NOT EXISTS aggressor_side VARCHAR(7);
 
 -- Optional: partition candles by month for better performance on large datasets
 -- Run this after accumulating some data

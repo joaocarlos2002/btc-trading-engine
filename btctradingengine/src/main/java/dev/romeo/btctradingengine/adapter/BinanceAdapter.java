@@ -3,6 +3,7 @@ package dev.romeo.btctradingengine.adapter;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.model.AggressorSide;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
 
 import java.math.BigDecimal;
@@ -58,12 +59,13 @@ public class BinanceAdapter implements MarketDataSource {
                 String symbol     = node.get("s").asText();
                 BigDecimal price  = new BigDecimal(priceStr);
                 BigDecimal quantity = new BigDecimal(node.get("q").asText());
+                AggressorSide side = AggressorSide.fromBuyerMaker(node.get("m").asBoolean());
                 Instant eventTs   = Instant.ofEpochMilli(tradeTime);
                 Instant receiptTs = Instant.now();
 
                 if (priceListener != null) {
                     NormalizedPriceEvent event = new NormalizedPriceEvent(
-                        symbol, price, eventTs, receiptTs, quantity);
+                        symbol, price, eventTs, receiptTs, quantity, side);
                     priceListener.onEvent(event);
                 }
 
