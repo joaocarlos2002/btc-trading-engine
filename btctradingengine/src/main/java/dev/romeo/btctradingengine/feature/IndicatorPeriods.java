@@ -23,7 +23,7 @@ public record IndicatorPeriods(
         int mfi, int donchian,
         VwapAnchor vwapAnchor, int vwapRollingPeriods,
         int priceActionLookback, int priceActionSwingStrength,
-        int cvd
+        int cvd, int emaSlope
 ) {
 
     public static IndicatorPeriods fromConfig() {
@@ -35,7 +35,7 @@ public record IndicatorPeriods(
                 Config.getMfiPeriod(), Config.getDonchianPeriod(),
                 Config.getVwapAnchor(), Config.getVwapRollingPeriods(),
                 Config.getPriceActionLookback(), Config.getPriceActionSwingStrength(),
-                Config.getCvdPeriod());
+                Config.getCvdPeriod(), Config.getEmaSlopePeriods());
     }
 
     /** Overrides only the three periods the short FeatureExtractor constructor takes. */
@@ -48,6 +48,6 @@ public record IndicatorPeriods(
                 mfi, donchian,
                 vwapAnchor, vwapRollingPeriods,
                 priceActionLookback, priceActionSwingStrength,
-                cvd);
+                cvd, emaSlope);
     }
 }

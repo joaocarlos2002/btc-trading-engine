@@ -21,6 +21,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Objects;
 
 public class FeatureExtractor implements CandleEventListener {
@@ -43,6 +45,8 @@ public class FeatureExtractor implements CandleEventListener {
     private final PriceAction priceAction;
     private final CumulativeVolumeDelta cumulativeVolumeDelta;
     private final DerivativesLookup derivatives;
+    private final Deque<BigDecimal> emaHistory = new ArrayDeque<>();
+    private final int emaSlopePeriods;
     private final FeatureEventListener listener;
     private final int volatilityShortPeriods;
     private final int volatilityLongPeriods;
@@ -72,6 +76,7 @@ public class FeatureExtractor implements CandleEventListener {
         this.donchianChannel = new DonchianChannel(periods.donchian());
         this.priceAction = new PriceAction(periods.priceActionLookback(), periods.priceActionSwingStrength());
         this.cumulativeVolumeDelta = new CumulativeVolumeDelta(periods.cvd());
+        this.emaSlopePeriods = periods.emaSlope();
         this.volatilityShortPeriods = periods.volatilityShort();
         this.volatilityLongPeriods = periods.volatilityLong();
         this.volumeAveragePeriods = periods.volumeAverage();
@@ -106,6 +111,7 @@ public class FeatureExtractor implements CandleEventListener {
 
         BigDecimal sma = smaIncremental.updateSum(close).orElse(BigDecimal.ZERO);
         BigDecimal ema = emaIncremental.update(close);
+        BigDecimal emaSlope = calculateEmaSlope(ema);
         BigDecimal rsi = rsiIncremental.update(close).orElse(NEUTRAL_OSCILLATOR);
         var macd = macdIndicator.update(close);
         BigDecimal atr = atrIndicator.update(candle).orElse(BigDecimal.ZERO);
@@ -143,6 +149,7 @@ public class FeatureExtractor implements CandleEventListener {
                 .minusDi(adx.map(AdxIndicator.AdxValue::minusDi).orElse(BigDecimal.ZERO))
                 .atrPercent(calculateAtrPercent(atr, close))
                 .bbWidth(bollinger.map(BollingerBands.BollingerValue::width).orElse(BigDecimal.ZERO))
+                .emaSlope(emaSlope)
 
                 .vwap(vwapValue)
                 .vwapDistance(percentDistanceFrom(close, vwapValue))
@@ -165,6 +172,21 @@ public class FeatureExtractor implements CandleEventListener {
                 .price(close)
                 .tickCount(candle.tickCount())
                 .build();
+    }
+
+    /**
+     * % change of the EMA over the last emaSlopePeriods candles. Zero until that much history exists,
+     * the same "not available yet" convention the other regime fields use.
+     */
+    private BigDecimal calculateEmaSlope(BigDecimal ema) {
+        emaHistory.addLast(ema);
+        if (emaHistory.size() > emaSlopePeriods + 1) {
+            emaHistory.removeFirst();
+        }
+        if (emaHistory.size() <= emaSlopePeriods) {
+            return BigDecimal.ZERO;
+        }
+        return percentDistanceFrom(ema, emaHistory.peekFirst());
     }
 
     private BigDecimal calculateReturn(CandleEvent candle) {
