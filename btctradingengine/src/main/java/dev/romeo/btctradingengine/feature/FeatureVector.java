@@ -28,7 +28,7 @@ public record FeatureVector(
         RegimeFeatures regime,            // adx, plusDi, minusDi, atrPercent, bbWidth
         ContextFeatures context,          // vwap, vwapDistance, bbPercentB, donchian*
         FlowFeatures flow,                // mfi, volume delta, cvd (+ orderBookImbalance - issue #10)
-        DerivFeatures deriv,             // empty until issue #9 (openInterest, funding)
+        DerivFeatures deriv,             // funding, basis, open interest, long/short (issue #53)
         PriceActionFeatures priceAction,  // candle anatomy, streak, breakouts, swings, S/R (issue #6)
 
         BigDecimal price,                 // close price (referencia)
