@@ -24,8 +24,8 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
 
     private static final String INSERT_CANDLE_SQL =
             "INSERT INTO candles (symbol, open_time_ms, close_time_ms, open, high, low, close, volume, tick_count) " +
-            "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? " +
-            "WHERE NOT EXISTS (SELECT 1 FROM candles WHERE symbol = ? AND open_time_ms = ?)";
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+            "ON CONFLICT (symbol, open_time_ms) DO NOTHING";
     private static final String INSERT_TICK_SQL =
             "INSERT INTO ticks (symbol, time_ms, price, quantity) VALUES (?, ?, ?, ?)";
 
@@ -233,8 +233,6 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
         stmt.setBigDecimal(7, event.close());
         stmt.setBigDecimal(8, event.volume());
         stmt.setInt(9, event.tickCount());
-        stmt.setString(10, event.instrument());
-        stmt.setLong(11, event.openTime().toEpochMilli());
     }
 
     private static void bindTick(PreparedStatement stmt, NormalizedPriceEvent event) throws SQLException {
