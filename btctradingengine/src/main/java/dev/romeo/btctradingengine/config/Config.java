@@ -138,6 +138,10 @@ public class Config {
         requirePositive("indicator.priceaction.lookback", getPriceActionLookback());
         requirePositive("indicator.priceaction.swing.strength", getPriceActionSwingStrength());
         requirePositive("indicator.cvd.period", getCvdPeriod());
+        requirePositive("derivatives.poll.seconds", getDerivativesPollSeconds());
+        requirePositive("derivatives.basis.poll.seconds", getDerivativesBasisPollSeconds());
+        requirePositive("derivatives.stale.seconds", getDerivativesStaleSeconds());
+        requirePositive("derivatives.open.interest.change.minutes", getOpenInterestChangeMinutes());
         if (getLargeTradeNotional().compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("feature.flow.large.trade.notional must be positive");
         }
@@ -212,6 +216,14 @@ public class Config {
     public static long getBinanceMaxBackoffMs() {
         return Long.parseLong(getProperty("binance.max.backoff.ms", "60000"));
     }
+
+    // Derivatives (issue #53) always come from mainnet USD-M futures: testnet futures data is synthetic.
+    public static boolean isDerivativesEnabled() { return Boolean.parseBoolean(getProperty("derivatives.enabled", "true")); }
+    public static String getBinanceFuturesRestUrl() { return getProperty("binance.futures.rest.url", "https://fapi.binance.com"); }
+    public static long getDerivativesPollSeconds() { return Long.parseLong(getProperty("derivatives.poll.seconds", "60")); }
+    public static long getDerivativesBasisPollSeconds() { return Long.parseLong(getProperty("derivatives.basis.poll.seconds", "5")); }
+    public static long getDerivativesStaleSeconds() { return Long.parseLong(getProperty("derivatives.stale.seconds", "300")); }
+    public static long getOpenInterestChangeMinutes() { return Long.parseLong(getProperty("derivatives.open.interest.change.minutes", "60")); }
 
     public static String getDbUrl() {
         return getProperty("db.url", "jdbc:postgresql://localhost:5432/btc-trading-engine_btc");
