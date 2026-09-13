@@ -88,14 +88,24 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            logger.warn("DatabaseWriter interrupted, flushing pending events");
+            logger.warn("DatabaseWriter interrupted, {} events pending", batch.size() + queue.size());
+        } catch (Throwable t) {
+            // Per-batch RuntimeExceptions are handled in writeBatchSafely; only Errors reach here.
+            logger.error("DatabaseWriter loop terminated unexpectedly, {} events pending",
+                    batch.size() + queue.size(), t);
+            throw t;
+        } finally {
+            // Events already drained but not yet written go first.
+            writeBatchSafely(batch);
+            flushRemainingEvents();
         }
-        // Events already drained but not yet written (interrupt landed mid-iteration) go first.
-        writeBatchSafely(batch);
-        flushRemainingEvents();
     }
 
     private void flushRemainingEvents() {
+        int pending = queue.size();
+        if (pending > 0) {
+            logger.info("Flushing {} pending events", pending);
+        }
         List<Object> batch = new ArrayList<>(BATCH_SIZE);
         while (queue.drainTo(batch, BATCH_SIZE) > 0) {
             writeBatchSafely(batch);
