@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.model.CandleEvent;
+import dev.romeo.btctradingengine.model.TradeFlow;
 
 import java.math.BigDecimal;
 import java.net.URI;
@@ -104,6 +105,7 @@ public class BinanceKlineClient {
             if (closeTime > now) {
                 continue;
             }
+            BigDecimal volume = new BigDecimal(row.get(5).asText());
             candles.add(new CandleEvent(
                     symbol,
                     Instant.ofEpochMilli(openTime),
@@ -112,8 +114,10 @@ public class BinanceKlineClient {
                     new BigDecimal(row.get(2).asText()),
                     new BigDecimal(row.get(3).asText()),
                     new BigDecimal(row.get(4).asText()),
-                    new BigDecimal(row.get(5).asText()),
-                    row.get(8).asInt()
+                    volume,
+                    row.get(8).asInt(),
+                    // index 9 = taker buy base asset volume; klines carry no trade sizes
+                    TradeFlow.fromKline(volume, new BigDecimal(row.get(9).asText()))
             ));
         }
         return candles;

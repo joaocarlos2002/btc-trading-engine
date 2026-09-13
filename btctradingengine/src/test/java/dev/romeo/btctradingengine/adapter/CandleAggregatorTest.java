@@ -1,7 +1,9 @@
 package dev.romeo.btctradingengine.adapter;
 
+import dev.romeo.btctradingengine.model.AggressorSide;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
+import dev.romeo.btctradingengine.model.TradeFlow;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -79,6 +81,57 @@ public class CandleAggregatorTest {
                 () -> new CandleAggregator(Duration.ZERO, candles::add));
         assertThrows(IllegalArgumentException.class,
                 () -> new CandleAggregator(Duration.ofMinutes(-1), candles::add));
+    }
+
+    @Test
+    public void splitsVolumeByAggressorSideAndTradeSize() {
+        List<CandleEvent> candles = new ArrayList<>();
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(15), candles::add, new BigDecimal("1000"));
+
+        aggregator.onEvent(event("100", "2026-09-08T10:01:00Z", "2", AggressorSide.BUY));   // 200 notional
+        aggregator.onEvent(event("100", "2026-09-08T10:02:00Z", "15", AggressorSide.BUY));  // 1500, large
+        aggregator.onEvent(event("100", "2026-09-08T10:03:00Z", "4", AggressorSide.SELL));  // 400
+        aggregator.onEvent(event("100", "2026-09-08T10:04:00Z", "10", AggressorSide.SELL)); // 1000, large (inclusive)
+        aggregator.onEvent(event("100", "2026-09-08T10:15:00Z", "1", AggressorSide.BUY));   // rollover
+
+        TradeFlow flow = candles.get(0).flow();
+        assertEquals(TradeFlow.Source.TRADES, flow.source());
+        assertEquals(0, flow.takerBuyVolume().compareTo(new BigDecimal("17")));
+        assertEquals(0, flow.takerSellVolume().compareTo(new BigDecimal("14")));
+        assertEquals(0, flow.largeBuyVolume().compareTo(new BigDecimal("15")));
+        assertEquals(0, flow.largeSellVolume().compareTo(new BigDecimal("10")));
+    }
+
+    @Test
+    public void oneTradeWithUnknownSideDropsTheCandleFlow() {
+        List<CandleEvent> candles = new ArrayList<>();
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(15), candles::add, new BigDecimal("1000"));
+
+        aggregator.onEvent(event("100", "2026-09-08T10:01:00Z", "2", AggressorSide.BUY));
+        aggregator.onEvent(event("100", "2026-09-08T10:02:00Z", "3", AggressorSide.UNKNOWN));
+        aggregator.onEvent(event("100", "2026-09-08T10:15:00Z", "1", AggressorSide.BUY));
+
+        assertEquals(TradeFlow.Source.NONE, candles.get(0).flow().source());
+        // the next candle starts clean
+        aggregator.onEvent(event("100", "2026-09-08T10:30:00Z", "1", AggressorSide.BUY));
+        assertEquals(TradeFlow.Source.TRADES, candles.get(1).flow().source());
+    }
+
+    @Test
+    public void binanceBuyerMakerFlagMeansTheSellerWasTheAggressor() {
+        assertEquals(AggressorSide.SELL, AggressorSide.fromBuyerMaker(true));
+        assertEquals(AggressorSide.BUY, AggressorSide.fromBuyerMaker(false));
+    }
+
+    private NormalizedPriceEvent event(String price, String timestamp, String quantity, AggressorSide side) {
+        Instant eventTimestamp = Instant.parse(timestamp);
+        return new NormalizedPriceEvent(
+                "BTC/USD",
+                new BigDecimal(price),
+                eventTimestamp,
+                eventTimestamp,
+                new BigDecimal(quantity),
+                side);
     }
 
     private NormalizedPriceEvent event(String price, String timestamp) {
