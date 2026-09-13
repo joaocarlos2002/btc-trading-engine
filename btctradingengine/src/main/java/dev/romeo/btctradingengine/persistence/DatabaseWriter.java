@@ -9,6 +9,8 @@ import org.slf4j.LoggerFactory;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -19,6 +21,13 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
     private static final int QUEUE_CAPACITY = 10000;
     private static final int BATCH_SIZE = 100;
     private static final long POLL_TIMEOUT_MS = 100;
+
+    private static final String INSERT_CANDLE_SQL =
+            "INSERT INTO candles (symbol, open_time_ms, close_time_ms, open, high, low, close, volume, tick_count) " +
+            "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? " +
+            "WHERE NOT EXISTS (SELECT 1 FROM candles WHERE symbol = ? AND open_time_ms = ?)";
+    private static final String INSERT_TICK_SQL =
+            "INSERT INTO ticks (symbol, time_ms, price, quantity) VALUES (?, ?, ?, ?)";
 
     private final BlockingQueue<Object> queue = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -65,62 +74,124 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
     }
 
     private void writeLoop() {
+        List<Object> batch = new ArrayList<>(BATCH_SIZE);
         try {
             while (running.get()) {
-                Object event = queue.poll(POLL_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-                if (event == null) {
+                Object first = queue.poll(POLL_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                if (first == null) {
                     continue;
                 }
-                if (event instanceof CandleEvent candle) {
-                    writeCandleToDatabase(candle);
-                } else if (event instanceof NormalizedPriceEvent tick) {
-                    writeTickToDatabase(tick);
-                }
+                batch.add(first);
+                queue.drainTo(batch, BATCH_SIZE - 1);
+                writeBatchSafely(batch);
+                batch.clear();
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             logger.warn("DatabaseWriter interrupted, flushing pending events");
-        } catch (Exception e) {
-            logger.error("Error in database writer loop", e);
         }
+        // Events already drained but not yet written (interrupt landed mid-iteration) go first.
+        writeBatchSafely(batch);
         flushRemainingEvents();
     }
 
     private void flushRemainingEvents() {
-        Object event;
-        while ((event = queue.poll()) != null) {
-            try {
-                if (event instanceof CandleEvent candle) {
-                    writeCandleToDatabase(candle);
-                } else if (event instanceof NormalizedPriceEvent tick) {
-                    writeTickToDatabase(tick);
+        List<Object> batch = new ArrayList<>(BATCH_SIZE);
+        while (queue.drainTo(batch, BATCH_SIZE) > 0) {
+            writeBatchSafely(batch);
+            batch.clear();
+        }
+    }
+
+    private void writeBatchSafely(List<Object> batch) {
+        if (batch.isEmpty()) {
+            return;
+        }
+        try {
+            if (!writeBatch(batch)) {
+                writeIndividually(batch);
+            }
+        } catch (RuntimeException e) {
+            logger.error("Unexpected error writing batch of {} events", batch.size(), e);
+        }
+    }
+
+    /**
+     * Writes the whole batch in a single transaction on one connection.
+     *
+     * @return false if the batch was rolled back or never written, so the caller can retry
+     *         event by event and one bad row does not drop the others
+     */
+    private boolean writeBatch(List<Object> batch) {
+        try (Connection conn = DataSourceManager.getDataSource().getConnection()) {
+            boolean previousAutoCommit = conn.getAutoCommit();
+            conn.setAutoCommit(false);
+            try (PreparedStatement candleStmt = conn.prepareStatement(INSERT_CANDLE_SQL);
+                 PreparedStatement tickStmt = conn.prepareStatement(INSERT_TICK_SQL)) {
+
+                int candles = 0;
+                int ticks = 0;
+                for (Object event : batch) {
+                    if (event instanceof CandleEvent candle) {
+                        bindCandle(candleStmt, candle);
+                        candleStmt.addBatch();
+                        candles++;
+                    } else if (event instanceof NormalizedPriceEvent tick) {
+                        bindTick(tickStmt, tick);
+                        tickStmt.addBatch();
+                        ticks++;
+                    }
                 }
-            } catch (Exception e) {
-                logger.error("Error writing event during flush", e);
+
+                if (candles > 0) {
+                    int[] results = candleStmt.executeBatch();
+                    for (int result : results) {
+                        if (result == 0) {
+                            logger.debug("Skipping duplicate candle in batch");
+                        }
+                    }
+                }
+                if (ticks > 0) {
+                    tickStmt.executeBatch();
+                }
+                conn.commit();
+                return true;
+            } catch (SQLException e) {
+                logger.warn("Batch write of {} events failed, retrying individually", batch.size(), e);
+                try {
+                    conn.rollback();
+                } catch (SQLException rollbackError) {
+                    logger.warn("Rollback of failed batch also failed", rollbackError);
+                }
+                return false;
+            } finally {
+                try {
+                    conn.setAutoCommit(previousAutoCommit);
+                } catch (SQLException ignored) {
+                    // Connection is likely broken; Hikari will evict it on return.
+                }
+            }
+        } catch (SQLException e) {
+            logger.warn("Error acquiring connection for batch of {} events, retrying individually", batch.size(), e);
+            return false;
+        }
+    }
+
+    private void writeIndividually(List<Object> batch) {
+        for (Object event : batch) {
+            if (event instanceof CandleEvent candle) {
+                writeCandleToDatabase(candle);
+            } else if (event instanceof NormalizedPriceEvent tick) {
+                writeTickToDatabase(tick);
             }
         }
     }
 
     private void writeCandleToDatabase(CandleEvent event) {
-        String sql = "INSERT INTO candles (symbol, open_time_ms, close_time_ms, open, high, low, close, volume, tick_count) " +
-                    "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? " +
-                    "WHERE NOT EXISTS (SELECT 1 FROM candles WHERE symbol = ? AND open_time_ms = ?)";
-
         try (Connection conn = DataSourceManager.getDataSource().getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+             PreparedStatement stmt = conn.prepareStatement(INSERT_CANDLE_SQL)) {
 
-            stmt.setString(1, event.instrument());
-            stmt.setLong(2, event.openTime().toEpochMilli());
-            stmt.setLong(3, event.closeTime().toEpochMilli());
-            stmt.setBigDecimal(4, event.open());
-            stmt.setBigDecimal(5, event.high());
-            stmt.setBigDecimal(6, event.low());
-            stmt.setBigDecimal(7, event.close());
-            stmt.setBigDecimal(8, event.volume());
-            stmt.setInt(9, event.tickCount());
-            stmt.setString(10, event.instrument());
-            stmt.setLong(11, event.openTime().toEpochMilli());
-
+            bindCandle(stmt, event);
             int inserted = stmt.executeUpdate();
             if (inserted == 0) {
                 logger.debug("Skipping duplicate candle: {} {}", event.instrument(), event.openTime());
@@ -132,19 +203,34 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
     }
 
     private void writeTickToDatabase(NormalizedPriceEvent event) {
-        String sql = "INSERT INTO ticks (symbol, time_ms, price, quantity) VALUES (?, ?, ?, ?)";
-
         try (Connection conn = DataSourceManager.getDataSource().getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+             PreparedStatement stmt = conn.prepareStatement(INSERT_TICK_SQL)) {
 
-            stmt.setString(1, event.instrument());
-            stmt.setLong(2, event.eventTimestamp().toEpochMilli());
-            stmt.setBigDecimal(3, event.price());
-            stmt.setBigDecimal(4, event.quantity());
+            bindTick(stmt, event);
             stmt.executeUpdate();
         } catch (SQLException e) {
             logger.error("Error persisting tick: {}", event.eventTimestamp(), e);
         }
     }
-}
 
+    private static void bindCandle(PreparedStatement stmt, CandleEvent event) throws SQLException {
+        stmt.setString(1, event.instrument());
+        stmt.setLong(2, event.openTime().toEpochMilli());
+        stmt.setLong(3, event.closeTime().toEpochMilli());
+        stmt.setBigDecimal(4, event.open());
+        stmt.setBigDecimal(5, event.high());
+        stmt.setBigDecimal(6, event.low());
+        stmt.setBigDecimal(7, event.close());
+        stmt.setBigDecimal(8, event.volume());
+        stmt.setInt(9, event.tickCount());
+        stmt.setString(10, event.instrument());
+        stmt.setLong(11, event.openTime().toEpochMilli());
+    }
+
+    private static void bindTick(PreparedStatement stmt, NormalizedPriceEvent event) throws SQLException {
+        stmt.setString(1, event.instrument());
+        stmt.setLong(2, event.eventTimestamp().toEpochMilli());
+        stmt.setBigDecimal(3, event.price());
+        stmt.setBigDecimal(4, event.quantity());
+    }
+}
