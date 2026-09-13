@@ -155,8 +155,10 @@ public class Main {
             predictor.addRule(new RsiRule());
             predictor.addRule(new SmaMomentumRule());
             predictor.addRule(new MacdRule());
+            predictor.addRule(new MfiRule());
             predictor.addFilterRule(new AtrRule());
             predictor.addFilterRule(new VolatilityRule());
+            predictor.addFilterRule(new AdxRegimeRule());
 
             FeatureExtractor featureExtractor = new FeatureExtractor(
                     Config.getSmaPeriod(),
