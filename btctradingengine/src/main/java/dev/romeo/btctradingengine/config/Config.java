@@ -70,6 +70,7 @@ public class Config {
     public static int getPriceActionLookback() { return Integer.parseInt(getProperty("indicator.priceaction.lookback", "300")); }
     public static int getPriceActionSwingStrength() { return Integer.parseInt(getProperty("indicator.priceaction.swing.strength", "30")); }
     public static int getCvdPeriod() { return Integer.parseInt(getProperty("indicator.cvd.period", "300")); }
+    public static int getEmaSlopePeriods() { return Integer.parseInt(getProperty("indicator.ema.slope.periods", "15")); }
     public static BigDecimal getLargeTradeNotional() { return getDecimal("feature.flow.large.trade.notional", "100000"); }
 
     public static BigDecimal getDecimal(String key, String defaultValue) {
@@ -96,6 +97,7 @@ public class Config {
     public static BigDecimal getMfiNeutralHigh() { return getDecimal("prediction.mfi.neutral.high", "60"); }
     public static BigDecimal getMfiOverbought() { return getDecimal("prediction.mfi.overbought", "80"); }
     public static BigDecimal getBollingerSqueezeThreshold() { return getDecimal("prediction.bollinger.squeeze.threshold", "0.5"); }
+    public static boolean isRegimeGatingEnabled() { return Boolean.parseBoolean(getProperty("prediction.regime.gating.enabled", "false")); }
     public static double getBuyThreshold() { return Double.parseDouble(getProperty("prediction.buy.threshold", "0.28")); }
     public static double getSellThreshold() { return Double.parseDouble(getProperty("prediction.sell.threshold", "-0.28")); }
     public static double getHoldMin() { return Double.parseDouble(getProperty("prediction.hold.min", "-0.3")); }
@@ -138,6 +140,7 @@ public class Config {
         requirePositive("indicator.priceaction.lookback", getPriceActionLookback());
         requirePositive("indicator.priceaction.swing.strength", getPriceActionSwingStrength());
         requirePositive("indicator.cvd.period", getCvdPeriod());
+        requirePositive("indicator.ema.slope.periods", getEmaSlopePeriods());
         requirePositive("derivatives.poll.seconds", getDerivativesPollSeconds());
         requirePositive("derivatives.basis.poll.seconds", getDerivativesBasisPollSeconds());
         requirePositive("derivatives.stale.seconds", getDerivativesStaleSeconds());
