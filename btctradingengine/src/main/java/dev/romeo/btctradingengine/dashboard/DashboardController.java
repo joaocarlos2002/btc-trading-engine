@@ -5,8 +5,12 @@ import dev.romeo.btctradingengine.backtest.BacktestParams;
 import dev.romeo.btctradingengine.backtest.BacktestReport;
 import dev.romeo.btctradingengine.backtest.BacktestRunner;
 import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.derivatives.BinanceFuturesClient;
+import dev.romeo.btctradingengine.derivatives.DerivativesHistory;
 import dev.romeo.btctradingengine.indicator.VwapAnchor;
 import dev.romeo.btctradingengine.model.CandleEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -15,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -22,10 +27,38 @@ import java.util.Map;
 @RequestMapping("/api")
 public class DashboardController {
     private final DashboardState state;
+    private static final Logger logger = LoggerFactory.getLogger(DashboardController.class);
+
     private final BinanceKlineClient klineClient = new BinanceKlineClient();
+    private final BinanceKlineClient futuresKlineClient = BinanceKlineClient.usdmFutures();
+    private final BinanceFuturesClient futuresClient = new BinanceFuturesClient();
 
     public DashboardController(DashboardState state) {
         this.state = state;
+    }
+
+    /**
+     * Funding and basis for the backtest range. Open interest and long/short have no usable history
+     * (the futures REST keeps 30 days - issue #54) and stay empty. A futures API failure runs the
+     * backtest without derivatives instead of failing the request.
+     */
+    private DerivativesHistory loadBacktestDerivatives(List<CandleEvent> candles, int days) {
+        DerivativesHistory history = DerivativesHistory.forBacktest();
+        if (!Config.isDerivativesEnabled()) {
+            return history;
+        }
+        try {
+            futuresKlineClient.loadClosedCandlesRange(Config.getMarketSymbol(), Config.getBinanceKlineInterval(), days)
+                    .forEach(kline -> history.addPerpClose(kline.openTime(), kline.close()));
+            // One funding interval before the first candle, so it already has a settled rate
+            Instant from = candles.get(0).openTime().minus(DerivativesHistory.FUNDING_INTERVAL);
+            Instant to = candles.get(candles.size() - 1).closeTime();
+            futuresClient.fundingRates(Config.getMarketSymbol(), from, to)
+                    .forEach(rate -> history.addFundingRate(rate.time(), rate.value()));
+        } catch (Exception e) {
+            logger.warn("Could not load derivatives history for the backtest, continuing without it: {}", e.getMessage());
+        }
+        return history;
     }
 
     @GetMapping("/candles/latest")
@@ -173,7 +206,8 @@ public class DashboardController {
                     stopLossPercent != null ? stopLossPercent : defaults.stopLossPercent(),
                     commissionRate != null ? commissionRate : defaults.commissionRate());
 
-            BacktestReport report = new BacktestRunner().run(candles, Config.getTradingInitialCapital(), params);
+            DerivativesHistory derivatives = loadBacktestDerivatives(candles, clampedDays);
+            BacktestReport report = new BacktestRunner().run(candles, Config.getTradingInitialCapital(), params, derivatives);
             return ResponseEntity.ok(Map.of(
                     "symbol", Config.getMarketSymbol(),
                     "interval", Config.getBinanceKlineInterval(),
@@ -182,6 +216,7 @@ public class DashboardController {
                     "rangeStart", candles.get(0).openTime(),
                     "rangeEnd", candles.get(candles.size() - 1).closeTime(),
                     "params", params,
+                    "derivativesLoaded", !derivatives.isEmpty(),
                     "report", report
             ));
         } catch (Exception e) {
