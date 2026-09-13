@@ -2,6 +2,7 @@ package dev.romeo.btctradingengine.prediction.rules;
 
 import dev.romeo.btctradingengine.feature.FeatureVector;
 import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.prediction.RuleFamily;
 import dev.romeo.btctradingengine.prediction.SignalRule;
 
 import java.math.BigDecimal;
@@ -53,6 +54,11 @@ public class MacdRule implements SignalRule {
                 return -0.3; // Fraco bearish
             }
         }
+    }
+
+    @Override
+    public RuleFamily family() {
+        return RuleFamily.TREND;
     }
 
     @Override

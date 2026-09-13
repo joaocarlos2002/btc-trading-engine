@@ -165,7 +165,7 @@ public class FeatureExtractorTest {
         List<FeatureVector> features = new ArrayList<>();
         FeatureExtractor extractor = new FeatureExtractor(
                 new IndicatorPeriods(2, 2, 2, 1, 1, 2, 2, 2, 2, 2,
-                        2, 2, new BigDecimal("2.0"), 2, 2, VwapAnchor.DAILY, 2, 2, 1, 2),
+                        2, 2, new BigDecimal("2.0"), 2, 2, VwapAnchor.DAILY, 2, 2, 1, 2, 2),
                 features::add);
 
         // ATR(1) is ready after one candle: true range = 110 - 95 = 15, close = 105
@@ -184,7 +184,7 @@ public class FeatureExtractorTest {
         // Small periods so everything is ready within a handful of candles
         FeatureExtractor extractor = new FeatureExtractor(
                 new IndicatorPeriods(2, 2, 2, 2, 1, 2, 2, 2, 2, 2,
-                        2, 2, new BigDecimal("2.0"), 2, 2, VwapAnchor.DAILY, 2, 2, 1, 2),
+                        2, 2, new BigDecimal("2.0"), 2, 2, VwapAnchor.DAILY, 2, 2, 1, 2, 2),
                 features::add);
 
         extractor.onEvent(createCandle("100", "110", "95", "105", "1000", 50));
@@ -197,6 +197,7 @@ public class FeatureExtractorTest {
         assertTrue(fv.regime().adx().compareTo(BigDecimal.ZERO) > 0, "ADX should be populated");
         assertTrue(fv.regime().plusDi().compareTo(BigDecimal.ZERO) > 0, "+DI should be populated");
         assertTrue(fv.regime().bbWidth().compareTo(BigDecimal.ZERO) > 0, "BB width should be populated");
+        assertTrue(fv.regime().emaSlope().compareTo(BigDecimal.ZERO) > 0, "Rising market: EMA slope should be positive");
         assertTrue(fv.context().bbPercentB().compareTo(BigDecimal.ZERO) > 0, "%B should be populated");
         assertTrue(fv.context().donchianUpper().compareTo(fv.context().donchianLower()) > 0);
         assertTrue(fv.context().donchianPosition().compareTo(BigDecimal.ZERO) >= 0);

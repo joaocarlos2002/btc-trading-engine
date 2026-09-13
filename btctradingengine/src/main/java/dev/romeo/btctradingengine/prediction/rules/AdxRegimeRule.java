@@ -16,13 +16,15 @@ import java.math.BigDecimal;
  * The filter average only has to cross zero to block an entry, and a large magnitude here would
  * let one filter drown out the others (see the addFilterRule comment in RuleBasedPredictor).
  *
- * Only half of the regime logic is expressible today. "No trend disables breakout signals" is a
- * veto and is implemented. "A strong trend disables mean-reversion signals" is not: a SignalRule
- * returns one scalar for the whole prediction, so it cannot veto the mean-reversion rules (RSI,
- * MFI) while leaving the trend rules (SMA, MACD) alone. That needs per-family scores in
- * RuleBasedPredictor, so a strong trend returns a neutral 0 here instead of blocking entries that
- * are probably the good ones. prediction.adx.trend.strong therefore has no consumer yet - it stays
- * in the properties file (and is range-checked by Config.validate) waiting for that split.
+ * Two modes, following prediction.regime.gating.enabled (issue #7):
+ * <ul>
+ *   <li>gating off: low ADX vetoes every entry. It is the only way to keep trend signals out of a
+ *       range, at the cost of also blocking the mean-reversion signals that are valid there.</li>
+ *   <li>gating on: RuleBasedPredictor already drops the trend family in a range and the
+ *       mean-reversion family in a trend, so the low-ADX veto is skipped - it would otherwise block
+ *       exactly the mean-reversion entries the gating keeps.</li>
+ * </ul>
+ * The squeeze veto applies in both modes: no family is reliable before the breakout.
  */
 public class AdxRegimeRule implements SignalRule {
     private static final double NO_TREND_PENALTY = -0.3;
@@ -30,15 +32,21 @@ public class AdxRegimeRule implements SignalRule {
 
     private final BigDecimal trendMin;
     private final BigDecimal squeezeThreshold;
+    private final boolean regimeGatingEnabled;
 
     public AdxRegimeRule() {
-        this(Config.getAdxTrendMin(), Config.getBollingerSqueezeThreshold());
+        this(Config.getAdxTrendMin(), Config.getBollingerSqueezeThreshold(), Config.isRegimeGatingEnabled());
     }
 
     /** Allows overriding thresholds without touching global Config - used by on-demand backtests. */
     public AdxRegimeRule(BigDecimal trendMin, BigDecimal squeezeThreshold) {
+        this(trendMin, squeezeThreshold, false);
+    }
+
+    public AdxRegimeRule(BigDecimal trendMin, BigDecimal squeezeThreshold, boolean regimeGatingEnabled) {
         this.trendMin = trendMin;
         this.squeezeThreshold = squeezeThreshold;
+        this.regimeGatingEnabled = regimeGatingEnabled;
     }
 
     @Override
@@ -49,7 +57,7 @@ public class AdxRegimeRule implements SignalRule {
         double score = 0.0;
 
         // Zero means the indicator is still warming up: no opinion, do not veto.
-        if (adx.compareTo(BigDecimal.ZERO) > 0 && adx.compareTo(trendMin) < 0) {
+        if (!regimeGatingEnabled && adx.compareTo(BigDecimal.ZERO) > 0 && adx.compareTo(trendMin) < 0) {
             score = NO_TREND_PENALTY;
         }
         if (bbWidth.compareTo(BigDecimal.ZERO) > 0 && bbWidth.compareTo(squeezeThreshold) < 0) {

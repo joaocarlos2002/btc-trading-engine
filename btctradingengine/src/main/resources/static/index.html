@@ -795,6 +795,10 @@ footer{
             <span id="confidence">—</span>
           </div>
           <div class="model-row">
+            <label data-tip="Regime de mercado em que a decisão foi tomada: TREND_UP/TREND_DOWN (ADX forte com +DI/−DI e inclinação da EMA concordando), RANGE (ADX baixo), SQUEEZE (bandas comprimidas), TRANSITION ou UNKNOWN (aquecendo). Com prediction.regime.gating.enabled, tendência desliga RSI/MFI/SMA e lateral desliga o MACD.">Market regime</label>
+            <span id="marketRegime">—</span>
+          </div>
+          <div class="model-row">
             <label data-tip="Preço do candle usado como base para gerar este sinal.">Signal price</label>
             <span id="signalPrice">—</span>
           </div>
@@ -1219,6 +1223,7 @@ function renderPrediction(p){
   text('probUp', pct(p.probabilityUp));
   text('probDown', pct(p.probabilityDown));
   text('confidence', pct(p.confidence));
+  text('marketRegime', p.marketRegime);
   text('signalPrice', fmt(p.price));
   text('predictionTime', time(p.timestamp));
   text('modelVersion', p.modelVersion || 'rules-v1');

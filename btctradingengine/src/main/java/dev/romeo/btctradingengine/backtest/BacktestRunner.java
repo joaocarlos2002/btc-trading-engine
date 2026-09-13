@@ -4,6 +4,7 @@ import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.feature.DerivativesLookup;
 import dev.romeo.btctradingengine.feature.FeatureExtractor;
 import dev.romeo.btctradingengine.model.CandleEvent;
+import dev.romeo.btctradingengine.prediction.MarketRegimeClassifier;
 import dev.romeo.btctradingengine.prediction.RuleBasedPredictor;
 import dev.romeo.btctradingengine.prediction.rules.AdxRegimeRule;
 import dev.romeo.btctradingengine.prediction.rules.AtrRule;
@@ -44,14 +45,16 @@ public class BacktestRunner {
         CandleEvent[] currentCandle = new CandleEvent[1];
         RuleBasedPredictor predictor = new RuleBasedPredictor(
                 prediction -> engine.processPrediction(prediction, currentCandle[0]),
-                params.buyThreshold(), params.sellThreshold(), params.confirmationSnapshots());
+                params.buyThreshold(), params.sellThreshold(), params.confirmationSnapshots(),
+                new MarketRegimeClassifier(params.adxTrendMin(), params.adxTrendStrong(), params.bollingerSqueezeThreshold()),
+                params.regimeGatingEnabled());
         predictor.addRule(new RsiRule(params.rsiOversold(), params.rsiNeutralLow(), params.rsiNeutralHigh(), params.rsiOverbought()));
         predictor.addRule(new SmaMomentumRule(params.smaDistanceExtreme(), params.smaDistanceModerate()));
         predictor.addRule(new MacdRule(params.macdStrongHistogramAtrRatio()));
         predictor.addRule(new MfiRule(params.mfiOversold(), params.mfiNeutralLow(), params.mfiNeutralHigh(), params.mfiOverbought()));
         predictor.addFilterRule(new AtrRule(params.atrVolatilityLow(), params.atrVolatilityNormal(), params.atrVolatilityHigh()));
         predictor.addFilterRule(new VolatilityRule(params.volatilityRatioHigh()));
-        predictor.addFilterRule(new AdxRegimeRule(params.adxTrendMin(), params.bollingerSqueezeThreshold()));
+        predictor.addFilterRule(new AdxRegimeRule(params.adxTrendMin(), params.bollingerSqueezeThreshold(), params.regimeGatingEnabled()));
 
         FeatureExtractor extractor = new FeatureExtractor(params.indicatorPeriods(), derivatives, predictor::onEvent);
 

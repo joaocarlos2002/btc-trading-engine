@@ -15,6 +15,7 @@ public record PredictionVector(
 
         BigDecimal price,           // PreÃ§o no momento
         String modelVersion,        // "rules-v1", "rules-v2", etc
+        MarketRegime marketRegime,  // regime the decision was made in (issue #7)
         String reason               // ExplicaÃ§Ã£o legÃ­vel da decisÃ£o
 ) {
 
@@ -27,6 +28,7 @@ public record PredictionVector(
         Objects.requireNonNull(confidence, "confidence");
         Objects.requireNonNull(price, "price");
         Objects.requireNonNull(modelVersion, "modelVersion");
+        Objects.requireNonNull(marketRegime, "marketRegime");
         Objects.requireNonNull(reason, "reason");
 
         validateUnitInterval("probabilityUp", probabilityUp);
@@ -59,6 +61,7 @@ public record PredictionVector(
         private BigDecimal confidence;
         private BigDecimal price;
         private String modelVersion;
+        private MarketRegime marketRegime = MarketRegime.UNKNOWN;
         private String reason;
 
         public Builder instrument(String instrument) { this.instrument = instrument; return this; }
@@ -69,13 +72,14 @@ public record PredictionVector(
         public Builder confidence(BigDecimal confidence) { this.confidence = confidence; return this; }
         public Builder price(BigDecimal price) { this.price = price; return this; }
         public Builder modelVersion(String modelVersion) { this.modelVersion = modelVersion; return this; }
+        public Builder marketRegime(MarketRegime marketRegime) { this.marketRegime = marketRegime; return this; }
         public Builder reason(String reason) { this.reason = reason; return this; }
 
         public PredictionVector build() {
             return new PredictionVector(
                     instrument, timestamp,
                     signal, probabilityUp, probabilityDown, confidence,
-                    price, modelVersion, reason
+                    price, modelVersion, marketRegime, reason
             );
         }
     }

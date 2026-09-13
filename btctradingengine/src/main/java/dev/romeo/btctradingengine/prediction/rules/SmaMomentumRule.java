@@ -2,6 +2,7 @@ package dev.romeo.btctradingengine.prediction.rules;
 
 import dev.romeo.btctradingengine.feature.FeatureVector;
 import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.prediction.RuleFamily;
 import dev.romeo.btctradingengine.prediction.SignalRule;
 
 import java.math.BigDecimal;
@@ -44,6 +45,15 @@ public class SmaMomentumRule implements SignalRule {
             // Muito abaixo da SMA (compra agressiva)
             return 0.7;
         }
+    }
+
+    /**
+     * Mean reversion despite the "Momentum" name: it buys far below the SMA and sells far above it,
+     * so a trend is exactly where it votes against the move.
+     */
+    @Override
+    public RuleFamily family() {
+        return RuleFamily.MEAN_REVERSION;
     }
 
     @Override

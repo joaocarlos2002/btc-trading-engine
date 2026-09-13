@@ -2,6 +2,7 @@ package dev.romeo.btctradingengine.prediction.rules;
 
 import dev.romeo.btctradingengine.feature.FeatureVector;
 import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.prediction.RuleFamily;
 import dev.romeo.btctradingengine.prediction.SignalRule;
 
 import java.math.BigDecimal;
@@ -44,6 +45,11 @@ public class RsiRule implements SignalRule {
             // RSI > 70: sobrecompra forte â†’ SELL
             return -0.8;
         }
+    }
+
+    @Override
+    public RuleFamily family() {
+        return RuleFamily.MEAN_REVERSION;
     }
 
     @Override

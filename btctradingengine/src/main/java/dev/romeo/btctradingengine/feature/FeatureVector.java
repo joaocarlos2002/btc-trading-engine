@@ -96,6 +96,7 @@ public record FeatureVector(
         public Builder minusDi(BigDecimal minusDi) { regime.minusDi(minusDi); return this; }
         public Builder atrPercent(BigDecimal atrPercent) { regime.atrPercent(atrPercent); return this; }
         public Builder bbWidth(BigDecimal bbWidth) { regime.bbWidth(bbWidth); return this; }
+        public Builder emaSlope(BigDecimal emaSlope) { regime.emaSlope(emaSlope); return this; }
 
         public Builder vwap(BigDecimal vwap) { context.vwap(vwap); return this; }
         public Builder vwapDistance(BigDecimal vwapDistance) { context.vwapDistance(vwapDistance); return this; }

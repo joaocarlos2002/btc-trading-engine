@@ -57,6 +57,15 @@ public class AdxRegimeRuleTest {
         assertEquals(0.0, rule.evaluate(features("12", "0.2")), 0.01);
     }
 
+    @Test
+    public void withRegimeGatingLowAdxNoLongerVetoesButSqueezeStillDoes() {
+        AdxRegimeRule rule = new AdxRegimeRule(new BigDecimal("20"), new BigDecimal("0.5"), true);
+
+        // the gating keeps mean reversion in a range, so blocking every entry there would undo it
+        assertEquals(0.0, rule.evaluate(features("12", "2.0")), 0.01);
+        assertEquals(-0.2, rule.evaluate(features("12", "0.2")), 0.01);
+    }
+
     private FeatureVector features(String adx, String bbWidth) {
         return FeatureVector.builder()
                 .instrument("BTC/USD")
