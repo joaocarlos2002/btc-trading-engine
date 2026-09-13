@@ -11,12 +11,14 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DatabaseWriter implements CandleEventListener, dev.romeo.btctradingengine.adapter.PriceEventListener {
     private static final Logger logger = LoggerFactory.getLogger(DatabaseWriter.class);
     private static final int QUEUE_CAPACITY = 10000;
     private static final int BATCH_SIZE = 100;
+    private static final long POLL_TIMEOUT_MS = 100;
 
     private final BlockingQueue<Object> queue = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -65,32 +67,36 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
     private void writeLoop() {
         try {
             while (running.get()) {
-                Object event = queue.poll();
+                Object event = queue.poll(POLL_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                if (event == null) {
+                    continue;
+                }
                 if (event instanceof CandleEvent candle) {
                     writeCandleToDatabase(candle);
                 } else if (event instanceof NormalizedPriceEvent tick) {
                     writeTickToDatabase(tick);
                 }
             }
-            flushRemainingEvents();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("DatabaseWriter interrupted, flushing pending events");
         } catch (Exception e) {
             logger.error("Error in database writer loop", e);
         }
+        flushRemainingEvents();
     }
 
     private void flushRemainingEvents() {
-        while (!queue.isEmpty()) {
-            Object event = queue.poll();
-            if (event != null) {
-                try {
-                    if (event instanceof CandleEvent candle) {
-                        writeCandleToDatabase(candle);
-                    } else if (event instanceof NormalizedPriceEvent tick) {
-                        writeTickToDatabase(tick);
-                    }
-                } catch (Exception e) {
-                    logger.error("Error writing event during flush", e);
+        Object event;
+        while ((event = queue.poll()) != null) {
+            try {
+                if (event instanceof CandleEvent candle) {
+                    writeCandleToDatabase(candle);
+                } else if (event instanceof NormalizedPriceEvent tick) {
+                    writeTickToDatabase(tick);
                 }
+            } catch (Exception e) {
+                logger.error("Error writing event during flush", e);
             }
         }
     }
