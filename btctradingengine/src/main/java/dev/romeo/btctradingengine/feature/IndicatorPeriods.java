@@ -21,7 +21,8 @@ public record IndicatorPeriods(
         int volatilityShort, int volatilityLong, int volumeAverage,
         int adx, int bollinger, BigDecimal bollingerStdDev,
         int mfi, int donchian,
-        VwapAnchor vwapAnchor, int vwapRollingPeriods
+        VwapAnchor vwapAnchor, int vwapRollingPeriods,
+        int priceActionLookback, int priceActionSwingStrength
 ) {
 
     public static IndicatorPeriods fromConfig() {
@@ -31,7 +32,8 @@ public record IndicatorPeriods(
                 Config.getVolatilityShortPeriods(), Config.getVolatilityLongPeriods(), Config.getVolumeAveragePeriods(),
                 Config.getAdxPeriod(), Config.getBollingerPeriod(), Config.getBollingerStdDev(),
                 Config.getMfiPeriod(), Config.getDonchianPeriod(),
-                Config.getVwapAnchor(), Config.getVwapRollingPeriods());
+                Config.getVwapAnchor(), Config.getVwapRollingPeriods(),
+                Config.getPriceActionLookback(), Config.getPriceActionSwingStrength());
     }
 
     /** Overrides only the three periods the short FeatureExtractor constructor takes. */
@@ -42,6 +44,7 @@ public record IndicatorPeriods(
                 volatilityShort, volatilityLong, volumeAverage,
                 adx, bollinger, bollingerStdDev,
                 mfi, donchian,
-                vwapAnchor, vwapRollingPeriods);
+                vwapAnchor, vwapRollingPeriods,
+                priceActionLookback, priceActionSwingStrength);
     }
 }
