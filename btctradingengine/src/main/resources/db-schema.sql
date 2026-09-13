@@ -61,6 +61,22 @@ CREATE INDEX IF NOT EXISTS idx_ticks_time
 -- threshold can be re-applied to past ticks instead of being frozen into the candles.
 ALTER TABLE ticks ADD COLUMN IF NOT EXISTS aggressor_side VARCHAR(7);
 
+-- Derivatives readings polled from USD-M futures (issue #53). time_ms is when the bot received the
+-- reading, not Binance's period timestamp, so replaying this table never attaches a value to a
+-- candle that closed before it was known. A column is NULL when that call failed in the poll.
+CREATE TABLE IF NOT EXISTS derivatives_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    symbol VARCHAR(20) NOT NULL,
+    time_ms BIGINT NOT NULL,
+    open_interest NUMERIC(28, 8),
+    long_short_ratio NUMERIC(20, 8),
+    funding_rate NUMERIC(20, 10),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_derivatives_symbol_time
+    ON derivatives_snapshots(symbol, time_ms DESC);
+
 -- Optional: partition candles by month for better performance on large datasets
 -- Run this after accumulating some data
 -- ALTER TABLE candles PARTITION BY RANGE (EXTRACT(EPOCH FROM created_at));
