@@ -21,6 +21,8 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
     private static final int QUEUE_CAPACITY = 10000;
     private static final int BATCH_SIZE = 100;
     private static final long POLL_TIMEOUT_MS = 100;
+    private static final long STOP_TIMEOUT_MS = 5000;
+    private static final long INTERRUPT_GRACE_MS = 1000;
 
     private static final String INSERT_CANDLE_SQL =
             "INSERT INTO candles (symbol, open_time_ms, close_time_ms, open, high, low, close, volume, tick_count) " +
@@ -39,7 +41,9 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
     public void start() {
         if (running.compareAndSet(false, true)) {
             writerThread = new Thread(this::writeLoop, "DatabaseWriter");
-            writerThread.setDaemon(false);
+            // Daemon so this thread can never keep the JVM alive. Flushing on shutdown is stop()'s job,
+            // called from the shutdown hook, not something the daemon flag can guarantee.
+            writerThread.setDaemon(true);
             writerThread.start();
             logger.info("DatabaseWriter started");
         }
@@ -49,9 +53,21 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
         if (running.compareAndSet(true, false)) {
             if (writerThread != null) {
                 try {
-                    writerThread.join(5000);
+                    writerThread.join(STOP_TIMEOUT_MS);
+                    if (writerThread.isAlive()) {
+                        logger.warn("DatabaseWriter did not finish within {} ms, interrupting; {} events pending",
+                                STOP_TIMEOUT_MS, queue.size());
+                        writerThread.interrupt();
+                        writerThread.join(INTERRUPT_GRACE_MS);
+                    }
+                    if (writerThread.isAlive()) {
+                        // Typically blocked in a JDBC socket read, which interrupt() cannot break.
+                        logger.error("DatabaseWriter still blocked after interrupt; abandoning it with {} events pending",
+                                queue.size());
+                    }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                    writerThread.interrupt();
                     logger.warn("Interrupted waiting for writer thread", e);
                 }
             }
@@ -88,16 +104,30 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            logger.warn("DatabaseWriter interrupted, {} events pending", batch.size() + queue.size());
+            logger.warn("DatabaseWriter interrupted while waiting for events");
         } catch (Throwable t) {
             // Per-batch RuntimeExceptions are handled in writeBatchSafely; only Errors reach here.
             logger.error("DatabaseWriter loop terminated unexpectedly, {} events pending",
                     batch.size() + queue.size(), t);
             throw t;
         } finally {
-            // Events already drained but not yet written go first.
-            writeBatchSafely(batch);
-            flushRemainingEvents();
+            if (Thread.currentThread().isInterrupted()) {
+                // Only stop() interrupts us, after its timeout: give up instead of writing against a closing pool.
+                discardPending(batch);
+            } else {
+                // Events already drained but not yet written go first.
+                writeBatchSafely(batch);
+                flushRemainingEvents();
+            }
+        }
+    }
+
+    private void discardPending(List<Object> batch) {
+        int discarded = batch.size() + queue.size();
+        batch.clear();
+        queue.clear();
+        if (discarded > 0) {
+            logger.error("DatabaseWriter interrupted during shutdown, discarding {} unwritten events", discarded);
         }
     }
 
@@ -107,9 +137,12 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
             logger.info("Flushing {} pending events", pending);
         }
         List<Object> batch = new ArrayList<>(BATCH_SIZE);
-        while (queue.drainTo(batch, BATCH_SIZE) > 0) {
+        while (!Thread.currentThread().isInterrupted() && queue.drainTo(batch, BATCH_SIZE) > 0) {
             writeBatchSafely(batch);
             batch.clear();
+        }
+        if (Thread.currentThread().isInterrupted()) {
+            discardPending(batch);
         }
     }
 
@@ -119,7 +152,11 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
         }
         try {
             if (!writeBatch(batch)) {
-                writeIndividually(batch);
+                if (Thread.currentThread().isInterrupted()) {
+                    logger.error("Discarding batch of {} events: writer interrupted during shutdown", batch.size());
+                } else {
+                    writeIndividually(batch);
+                }
             }
         } catch (RuntimeException e) {
             logger.error("Unexpected error writing batch of {} events", batch.size(), e);
@@ -188,7 +225,12 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
     }
 
     private void writeIndividually(List<Object> batch) {
-        for (Object event : batch) {
+        for (int i = 0; i < batch.size(); i++) {
+            if (Thread.currentThread().isInterrupted()) {
+                logger.error("Discarding {} events: writer interrupted during shutdown", batch.size() - i);
+                return;
+            }
+            Object event = batch.get(i);
             if (event instanceof CandleEvent candle) {
                 writeCandleToDatabase(candle);
             } else if (event instanceof NormalizedPriceEvent tick) {
