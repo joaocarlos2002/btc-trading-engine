@@ -33,8 +33,30 @@ public class BinanceKlineClient {
     private final ObjectMapper mapper = new ObjectMapper();
     private final HttpClient client = HttpClient.newHttpClient();
 
+    /** null = Config.getBinanceRestUrl(), which may point at testnet for live trading. */
+    private final String liveBaseUrl;
+    private final String historyBaseUrl;
+    private final String klinesPath;
+
+    public BinanceKlineClient() {
+        this(null, MAINNET_REST_URL, "/api/v3/klines");
+    }
+
+    private BinanceKlineClient(String liveBaseUrl, String historyBaseUrl, String klinesPath) {
+        this.liveBaseUrl = liveBaseUrl;
+        this.historyBaseUrl = historyBaseUrl;
+        this.klinesPath = klinesPath;
+    }
+
+    /** USD-M perpetual klines: same row format as spot, always from mainnet (issue #53). */
+    public static BinanceKlineClient usdmFutures() {
+        String futuresUrl = Config.getBinanceFuturesRestUrl();
+        return new BinanceKlineClient(futuresUrl, futuresUrl, "/fapi/v1/klines");
+    }
+
     public List<CandleEvent> loadClosedCandles(String symbol, String interval, int limit) throws Exception {
-        return fetchPage(Config.getBinanceRestUrl(), symbol, interval, Math.min(Math.max(limit, 1), 1000), null);
+        String baseUrl = liveBaseUrl != null ? liveBaseUrl : Config.getBinanceRestUrl();
+        return fetchPage(baseUrl, symbol, interval, Math.min(Math.max(limit, 1), 1000), null);
     }
 
     /**
@@ -57,7 +79,7 @@ public class BinanceKlineClient {
         long targetStart = endTime - Duration.ofDays(days).toMillis();
 
         while (endTime > targetStart) {
-            List<CandleEvent> page = fetchPage(MAINNET_REST_URL, symbol, interval, 1000, endTime);
+            List<CandleEvent> page = fetchPage(historyBaseUrl, symbol, interval, 1000, endTime);
             if (page.isEmpty()) {
                 break;
             }
@@ -81,7 +103,7 @@ public class BinanceKlineClient {
     }
 
     private List<CandleEvent> fetchPage(String baseUrl, String symbol, String interval, int limit, Long endTime) throws Exception {
-        String endpoint = baseUrl + "/api/v3/klines?symbol=" + symbol
+        String endpoint = baseUrl + klinesPath + "?symbol=" + symbol
                 + "&interval=" + interval
                 + "&limit=" + limit
                 + (endTime != null ? "&endTime=" + endTime : "");
