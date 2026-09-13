@@ -591,7 +591,7 @@ footer{
   <div class="row">
     <div class="panel">
       <div class="panel-head">
-        <h3>Technical features · 37</h3>
+        <h3>Technical features · 42</h3>
         <span class="meta" id="lastUpdate">—</span>
       </div>
       <div class="metrics">
@@ -734,6 +734,26 @@ footer{
         <div class="metric">
           <label data-tip="Parcela do volume agressor da janela que veio de trades grandes. Só ao vivo: klines não trazem o tamanho dos trades.">Large share</label>
           <b id="largeVolumeShare">—</b><small>0 — 1 · live only</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Último funding rate liquidado do perpétuo BTCUSDT (a cada 8h). Positivo = longs pagam shorts (mercado alavancado comprado); negativo = shorts pagam longs.">Funding</label>
+          <b id="fundingRate">—</b><small>per 8h</small>
+        </div>
+        <div class="metric">
+          <label data-tip="(Preço do perpétuo − preço spot) ÷ spot, em %. Positivo = futuros com prêmio (demanda alavancada de compra); negativo = desconto.">Basis</label>
+          <b id="basisPercent">—</b><small>% perp vs spot</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Open interest: contratos abertos no perpétuo, em BTC. Só ao vivo: a API guarda apenas 30 dias de histórico, então fica vazio no backtest.">Open int</label>
+          <b id="openInterest">—</b><small>BTC · live only</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Variação % do open interest contra derivatives.open.interest.change.minutes atrás. Subindo com o preço = dinheiro novo entrando; caindo = posições sendo fechadas ou liquidadas.">OI change</label>
+          <b id="openInterestChangePercent">—</b><small>% · live only</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Razão entre contas compradas e vendidas no perpétuo. Acima de 1 = mais contas long. Extremos costumam indicar posicionamento lotado. Só ao vivo.">L/S ratio</label>
+          <b id="longShortRatio">—</b><small>accounts · live only</small>
         </div>
         <div class="metric">
           <label data-tip="Hora do dia em UTC. Útil para identificar sessões mais voláteis (Ásia, Europa, EUA).">Hour</label>
@@ -1156,6 +1176,12 @@ function renderMetrics(m){
    'bodyRatio','upperWickRatio','lowerWickRatio','recentHighDistance','recentLowDistance',
    'supportDistance','resistanceDistance',
    'deltaRatio','cvd','cvdRatio','largeCvd','largeVolumeShare'].forEach(id => text(id, fmt(f[id])));
+  // Derivatives are null (not 0) when unavailable; fmt already renders null as —
+  text('fundingRate', f.fundingRate == null ? '—' : `${fmt(f.fundingRate * 100, 4)}%`);
+  text('basisPercent', fmt(f.basisPercent, 4));
+  text('openInterest', fmt(f.openInterest, 0));
+  text('openInterestChangePercent', fmt(f.openInterestChangePercent, 2));
+  text('longShortRatio', fmt(f.longShortRatio, 3));
   // Integer price action signals, shown as-is like hour/day
   ['candleStreak','previousCandleBreak','swingHighTrend','swingLowTrend']
     .forEach(id => text(id, f[id] ?? '—'));
