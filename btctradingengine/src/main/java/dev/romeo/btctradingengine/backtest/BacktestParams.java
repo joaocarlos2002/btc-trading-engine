@@ -34,6 +34,8 @@ public record BacktestParams(
         int donchianPeriod,
         VwapAnchor vwapAnchor,
         int vwapRollingPeriods,
+        int priceActionLookback,
+        int priceActionSwingStrength,
 
         BigDecimal rsiOversold,
         BigDecimal rsiNeutralLow,
@@ -80,6 +82,8 @@ public record BacktestParams(
                 Config.getDonchianPeriod(),
                 Config.getVwapAnchor(),
                 Config.getVwapRollingPeriods(),
+                Config.getPriceActionLookback(),
+                Config.getPriceActionSwingStrength(),
 
                 Config.getRsiOversold(),
                 Config.getRsiNeutralLow(),
@@ -116,6 +120,7 @@ public record BacktestParams(
                 volatilityShortPeriods, volatilityLongPeriods, volumeAveragePeriods,
                 adxPeriod, bollingerPeriod, bollingerStdDev,
                 mfiPeriod, donchianPeriod,
-                vwapAnchor, vwapRollingPeriods);
+                vwapAnchor, vwapRollingPeriods,
+                priceActionLookback, priceActionSwingStrength);
     }
 }

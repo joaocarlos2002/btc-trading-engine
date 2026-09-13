@@ -8,6 +8,7 @@ import dev.romeo.btctradingengine.indicator.DonchianChannel;
 import dev.romeo.btctradingengine.indicator.Ema;
 import dev.romeo.btctradingengine.indicator.MacdIndicator;
 import dev.romeo.btctradingengine.indicator.MfiIndicator;
+import dev.romeo.btctradingengine.indicator.PriceAction;
 import dev.romeo.btctradingengine.indicator.Rsi;
 import dev.romeo.btctradingengine.indicator.SmaIncremental;
 import dev.romeo.btctradingengine.indicator.Vwap;
@@ -37,6 +38,7 @@ public class FeatureExtractor implements CandleEventListener {
     private final Vwap vwap;
     private final MfiIndicator mfiIndicator;
     private final DonchianChannel donchianChannel;
+    private final PriceAction priceAction;
     private final FeatureEventListener listener;
     private final int volatilityShortPeriods;
     private final int volatilityLongPeriods;
@@ -58,6 +60,7 @@ public class FeatureExtractor implements CandleEventListener {
         this.vwap = new Vwap(periods.vwapAnchor(), periods.vwapRollingPeriods());
         this.mfiIndicator = new MfiIndicator(periods.mfi());
         this.donchianChannel = new DonchianChannel(periods.donchian());
+        this.priceAction = new PriceAction(periods.priceActionLookback(), periods.priceActionSwingStrength());
         this.volatilityShortPeriods = periods.volatilityShort();
         this.volatilityLongPeriods = periods.volatilityLong();
         this.volumeAveragePeriods = periods.volumeAverage();
@@ -100,6 +103,7 @@ public class FeatureExtractor implements CandleEventListener {
         BigDecimal vwapValue = vwap.update(candle).orElse(BigDecimal.ZERO);
         BigDecimal mfi = mfiIndicator.update(candle).orElse(NEUTRAL_OSCILLATOR);
         var donchian = donchianChannel.update(candle);
+        var priceActionValue = priceAction.update(candle);
 
         ZonedDateTime zdt = candle.closeTime().atZone(ZoneOffset.UTC);
 
@@ -136,6 +140,8 @@ public class FeatureExtractor implements CandleEventListener {
                 .donchianPosition(donchian.map(DonchianChannel.DonchianValue::position).orElse(BigDecimal.ZERO))
 
                 .mfi(mfi)
+
+                .priceAction(PriceActionFeatures.from(priceActionValue))
 
                 .price(close)
                 .tickCount(candle.tickCount())

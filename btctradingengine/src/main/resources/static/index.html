@@ -591,7 +591,7 @@ footer{
   <div class="row">
     <div class="panel">
       <div class="panel-head">
-        <h3>Technical features · 21</h3>
+        <h3>Technical features · 32</h3>
         <span class="meta" id="lastUpdate">—</span>
       </div>
       <div class="metrics">
@@ -670,6 +670,50 @@ footer{
         <div class="metric">
           <label data-tip="Posição do preço dentro do Canal de Donchian (máxima e mínima do período), normalizada. 1 = rompendo o topo do canal, 0 = rompendo o fundo.">Donchian pos</label>
           <b id="donchianPosition">—</b><small>0 — 1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Tamanho do corpo da candle (|close − open|) em fração do range. Perto de 1 = candle de força; perto de 0 = indecisão (doji).">Body</label>
+          <b id="bodyRatio">—</b><small>0 — 1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Sombra superior em fração do range. Sombra longa em cima = rejeição de preços altos (pressão vendedora).">Upper wick</label>
+          <b id="upperWickRatio">—</b><small>0 — 1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Sombra inferior em fração do range. Sombra longa embaixo = rejeição de preços baixos (pressão compradora).">Lower wick</label>
+          <b id="lowerWickRatio">—</b><small>0 — 1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Sequência de candles na mesma direção. +3 = três candles de alta seguidos, −2 = dois de baixa. Doji zera a contagem.">Streak</label>
+          <b id="candleStreak">—</b><small>candles</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Rompimento da candle anterior pelo fechamento. +1 = fechou acima da máxima anterior, −1 = abaixo da mínima anterior, 0 = dentro.">Prev break</label>
+          <b id="previousCandleBreak">—</b><small>−1 · 0 · +1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Distância % do fechamento até a máxima das últimas N velas (sem contar a atual). Negativo = abaixo da máxima; positivo = rompeu a máxima.">High N dist</label>
+          <b id="recentHighDistance">—</b><small>% vs high</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Distância % do fechamento até a mínima das últimas N velas (sem contar a atual). Positivo = acima da mínima; negativo = perdeu a mínima.">Low N dist</label>
+          <b id="recentLowDistance">—</b><small>% vs low</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Comparação dos dois últimos topos (pivôs). +1 = topo ascendente, −1 = topo descendente, 0 = sem dados. Confirmado com atraso de swing.strength velas.">Swing highs</label>
+          <b id="swingHighTrend">—</b><small>−1 · 0 · +1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Comparação dos dois últimos fundos (pivôs). +1 = fundo ascendente, −1 = fundo descendente, 0 = sem dados. Topos e fundos ascendentes juntos = tendência de alta.">Swing lows</label>
+          <b id="swingLowTrend">—</b><small>−1 · 0 · +1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Distância % até o suporte mais próximo: o nível de pivô (topo ou fundo) mais alto abaixo do preço. 0 = nenhum suporte na janela.">Support</label>
+          <b id="supportDistance">—</b><small>% below</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Distância % até a resistência mais próxima: o nível de pivô (topo ou fundo) mais baixo acima do preço. 0 = nenhuma resistência na janela.">Resistance</label>
+          <b id="resistanceDistance">—</b><small>% above</small>
         </div>
         <div class="metric">
           <label data-tip="Hora do dia em UTC. Útil para identificar sessões mais voláteis (Ásia, Europa, EUA).">Hour</label>
@@ -1083,12 +1127,17 @@ function renderCandle(c){
 function renderMetrics(m){
   // FeatureVector groups its fields by role (core/regime/context/flow/deriv), so flatten the
   // payload before reading it by id. Keep this in sync with the record's groups.
-  const f = Object.assign({}, m.core, m.regime, m.context, m.flow, m.deriv);
+  const f = Object.assign({}, m.core, m.regime, m.context, m.flow, m.priceAction, m.deriv);
   ['returnPct1m','volatility5m','volatility20m','smaDistance','emaDistance',
    'rsiValue','macdValue','macdSignal','atrValue','volumeRatio',
    'highLowRatio','closePosition',
    'adx','atrPercent','bbWidth','bbPercentB','mfi','vwapDistance',
-   'donchianPosition'].forEach(id => text(id, fmt(f[id])));
+   'donchianPosition',
+   'bodyRatio','upperWickRatio','lowerWickRatio','recentHighDistance','recentLowDistance',
+   'supportDistance','resistanceDistance'].forEach(id => text(id, fmt(f[id])));
+  // Integer price action signals, shown as-is like hour/day
+  ['candleStreak','previousCandleBreak','swingHighTrend','swingLowTrend']
+    .forEach(id => text(id, f[id] ?? '—'));
   text('hourOfDay', f.hourOfDay);
   text('dayOfWeek', f.dayOfWeek);
   text('lastUpdate', m.timestamp ? `updated ${time(m.timestamp)}` : '—');

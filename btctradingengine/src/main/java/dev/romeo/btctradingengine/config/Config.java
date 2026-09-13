@@ -67,6 +67,8 @@ public class Config {
     public static int getDonchianPeriod() { return Integer.parseInt(getProperty("indicator.donchian.period", "300")); }
     public static VwapAnchor getVwapAnchor() { return VwapAnchor.fromProperty(getProperty("indicator.vwap.anchor", "daily")); }
     public static int getVwapRollingPeriods() { return Integer.parseInt(getProperty("indicator.vwap.rolling.periods", "300")); }
+    public static int getPriceActionLookback() { return Integer.parseInt(getProperty("indicator.priceaction.lookback", "300")); }
+    public static int getPriceActionSwingStrength() { return Integer.parseInt(getProperty("indicator.priceaction.swing.strength", "30")); }
 
     public static BigDecimal getDecimal(String key, String defaultValue) {
         return new BigDecimal(getProperty(key, defaultValue));
@@ -131,6 +133,8 @@ public class Config {
         requirePositive("indicator.mfi.period", getMfiPeriod());
         requirePositive("indicator.donchian.period", getDonchianPeriod());
         requirePositive("indicator.vwap.rolling.periods", getVwapRollingPeriods());
+        requirePositive("indicator.priceaction.lookback", getPriceActionLookback());
+        requirePositive("indicator.priceaction.swing.strength", getPriceActionSwingStrength());
 
         if (getMacdFastPeriod() >= getMacdSlowPeriod()) {
             throw new IllegalArgumentException("indicator.macd.fast.period must be lower than slow.period");
