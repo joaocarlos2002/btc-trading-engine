@@ -21,6 +21,16 @@ CREATE INDEX IF NOT EXISTS idx_candles_symbol_time
 CREATE INDEX IF NOT EXISTS idx_candles_close_time
     ON candles(close_time_ms DESC);
 
+-- One candle per (symbol, open_time_ms); target of ON CONFLICT in DatabaseWriter.
+-- A unique index (not ADD CONSTRAINT) keeps this idempotent without a DO block,
+-- which DatabaseInitializer cannot run because it splits statements on semicolons.
+-- If this fails at startup, duplicates already exist. Inspect them with:
+--   SELECT symbol, open_time_ms, COUNT(*) FROM candles GROUP BY symbol, open_time_ms HAVING COUNT(*) > 1
+-- and, once reviewed, keep the oldest row of each group with:
+--   DELETE FROM candles a USING candles b WHERE a.symbol = b.symbol AND a.open_time_ms = b.open_time_ms AND a.id > b.id
+CREATE UNIQUE INDEX IF NOT EXISTS uq_candles_symbol_open_time
+    ON candles(symbol, open_time_ms);
+
 -- Create ticks table for storing raw price data
 CREATE TABLE IF NOT EXISTS ticks (
     id BIGSERIAL PRIMARY KEY,
