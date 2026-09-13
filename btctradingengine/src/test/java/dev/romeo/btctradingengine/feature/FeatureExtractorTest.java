@@ -164,7 +164,7 @@ public class FeatureExtractorTest {
         List<FeatureVector> features = new ArrayList<>();
         FeatureExtractor extractor = new FeatureExtractor(
                 new IndicatorPeriods(2, 2, 2, 1, 1, 2, 2, 2, 2, 2,
-                        2, 2, new BigDecimal("2.0"), 2, 2, VwapAnchor.DAILY, 2),
+                        2, 2, new BigDecimal("2.0"), 2, 2, VwapAnchor.DAILY, 2, 2, 1),
                 features::add);
 
         // ATR(1) is ready after one candle: true range = 110 - 95 = 15, close = 105
@@ -183,7 +183,7 @@ public class FeatureExtractorTest {
         // Small periods so everything is ready within a handful of candles
         FeatureExtractor extractor = new FeatureExtractor(
                 new IndicatorPeriods(2, 2, 2, 2, 1, 2, 2, 2, 2, 2,
-                        2, 2, new BigDecimal("2.0"), 2, 2, VwapAnchor.DAILY, 2),
+                        2, 2, new BigDecimal("2.0"), 2, 2, VwapAnchor.DAILY, 2, 2, 1),
                 features::add);
 
         extractor.onEvent(createCandle("100", "110", "95", "105", "1000", 50));
@@ -203,6 +203,11 @@ public class FeatureExtractorTest {
         // Rising market: close is above the session VWAP
         assertTrue(fv.context().vwapDistance().compareTo(BigDecimal.ZERO) > 0);
         assertTrue(fv.flow().mfi().compareTo(BigDecimal.ZERO) > 0);
+        // Five bullish candles in a row, the last one closing above the previous high (140)
+        assertEquals(5, fv.priceAction().candleStreak());
+        assertEquals(1, fv.priceAction().previousCandleBreak());
+        // Close 148 above the highest high of the previous 2 candles (140): positive = breakout
+        assertTrue(fv.priceAction().recentHighDistance().compareTo(BigDecimal.ZERO) > 0);
     }
 
     @Test
@@ -224,6 +229,7 @@ public class FeatureExtractorTest {
         assertEquals(live.get(1).regime(), warmed.get(1).regime());
         assertEquals(live.get(1).context(), warmed.get(1).context());
         assertEquals(live.get(1).flow(), warmed.get(1).flow());
+        assertEquals(live.get(1).priceAction(), warmed.get(1).priceAction());
     }
 
     private CandleEvent createCandle(String open, String high, String low, String close, String volume, int tickCount) {

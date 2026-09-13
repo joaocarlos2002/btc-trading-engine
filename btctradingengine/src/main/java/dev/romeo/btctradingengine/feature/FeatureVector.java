@@ -10,6 +10,7 @@ import java.time.Instant;
  * REGIME   (ADX, ATR%, BB Width)      -> decides IF we trade and WHICH signal family is valid
  * SCORE    (MFI + RSI/SMA/MACD)       -> decides WHEN to enter
  * CONTEXTO (VWAP, Donchian, %B)       -> modulates conviction / confirms, never signals alone
+ * PRICE ACTION (candles, swings, S/R) -> raw structure read from the candles, no rule yet
  * </pre>
  *
  * The grouping is not cosmetic. This record used to be 18 positional components, a dozen of them
@@ -27,7 +28,8 @@ public record FeatureVector(
         RegimeFeatures regime,            // adx, plusDi, minusDi, atrPercent, bbWidth
         ContextFeatures context,          // vwap, vwapDistance, bbPercentB, donchian*
         FlowFeatures flow,                // mfi (+ orderBookImbalance - issue #10)
-        DerivFeatures deriv,              // empty until issue #9 (openInterest, funding)
+        DerivFeatures deriv,             // empty until issue #9 (openInterest, funding)
+        PriceActionFeatures priceAction,  // candle anatomy, streak, breakouts, swings, S/R (issue #6)
 
         BigDecimal price,                 // close price (referencia)
         int tickCount                     // ticks na vela
@@ -67,6 +69,7 @@ public record FeatureVector(
         private final ContextFeatures.Builder context = ContextFeatures.builder();
         private BigDecimal mfi = BigDecimal.ZERO;
         private DerivFeatures deriv = DerivFeatures.empty();
+        private PriceActionFeatures priceAction = PriceActionFeatures.empty();
 
         public Builder instrument(String instrument) { this.instrument = instrument; return this; }
         public Builder timestamp(Instant timestamp) { this.timestamp = timestamp; return this; }
@@ -103,11 +106,12 @@ public record FeatureVector(
 
         public Builder mfi(BigDecimal mfi) { this.mfi = mfi; return this; }
         public Builder deriv(DerivFeatures deriv) { this.deriv = deriv; return this; }
+        public Builder priceAction(PriceActionFeatures priceAction) { this.priceAction = priceAction; return this; }
 
         public FeatureVector build() {
             return new FeatureVector(
                     instrument, timestamp,
-                    core.build(), regime.build(), context.build(), FlowFeatures.of(mfi), deriv,
+                    core.build(), regime.build(), context.build(), FlowFeatures.of(mfi), deriv, priceAction,
                     price, tickCount
             );
         }
