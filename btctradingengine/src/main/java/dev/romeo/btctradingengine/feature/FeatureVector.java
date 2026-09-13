@@ -27,7 +27,7 @@ public record FeatureVector(
         CoreFeatures core,                // everything that existed before the regime/context split
         RegimeFeatures regime,            // adx, plusDi, minusDi, atrPercent, bbWidth
         ContextFeatures context,          // vwap, vwapDistance, bbPercentB, donchian*
-        FlowFeatures flow,                // mfi (+ orderBookImbalance - issue #10)
+        FlowFeatures flow,                // mfi, volume delta, cvd (+ orderBookImbalance - issue #10)
         DerivFeatures deriv,             // empty until issue #9 (openInterest, funding)
         PriceActionFeatures priceAction,  // candle anatomy, streak, breakouts, swings, S/R (issue #6)
 
@@ -67,7 +67,7 @@ public record FeatureVector(
         private final CoreFeatures.Builder core = CoreFeatures.builder();
         private final RegimeFeatures.Builder regime = RegimeFeatures.builder();
         private final ContextFeatures.Builder context = ContextFeatures.builder();
-        private BigDecimal mfi = BigDecimal.ZERO;
+        private final FlowFeatures.Builder flow = FlowFeatures.builder();
         private DerivFeatures deriv = DerivFeatures.empty();
         private PriceActionFeatures priceAction = PriceActionFeatures.empty();
 
@@ -104,14 +104,20 @@ public record FeatureVector(
         public Builder donchianLower(BigDecimal donchianLower) { context.donchianLower(donchianLower); return this; }
         public Builder donchianPosition(BigDecimal donchianPosition) { context.donchianPosition(donchianPosition); return this; }
 
-        public Builder mfi(BigDecimal mfi) { this.mfi = mfi; return this; }
+        public Builder mfi(BigDecimal mfi) { flow.mfi(mfi); return this; }
+        public Builder volumeDelta(BigDecimal volumeDelta) { flow.volumeDelta(volumeDelta); return this; }
+        public Builder deltaRatio(BigDecimal deltaRatio) { flow.deltaRatio(deltaRatio); return this; }
+        public Builder cvd(BigDecimal cvd) { flow.cvd(cvd); return this; }
+        public Builder cvdRatio(BigDecimal cvdRatio) { flow.cvdRatio(cvdRatio); return this; }
+        public Builder largeCvd(BigDecimal largeCvd) { flow.largeCvd(largeCvd); return this; }
+        public Builder largeVolumeShare(BigDecimal largeVolumeShare) { flow.largeVolumeShare(largeVolumeShare); return this; }
         public Builder deriv(DerivFeatures deriv) { this.deriv = deriv; return this; }
         public Builder priceAction(PriceActionFeatures priceAction) { this.priceAction = priceAction; return this; }
 
         public FeatureVector build() {
             return new FeatureVector(
                     instrument, timestamp,
-                    core.build(), regime.build(), context.build(), FlowFeatures.of(mfi), deriv, priceAction,
+                    core.build(), regime.build(), context.build(), flow.build(), deriv, priceAction,
                     price, tickCount
             );
         }

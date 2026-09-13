@@ -2,6 +2,7 @@ package dev.romeo.btctradingengine.feature;
 
 import dev.romeo.btctradingengine.indicator.VwapAnchor;
 import dev.romeo.btctradingengine.model.CandleEvent;
+import dev.romeo.btctradingengine.model.TradeFlow;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -164,7 +165,7 @@ public class FeatureExtractorTest {
         List<FeatureVector> features = new ArrayList<>();
         FeatureExtractor extractor = new FeatureExtractor(
                 new IndicatorPeriods(2, 2, 2, 1, 1, 2, 2, 2, 2, 2,
-                        2, 2, new BigDecimal("2.0"), 2, 2, VwapAnchor.DAILY, 2, 2, 1),
+                        2, 2, new BigDecimal("2.0"), 2, 2, VwapAnchor.DAILY, 2, 2, 1, 2),
                 features::add);
 
         // ATR(1) is ready after one candle: true range = 110 - 95 = 15, close = 105
@@ -183,7 +184,7 @@ public class FeatureExtractorTest {
         // Small periods so everything is ready within a handful of candles
         FeatureExtractor extractor = new FeatureExtractor(
                 new IndicatorPeriods(2, 2, 2, 2, 1, 2, 2, 2, 2, 2,
-                        2, 2, new BigDecimal("2.0"), 2, 2, VwapAnchor.DAILY, 2, 2, 1),
+                        2, 2, new BigDecimal("2.0"), 2, 2, VwapAnchor.DAILY, 2, 2, 1, 2),
                 features::add);
 
         extractor.onEvent(createCandle("100", "110", "95", "105", "1000", 50));
@@ -208,6 +209,37 @@ public class FeatureExtractorTest {
         assertEquals(1, fv.priceAction().previousCandleBreak());
         // Close 148 above the highest high of the previous 2 candles (140): positive = breakout
         assertTrue(fv.priceAction().recentHighDistance().compareTo(BigDecimal.ZERO) > 0);
+    }
+
+    @Test
+    public void computesVolumeDeltaAndCvdFromTheCandleFlow() {
+        List<FeatureVector> features = new ArrayList<>();
+        FeatureExtractor extractor = new FeatureExtractor(50, 26, 14, features::add);
+
+        // Kline flow: 7 of the 10 BTC were buy aggression, 3 sell aggression
+        extractor.onEvent(new CandleEvent("BTC/USD",
+                Instant.parse("2026-09-08T10:00:00Z"), Instant.parse("2026-09-08T10:01:00Z"),
+                new BigDecimal("100"), new BigDecimal("110"), new BigDecimal("95"), new BigDecimal("105"),
+                new BigDecimal("10"), 50, TradeFlow.fromKline(new BigDecimal("10"), new BigDecimal("7"))));
+
+        FlowFeatures flow = features.get(0).flow();
+        assertEquals(0, flow.volumeDelta().compareTo(new BigDecimal("4")));
+        assertEquals(0, flow.deltaRatio().compareTo(new BigDecimal("0.4")));
+        assertEquals(0, flow.cvd().compareTo(new BigDecimal("4")));
+        // klines carry no trade sizes
+        assertEquals(0, flow.largeVolumeShare().compareTo(BigDecimal.ZERO));
+    }
+
+    @Test
+    public void candleWithoutFlowDataReportsNeutralDelta() {
+        List<FeatureVector> features = new ArrayList<>();
+        FeatureExtractor extractor = new FeatureExtractor(50, 26, 14, features::add);
+
+        extractor.onEvent(createCandle("100", "110", "95", "105", "1000", 50));
+
+        FlowFeatures flow = features.get(0).flow();
+        assertEquals(0, flow.volumeDelta().compareTo(BigDecimal.ZERO));
+        assertEquals(0, flow.cvdRatio().compareTo(BigDecimal.ZERO));
     }
 
     @Test

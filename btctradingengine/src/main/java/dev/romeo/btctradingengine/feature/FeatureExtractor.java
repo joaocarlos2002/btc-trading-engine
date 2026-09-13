@@ -4,6 +4,7 @@ import dev.romeo.btctradingengine.adapter.CandleEventListener;
 import dev.romeo.btctradingengine.indicator.AdxIndicator;
 import dev.romeo.btctradingengine.indicator.AtrIndicator;
 import dev.romeo.btctradingengine.indicator.BollingerBands;
+import dev.romeo.btctradingengine.indicator.CumulativeVolumeDelta;
 import dev.romeo.btctradingengine.indicator.DonchianChannel;
 import dev.romeo.btctradingengine.indicator.Ema;
 import dev.romeo.btctradingengine.indicator.MacdIndicator;
@@ -39,6 +40,7 @@ public class FeatureExtractor implements CandleEventListener {
     private final MfiIndicator mfiIndicator;
     private final DonchianChannel donchianChannel;
     private final PriceAction priceAction;
+    private final CumulativeVolumeDelta cumulativeVolumeDelta;
     private final FeatureEventListener listener;
     private final int volatilityShortPeriods;
     private final int volatilityLongPeriods;
@@ -61,6 +63,7 @@ public class FeatureExtractor implements CandleEventListener {
         this.mfiIndicator = new MfiIndicator(periods.mfi());
         this.donchianChannel = new DonchianChannel(periods.donchian());
         this.priceAction = new PriceAction(periods.priceActionLookback(), periods.priceActionSwingStrength());
+        this.cumulativeVolumeDelta = new CumulativeVolumeDelta(periods.cvd());
         this.volatilityShortPeriods = periods.volatilityShort();
         this.volatilityLongPeriods = periods.volatilityLong();
         this.volumeAveragePeriods = periods.volumeAverage();
@@ -104,6 +107,7 @@ public class FeatureExtractor implements CandleEventListener {
         BigDecimal mfi = mfiIndicator.update(candle).orElse(NEUTRAL_OSCILLATOR);
         var donchian = donchianChannel.update(candle);
         var priceActionValue = priceAction.update(candle);
+        var cvd = cumulativeVolumeDelta.update(candle);
 
         ZonedDateTime zdt = candle.closeTime().atZone(ZoneOffset.UTC);
 
@@ -140,6 +144,12 @@ public class FeatureExtractor implements CandleEventListener {
                 .donchianPosition(donchian.map(DonchianChannel.DonchianValue::position).orElse(BigDecimal.ZERO))
 
                 .mfi(mfi)
+                .volumeDelta(cvd.volumeDelta())
+                .deltaRatio(cvd.deltaRatio())
+                .cvd(cvd.cvd())
+                .cvdRatio(cvd.cvdRatio())
+                .largeCvd(cvd.largeCvd())
+                .largeVolumeShare(cvd.largeVolumeShare())
 
                 .priceAction(PriceActionFeatures.from(priceActionValue))
 
