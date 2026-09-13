@@ -231,6 +231,24 @@ public class FeatureExtractorTest {
     }
 
     @Test
+    public void attachesTheDerivativesLookedUpForEachCandle() {
+        List<FeatureVector> features = new ArrayList<>();
+        FeatureExtractor extractor = new FeatureExtractor(
+                IndicatorPeriods.fromConfig(),
+                candle -> new DerivFeatures(null, new BigDecimal("0.0001"), candle.close().movePointLeft(3), null, null),
+                features::add);
+
+        extractor.onEvent(createCandle("100", "110", "95", "105", "1000", 50));
+
+        DerivFeatures deriv = features.get(0).deriv();
+        assertTrue(deriv.hasData());
+        assertEquals(0, deriv.fundingRate().compareTo(new BigDecimal("0.0001")));
+        // the lookup received this very candle
+        assertEquals(0, deriv.basisPercent().compareTo(new BigDecimal("0.105")));
+        assertNull(deriv.openInterest());
+    }
+
+    @Test
     public void candleWithoutFlowDataReportsNeutralDelta() {
         List<FeatureVector> features = new ArrayList<>();
         FeatureExtractor extractor = new FeatureExtractor(50, 26, 14, features::add);

@@ -1,6 +1,7 @@
 package dev.romeo.btctradingengine.backtest;
 
 import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.feature.DerivativesLookup;
 import dev.romeo.btctradingengine.feature.FeatureExtractor;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.prediction.RuleBasedPredictor;
@@ -22,9 +23,15 @@ public class BacktestRunner {
     }
 
     public BacktestReport run(List<CandleEvent> candles, BigDecimal initialCapital, BacktestParams params) {
+        return run(candles, initialCapital, params, DerivativesLookup.NONE);
+    }
+
+    public BacktestReport run(List<CandleEvent> candles, BigDecimal initialCapital, BacktestParams params,
+                              DerivativesLookup derivatives) {
         Objects.requireNonNull(candles, "candles");
         Objects.requireNonNull(initialCapital, "initialCapital");
         Objects.requireNonNull(params, "params");
+        Objects.requireNonNull(derivatives, "derivatives");
         if (candles.isEmpty()) {
             return new BacktestEngine(
                     Config.getBacktestCommissionRate(),
@@ -46,7 +53,7 @@ public class BacktestRunner {
         predictor.addFilterRule(new VolatilityRule(params.volatilityRatioHigh()));
         predictor.addFilterRule(new AdxRegimeRule(params.adxTrendMin(), params.bollingerSqueezeThreshold()));
 
-        FeatureExtractor extractor = new FeatureExtractor(params.indicatorPeriods(), predictor::onEvent);
+        FeatureExtractor extractor = new FeatureExtractor(params.indicatorPeriods(), derivatives, predictor::onEvent);
 
         for (CandleEvent candle : candles) {
             currentCandle[0] = candle;

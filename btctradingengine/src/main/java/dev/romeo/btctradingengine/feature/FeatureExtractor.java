@@ -21,6 +21,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.util.Objects;
 
 public class FeatureExtractor implements CandleEventListener {
     private static final Logger logger = LoggerFactory.getLogger(FeatureExtractor.class);
@@ -41,6 +42,7 @@ public class FeatureExtractor implements CandleEventListener {
     private final DonchianChannel donchianChannel;
     private final PriceAction priceAction;
     private final CumulativeVolumeDelta cumulativeVolumeDelta;
+    private final DerivativesLookup derivatives;
     private final FeatureEventListener listener;
     private final int volatilityShortPeriods;
     private final int volatilityLongPeriods;
@@ -52,6 +54,12 @@ public class FeatureExtractor implements CandleEventListener {
 
     /** Allows overriding every period without touching global Config - used by on-demand backtests. */
     public FeatureExtractor(IndicatorPeriods periods, FeatureEventListener listener) {
+        this(periods, DerivativesLookup.NONE, listener);
+    }
+
+    /** Derivatives do not come out of the candle stream, so they are looked up per candle. */
+    public FeatureExtractor(IndicatorPeriods periods, DerivativesLookup derivatives, FeatureEventListener listener) {
+        this.derivatives = Objects.requireNonNull(derivatives, "derivatives");
         this.smaIncremental = new SmaIncremental(periods.sma());
         this.emaIncremental = new Ema(periods.ema());
         this.rsiIncremental = new Rsi(periods.rsi());
@@ -152,6 +160,7 @@ public class FeatureExtractor implements CandleEventListener {
                 .largeVolumeShare(cvd.largeVolumeShare())
 
                 .priceAction(PriceActionFeatures.from(priceActionValue))
+                .deriv(derivatives.featuresFor(candle))
 
                 .price(close)
                 .tickCount(candle.tickCount())
