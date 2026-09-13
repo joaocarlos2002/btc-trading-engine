@@ -172,6 +172,75 @@ public class RuleBasedPredictorTest {
         assertEquals(now, pred.timestamp());
     }
 
+    @Test
+    public void regimeGatingDropsMeanReversionInATrend() {
+        List<PredictionVector> predictions = new ArrayList<>();
+        RuleBasedPredictor predictor = gatedPredictor(predictions::add, true);
+        predictor.addRule(new RsiRule());                                 // mean reversion: RSI 25 -> +0.8
+        predictor.addRule(new FixedScoreRule(0.5, RuleFamily.TREND));
+
+        predictor.onEvent(trendUpFeatures());
+
+        PredictionVector prediction = predictions.get(0);
+        assertEquals(MarketRegime.TREND_UP, prediction.marketRegime());
+        // RSI is off, so only the trend rule votes and the average is not diluted: 0.5, not 0.65
+        assertEquals(0, prediction.confidence().compareTo(new BigDecimal("0.500")));
+        assertTrue(prediction.reason().contains("=off"), "Gated rules must be visible in the reason");
+    }
+
+    @Test
+    public void regimeGatingDropsTrendRulesInARange() {
+        List<PredictionVector> predictions = new ArrayList<>();
+        RuleBasedPredictor predictor = gatedPredictor(predictions::add, true);
+        predictor.addRule(new RsiRule());
+        predictor.addRule(new FixedScoreRule(-0.5, RuleFamily.TREND));
+
+        FeatureVector range = FeatureVector.builder()
+                .instrument("BTC/USD").timestamp(Instant.now())
+                .rsiValue(new BigDecimal("25"))
+                .adx(new BigDecimal("12")).plusDi(new BigDecimal("20")).minusDi(new BigDecimal("18"))
+                .bbWidth(new BigDecimal("2.0"))
+                .price(new BigDecimal("100")).tickCount(40)
+                .build();
+        predictor.onEvent(range);
+
+        PredictionVector prediction = predictions.get(0);
+        assertEquals(MarketRegime.RANGE, prediction.marketRegime());
+        // only RSI votes
+        assertEquals(0, prediction.confidence().compareTo(new BigDecimal("0.800")));
+    }
+
+    @Test
+    public void withGatingOffTheRegimeIsReportedButEveryRuleVotes() {
+        List<PredictionVector> predictions = new ArrayList<>();
+        RuleBasedPredictor predictor = gatedPredictor(predictions::add, false);
+        predictor.addRule(new RsiRule());
+        predictor.addRule(new FixedScoreRule(0.5, RuleFamily.TREND));
+
+        predictor.onEvent(trendUpFeatures());
+
+        PredictionVector prediction = predictions.get(0);
+        assertEquals(MarketRegime.TREND_UP, prediction.marketRegime());
+        // (0.8 + 0.5) / 2
+        assertEquals(0, prediction.confidence().compareTo(new BigDecimal("0.650")));
+    }
+
+    private RuleBasedPredictor gatedPredictor(PredictionEventListener listener, boolean gatingEnabled) {
+        return new RuleBasedPredictor(listener, 0.28, -0.28, 2,
+                new MarketRegimeClassifier(new BigDecimal("20"), new BigDecimal("25"), new BigDecimal("0.5")),
+                gatingEnabled);
+    }
+
+    private FeatureVector trendUpFeatures() {
+        return FeatureVector.builder()
+                .instrument("BTC/USD").timestamp(Instant.now())
+                .rsiValue(new BigDecimal("25"))
+                .adx(new BigDecimal("30")).plusDi(new BigDecimal("30")).minusDi(new BigDecimal("10"))
+                .bbWidth(new BigDecimal("2.0")).emaSlope(new BigDecimal("0.1"))
+                .price(new BigDecimal("100")).tickCount(40)
+                .build();
+    }
+
     private FeatureVector createFeatures(String price, String rsi) {
         return createFeatures(price, rsi, smaDistance("0.0"));
     }
@@ -202,14 +271,25 @@ public class RuleBasedPredictorTest {
 
     private static class FixedScoreRule implements SignalRule {
         private final double score;
+        private final RuleFamily family;
 
         FixedScoreRule(double score) {
+            this(score, RuleFamily.OTHER);
+        }
+
+        FixedScoreRule(double score, RuleFamily family) {
             this.score = score;
+            this.family = family;
         }
 
         @Override
         public double evaluate(FeatureVector features) {
             return score;
+        }
+
+        @Override
+        public RuleFamily family() {
+            return family;
         }
 
         @Override
