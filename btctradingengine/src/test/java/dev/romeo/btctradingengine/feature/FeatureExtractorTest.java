@@ -1,5 +1,6 @@
 package dev.romeo.btctradingengine.feature;
 
+import dev.romeo.btctradingengine.indicator.VwapAnchor;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import org.junit.jupiter.api.Test;
 
@@ -121,6 +122,108 @@ public class FeatureExtractorTest {
         FeatureVector fv = features.get(0);
         assertEquals("BTC/USD", fv.instrument());
         assertEquals(closeTime, fv.timestamp());
+    }
+
+    @Test
+    public void populatesAllFeatureGroupsFromTheFirstCandle() {
+        List<FeatureVector> features = new ArrayList<>();
+        FeatureExtractor extractor = new FeatureExtractor(50, 26, 14, features::add);
+
+        extractor.onEvent(createCandle("100", "110", "95", "105", "1000", 50));
+
+        FeatureVector fv = features.get(0);
+        assertNotNull(fv.core());
+        assertNotNull(fv.regime());
+        assertNotNull(fv.context());
+        assertNotNull(fv.flow());
+        // Never null, so a future features.deriv().openInterest() cannot NPE (issue #9)
+        assertNotNull(fv.deriv());
+        assertFalse(fv.deriv().hasData());
+    }
+
+    @Test
+    public void regimeAndContextStartAtWarmupDefaults() {
+        List<FeatureVector> features = new ArrayList<>();
+        FeatureExtractor extractor = new FeatureExtractor(50, 26, 14, features::add);
+
+        extractor.onEvent(createCandle("100", "110", "95", "105", "1000", 50));
+
+        FeatureVector fv = features.get(0);
+        // ADX/Bollinger/Donchian need more than one candle: zero means "no value yet"
+        assertEquals(0, fv.regime().adx().compareTo(BigDecimal.ZERO));
+        assertEquals(0, fv.regime().bbWidth().compareTo(BigDecimal.ZERO));
+        assertEquals(0, fv.context().donchianUpper().compareTo(BigDecimal.ZERO));
+        // MFI reports the neutral 50 during warmup, like rsiValue, so MfiRule stays neutral
+        assertEquals(0, fv.flow().mfi().compareTo(new BigDecimal("50")));
+        // The daily VWAP has no warmup: typical price of (110+95+105)/3
+        assertEquals(0, fv.context().vwap().compareTo(new BigDecimal("103.33333333")));
+    }
+
+    @Test
+    public void computesAtrPercentAsARegimeFeature() {
+        List<FeatureVector> features = new ArrayList<>();
+        FeatureExtractor extractor = new FeatureExtractor(
+                new IndicatorPeriods(2, 2, 2, 1, 1, 2, 2, 2, 2, 2,
+                        2, 2, new BigDecimal("2.0"), 2, 2, VwapAnchor.DAILY, 2),
+                features::add);
+
+        // ATR(1) is ready after one candle: true range = 110 - 95 = 15, close = 105
+        extractor.onEvent(createCandle("100", "110", "95", "105", "1000", 50));
+
+        FeatureVector fv = features.get(0);
+        assertEquals(0, fv.atrValue().compareTo(new BigDecimal("15")));
+        // 15 / 105 * 100 = 14.2857...
+        assertEquals(new BigDecimal("14.29"),
+                fv.regime().atrPercent().setScale(2, java.math.RoundingMode.HALF_EVEN));
+    }
+
+    @Test
+    public void fillsRegimeAndContextOnceTheIndicatorsWarmUp() {
+        List<FeatureVector> features = new ArrayList<>();
+        // Small periods so everything is ready within a handful of candles
+        FeatureExtractor extractor = new FeatureExtractor(
+                new IndicatorPeriods(2, 2, 2, 2, 1, 2, 2, 2, 2, 2,
+                        2, 2, new BigDecimal("2.0"), 2, 2, VwapAnchor.DAILY, 2),
+                features::add);
+
+        extractor.onEvent(createCandle("100", "110", "95", "105", "1000", 50));
+        extractor.onEvent(createCandle("105", "120", "104", "118", "1200", 50));
+        extractor.onEvent(createCandle("118", "130", "117", "128", "1400", 50));
+        extractor.onEvent(createCandle("128", "140", "127", "138", "1600", 50));
+        extractor.onEvent(createCandle("138", "150", "137", "148", "1800", 50));
+
+        FeatureVector fv = features.get(features.size() - 1);
+        assertTrue(fv.regime().adx().compareTo(BigDecimal.ZERO) > 0, "ADX should be populated");
+        assertTrue(fv.regime().plusDi().compareTo(BigDecimal.ZERO) > 0, "+DI should be populated");
+        assertTrue(fv.regime().bbWidth().compareTo(BigDecimal.ZERO) > 0, "BB width should be populated");
+        assertTrue(fv.context().bbPercentB().compareTo(BigDecimal.ZERO) > 0, "%B should be populated");
+        assertTrue(fv.context().donchianUpper().compareTo(fv.context().donchianLower()) > 0);
+        assertTrue(fv.context().donchianPosition().compareTo(BigDecimal.ZERO) >= 0);
+        assertTrue(fv.context().donchianPosition().compareTo(BigDecimal.ONE) <= 0);
+        // Rising market: close is above the session VWAP
+        assertTrue(fv.context().vwapDistance().compareTo(BigDecimal.ZERO) > 0);
+        assertTrue(fv.flow().mfi().compareTo(BigDecimal.ZERO) > 0);
+    }
+
+    @Test
+    public void warmUpFeedsTheSameIndicatorsAsOnEvent() {
+        List<FeatureVector> live = new ArrayList<>();
+        FeatureExtractor liveExtractor = new FeatureExtractor(50, 26, 14, live::add);
+        List<FeatureVector> warmed = new ArrayList<>();
+        FeatureExtractor warmupExtractor = new FeatureExtractor(50, 26, 14, features -> { });
+
+        CandleEvent first = createCandle("100", "110", "95", "105", "1000", 50);
+        CandleEvent second = createCandle("105", "120", "104", "118", "1200", 50);
+
+        liveExtractor.onEvent(first);
+        liveExtractor.onEvent(second);
+        warmupExtractor.warmUp(first, warmed::add);
+        warmupExtractor.warmUp(second, warmed::add);
+
+        // Both paths go through the same process(), so the resulting vectors must match
+        assertEquals(live.get(1).regime(), warmed.get(1).regime());
+        assertEquals(live.get(1).context(), warmed.get(1).context());
+        assertEquals(live.get(1).flow(), warmed.get(1).flow());
     }
 
     private CandleEvent createCandle(String open, String high, String low, String close, String volume, int tickCount) {

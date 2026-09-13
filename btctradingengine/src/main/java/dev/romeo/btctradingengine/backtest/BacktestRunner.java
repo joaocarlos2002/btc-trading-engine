@@ -4,8 +4,10 @@ import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.feature.FeatureExtractor;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.prediction.RuleBasedPredictor;
+import dev.romeo.btctradingengine.prediction.rules.AdxRegimeRule;
 import dev.romeo.btctradingengine.prediction.rules.AtrRule;
 import dev.romeo.btctradingengine.prediction.rules.MacdRule;
+import dev.romeo.btctradingengine.prediction.rules.MfiRule;
 import dev.romeo.btctradingengine.prediction.rules.RsiRule;
 import dev.romeo.btctradingengine.prediction.rules.SmaMomentumRule;
 import dev.romeo.btctradingengine.prediction.rules.VolatilityRule;
@@ -39,15 +41,12 @@ public class BacktestRunner {
         predictor.addRule(new RsiRule(params.rsiOversold(), params.rsiNeutralLow(), params.rsiNeutralHigh(), params.rsiOverbought()));
         predictor.addRule(new SmaMomentumRule(params.smaDistanceExtreme(), params.smaDistanceModerate()));
         predictor.addRule(new MacdRule(params.macdStrongHistogramAtrRatio()));
+        predictor.addRule(new MfiRule(params.mfiOversold(), params.mfiNeutralLow(), params.mfiNeutralHigh(), params.mfiOverbought()));
         predictor.addFilterRule(new AtrRule(params.atrVolatilityLow(), params.atrVolatilityNormal(), params.atrVolatilityHigh()));
         predictor.addFilterRule(new VolatilityRule(params.volatilityRatioHigh()));
+        predictor.addFilterRule(new AdxRegimeRule(params.adxTrendMin(), params.bollingerSqueezeThreshold()));
 
-        FeatureExtractor extractor = new FeatureExtractor(
-                params.smaPeriod(), params.emaPeriod(), params.rsiPeriod(), params.atrPeriod(),
-                params.macdFastPeriod(), params.macdSlowPeriod(), params.macdSignalPeriod(),
-                params.volatilityShortPeriods(), params.volatilityLongPeriods(), params.volumeAveragePeriods(),
-                predictor::onEvent
-        );
+        FeatureExtractor extractor = new FeatureExtractor(params.indicatorPeriods(), predictor::onEvent);
 
         for (CandleEvent candle : candles) {
             currentCandle[0] = candle;

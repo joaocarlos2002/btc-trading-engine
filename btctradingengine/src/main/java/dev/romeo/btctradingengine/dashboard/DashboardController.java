@@ -5,6 +5,7 @@ import dev.romeo.btctradingengine.backtest.BacktestParams;
 import dev.romeo.btctradingengine.backtest.BacktestReport;
 import dev.romeo.btctradingengine.backtest.BacktestRunner;
 import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.indicator.VwapAnchor;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -84,6 +85,13 @@ public class DashboardController {
             @RequestParam(required = false) Integer volatilityShortPeriods,
             @RequestParam(required = false) Integer volatilityLongPeriods,
             @RequestParam(required = false) Integer volumeAveragePeriods,
+            @RequestParam(required = false) Integer adxPeriod,
+            @RequestParam(required = false) Integer bollingerPeriod,
+            @RequestParam(required = false) BigDecimal bollingerStdDev,
+            @RequestParam(required = false) Integer mfiPeriod,
+            @RequestParam(required = false) Integer donchianPeriod,
+            @RequestParam(required = false) VwapAnchor vwapAnchor,
+            @RequestParam(required = false) Integer vwapRollingPeriods,
             @RequestParam(required = false) BigDecimal rsiOversold,
             @RequestParam(required = false) BigDecimal rsiNeutralLow,
             @RequestParam(required = false) BigDecimal rsiNeutralHigh,
@@ -95,6 +103,12 @@ public class DashboardController {
             @RequestParam(required = false) BigDecimal atrVolatilityNormal,
             @RequestParam(required = false) BigDecimal atrVolatilityHigh,
             @RequestParam(required = false) BigDecimal volatilityRatioHigh,
+            @RequestParam(required = false) BigDecimal mfiOversold,
+            @RequestParam(required = false) BigDecimal mfiNeutralLow,
+            @RequestParam(required = false) BigDecimal mfiNeutralHigh,
+            @RequestParam(required = false) BigDecimal mfiOverbought,
+            @RequestParam(required = false) BigDecimal adxTrendMin,
+            @RequestParam(required = false) BigDecimal bollingerSqueezeThreshold,
             @RequestParam(required = false) Double buyThreshold,
             @RequestParam(required = false) Double sellThreshold,
             @RequestParam(required = false) Integer confirmationSnapshots,
@@ -122,6 +136,13 @@ public class DashboardController {
                     volatilityShortPeriods != null ? volatilityShortPeriods : defaults.volatilityShortPeriods(),
                     volatilityLongPeriods != null ? volatilityLongPeriods : defaults.volatilityLongPeriods(),
                     volumeAveragePeriods != null ? volumeAveragePeriods : defaults.volumeAveragePeriods(),
+                    adxPeriod != null ? adxPeriod : defaults.adxPeriod(),
+                    bollingerPeriod != null ? bollingerPeriod : defaults.bollingerPeriod(),
+                    bollingerStdDev != null ? bollingerStdDev : defaults.bollingerStdDev(),
+                    mfiPeriod != null ? mfiPeriod : defaults.mfiPeriod(),
+                    donchianPeriod != null ? donchianPeriod : defaults.donchianPeriod(),
+                    vwapAnchor != null ? vwapAnchor : defaults.vwapAnchor(),
+                    vwapRollingPeriods != null ? vwapRollingPeriods : defaults.vwapRollingPeriods(),
                     rsiOversold != null ? rsiOversold : defaults.rsiOversold(),
                     rsiNeutralLow != null ? rsiNeutralLow : defaults.rsiNeutralLow(),
                     rsiNeutralHigh != null ? rsiNeutralHigh : defaults.rsiNeutralHigh(),
@@ -133,6 +154,12 @@ public class DashboardController {
                     atrVolatilityNormal != null ? atrVolatilityNormal : defaults.atrVolatilityNormal(),
                     atrVolatilityHigh != null ? atrVolatilityHigh : defaults.atrVolatilityHigh(),
                     volatilityRatioHigh != null ? volatilityRatioHigh : defaults.volatilityRatioHigh(),
+                    mfiOversold != null ? mfiOversold : defaults.mfiOversold(),
+                    mfiNeutralLow != null ? mfiNeutralLow : defaults.mfiNeutralLow(),
+                    mfiNeutralHigh != null ? mfiNeutralHigh : defaults.mfiNeutralHigh(),
+                    mfiOverbought != null ? mfiOverbought : defaults.mfiOverbought(),
+                    adxTrendMin != null ? adxTrendMin : defaults.adxTrendMin(),
+                    bollingerSqueezeThreshold != null ? bollingerSqueezeThreshold : defaults.bollingerSqueezeThreshold(),
                     buyThreshold != null ? buyThreshold : defaults.buyThreshold(),
                     sellThreshold != null ? sellThreshold : defaults.sellThreshold(),
                     confirmationSnapshots != null ? confirmationSnapshots : defaults.confirmationSnapshots(),

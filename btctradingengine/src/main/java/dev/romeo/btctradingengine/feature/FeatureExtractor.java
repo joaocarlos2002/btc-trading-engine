@@ -1,12 +1,16 @@
 package dev.romeo.btctradingengine.feature;
 
 import dev.romeo.btctradingengine.adapter.CandleEventListener;
-import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.indicator.AdxIndicator;
 import dev.romeo.btctradingengine.indicator.AtrIndicator;
+import dev.romeo.btctradingengine.indicator.BollingerBands;
+import dev.romeo.btctradingengine.indicator.DonchianChannel;
 import dev.romeo.btctradingengine.indicator.Ema;
 import dev.romeo.btctradingengine.indicator.MacdIndicator;
+import dev.romeo.btctradingengine.indicator.MfiIndicator;
 import dev.romeo.btctradingengine.indicator.Rsi;
 import dev.romeo.btctradingengine.indicator.SmaIncremental;
+import dev.romeo.btctradingengine.indicator.Vwap;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,10 +19,12 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
-import java.util.Optional;
 
 public class FeatureExtractor implements CandleEventListener {
     private static final Logger logger = LoggerFactory.getLogger(FeatureExtractor.class);
+
+    /** Neutral RSI/MFI value reported while the oscillator is still warming up. */
+    private static final BigDecimal NEUTRAL_OSCILLATOR = BigDecimal.valueOf(50);
 
     private final FeatureBuffer buffer = new FeatureBuffer();
     private final SmaIncremental smaIncremental;
@@ -26,31 +32,35 @@ public class FeatureExtractor implements CandleEventListener {
     private final Rsi rsiIncremental;
     private final MacdIndicator macdIndicator;
     private final AtrIndicator atrIndicator;
+    private final AdxIndicator adxIndicator;
+    private final BollingerBands bollingerBands;
+    private final Vwap vwap;
+    private final MfiIndicator mfiIndicator;
+    private final DonchianChannel donchianChannel;
     private final FeatureEventListener listener;
     private final int volatilityShortPeriods;
     private final int volatilityLongPeriods;
     private final int volumeAveragePeriods;
 
     public FeatureExtractor(int smaPeriod, int emaPeriod, int rsiPeriod, FeatureEventListener listener) {
-        this(smaPeriod, emaPeriod, rsiPeriod, Config.getAtrPeriod(),
-                Config.getMacdFastPeriod(), Config.getMacdSlowPeriod(), Config.getMacdSignalPeriod(),
-                Config.getVolatilityShortPeriods(), Config.getVolatilityLongPeriods(), Config.getVolumeAveragePeriods(),
-                listener);
+        this(IndicatorPeriods.fromConfig().withCorePeriods(smaPeriod, emaPeriod, rsiPeriod), listener);
     }
 
     /** Allows overriding every period without touching global Config - used by on-demand backtests. */
-    public FeatureExtractor(int smaPeriod, int emaPeriod, int rsiPeriod, int atrPeriod,
-                             int macdFastPeriod, int macdSlowPeriod, int macdSignalPeriod,
-                             int volatilityShortPeriods, int volatilityLongPeriods, int volumeAveragePeriods,
-                             FeatureEventListener listener) {
-        this.smaIncremental = new SmaIncremental(smaPeriod);
-        this.emaIncremental = new Ema(emaPeriod);
-        this.rsiIncremental = new Rsi(rsiPeriod);
-        this.macdIndicator = new MacdIndicator(macdFastPeriod, macdSlowPeriod, macdSignalPeriod);
-        this.atrIndicator = new AtrIndicator(atrPeriod);
-        this.volatilityShortPeriods = volatilityShortPeriods;
-        this.volatilityLongPeriods = volatilityLongPeriods;
-        this.volumeAveragePeriods = volumeAveragePeriods;
+    public FeatureExtractor(IndicatorPeriods periods, FeatureEventListener listener) {
+        this.smaIncremental = new SmaIncremental(periods.sma());
+        this.emaIncremental = new Ema(periods.ema());
+        this.rsiIncremental = new Rsi(periods.rsi());
+        this.macdIndicator = new MacdIndicator(periods.macdFast(), periods.macdSlow(), periods.macdSignal());
+        this.atrIndicator = new AtrIndicator(periods.atr());
+        this.adxIndicator = new AdxIndicator(periods.adx());
+        this.bollingerBands = new BollingerBands(periods.bollinger(), periods.bollingerStdDev());
+        this.vwap = new Vwap(periods.vwapAnchor(), periods.vwapRollingPeriods());
+        this.mfiIndicator = new MfiIndicator(periods.mfi());
+        this.donchianChannel = new DonchianChannel(periods.donchian());
+        this.volatilityShortPeriods = periods.volatilityShort();
+        this.volatilityLongPeriods = periods.volatilityLong();
+        this.volumeAveragePeriods = periods.volumeAverage();
         this.listener = listener;
     }
 
@@ -66,65 +76,68 @@ public class FeatureExtractor implements CandleEventListener {
     private void process(CandleEvent candle, FeatureEventListener eventListener) {
         try {
             buffer.add(candle);
-
-            Optional<BigDecimal> sma = smaIncremental.updateSum(candle.close());
-            BigDecimal ema = emaIncremental.update(candle.close());
-            Optional<BigDecimal> rsi = rsiIncremental.update(candle.close());
-            var macd = macdIndicator.update(candle.close());
-            var atr = atrIndicator.update(candle);
-
-            FeatureVector features = extractFeatures(candle, sma, ema, rsi, macd, atr);
-            eventListener.onEvent(features);
-
+            eventListener.onEvent(extractFeatures(candle));
         } catch (Exception e) {
             logger.error("Error extracting features for candle: {}", candle.openTime(), e);
         }
     }
 
-    private FeatureVector extractFeatures(CandleEvent candle,
-                                          Optional<BigDecimal> sma,
-                                          BigDecimal ema,
-                                          Optional<BigDecimal> rsi,
-                                          Optional<MacdIndicator.MacdValue> macd,
-                                          Optional<BigDecimal> atr) {
+    /**
+     * Feeds every indicator exactly once with this candle and assembles the vector. Both the live
+     * path (onEvent) and the warmup path (warmUp) come through here, so the two can never diverge
+     * on which indicators got updated.
+     */
+    private FeatureVector extractFeatures(CandleEvent candle) {
+        BigDecimal close = candle.close();
 
-        BigDecimal returnPct1m = calculateReturn(candle);
-        BigDecimal volatility5m = buffer.volatility(volatilityShortPeriods).orElse(BigDecimal.ZERO);
-        BigDecimal volatility20m = buffer.volatility(volatilityLongPeriods).orElse(BigDecimal.ZERO);
-        BigDecimal smaDistance = calculateSmaDistance(candle.close(), sma);
-        BigDecimal emaDistance = calculateEmaDistance(candle.close(), ema);
-        BigDecimal rsiValue = rsi.orElse(BigDecimal.valueOf(50));
-
-        BigDecimal macdValue = macd.map(MacdIndicator.MacdValue::macd).orElse(BigDecimal.ZERO);
-        BigDecimal macdSignal = macd.map(MacdIndicator.MacdValue::signal).orElse(BigDecimal.ZERO);
-        BigDecimal atrValue = atr.orElse(BigDecimal.ZERO);
-
-        BigDecimal volumeRatio = calculateVolumeRatio(candle);
-        BigDecimal highLowRatio = calculateHighLowRatio(candle);
-        BigDecimal closePosition = calculateClosePosition(candle);
+        BigDecimal sma = smaIncremental.updateSum(close).orElse(BigDecimal.ZERO);
+        BigDecimal ema = emaIncremental.update(close);
+        BigDecimal rsi = rsiIncremental.update(close).orElse(NEUTRAL_OSCILLATOR);
+        var macd = macdIndicator.update(close);
+        BigDecimal atr = atrIndicator.update(candle).orElse(BigDecimal.ZERO);
+        var adx = adxIndicator.update(candle);
+        var bollinger = bollingerBands.update(close);
+        BigDecimal vwapValue = vwap.update(candle).orElse(BigDecimal.ZERO);
+        BigDecimal mfi = mfiIndicator.update(candle).orElse(NEUTRAL_OSCILLATOR);
+        var donchian = donchianChannel.update(candle);
 
         ZonedDateTime zdt = candle.closeTime().atZone(ZoneOffset.UTC);
-        int hourOfDay = zdt.getHour();
-        int dayOfWeek = zdt.getDayOfWeek().getValue();
 
         return FeatureVector.builder()
                 .instrument(candle.instrument())
                 .timestamp(candle.closeTime())
-                .returnPct1m(returnPct1m)
-                .volatility5m(volatility5m)
-                .volatility20m(volatility20m)
-                .smaDistance(smaDistance)
-                .emaDistance(emaDistance)
-                .rsiValue(rsiValue)
-                .macdValue(macdValue)
-                .macdSignal(macdSignal)
-                .atrValue(atrValue)
-                .volumeRatio(volumeRatio)
-                .highLowRatio(highLowRatio)
-                .closePosition(closePosition)
-                .hourOfDay(hourOfDay)
-                .dayOfWeek(dayOfWeek)
-                .price(candle.close())
+
+                .returnPct1m(calculateReturn(candle))
+                .volatility5m(buffer.volatility(volatilityShortPeriods).orElse(BigDecimal.ZERO))
+                .volatility20m(buffer.volatility(volatilityLongPeriods).orElse(BigDecimal.ZERO))
+                .smaDistance(percentDistance(close, sma))
+                .emaDistance(percentDistance(close, ema))
+                .rsiValue(rsi)
+                .macdValue(macd.map(MacdIndicator.MacdValue::macd).orElse(BigDecimal.ZERO))
+                .macdSignal(macd.map(MacdIndicator.MacdValue::signal).orElse(BigDecimal.ZERO))
+                .atrValue(atr)
+                .volumeRatio(calculateVolumeRatio(candle))
+                .highLowRatio(calculateHighLowRatio(candle))
+                .closePosition(calculateClosePosition(candle))
+                .hourOfDay(zdt.getHour())
+                .dayOfWeek(zdt.getDayOfWeek().getValue())
+
+                .adx(adx.map(AdxIndicator.AdxValue::adx).orElse(BigDecimal.ZERO))
+                .plusDi(adx.map(AdxIndicator.AdxValue::plusDi).orElse(BigDecimal.ZERO))
+                .minusDi(adx.map(AdxIndicator.AdxValue::minusDi).orElse(BigDecimal.ZERO))
+                .atrPercent(calculateAtrPercent(atr, close))
+                .bbWidth(bollinger.map(BollingerBands.BollingerValue::width).orElse(BigDecimal.ZERO))
+
+                .vwap(vwapValue)
+                .vwapDistance(percentDistanceFrom(close, vwapValue))
+                .bbPercentB(bollinger.map(BollingerBands.BollingerValue::percentB).orElse(BigDecimal.ZERO))
+                .donchianUpper(donchian.map(DonchianChannel.DonchianValue::upper).orElse(BigDecimal.ZERO))
+                .donchianLower(donchian.map(DonchianChannel.DonchianValue::lower).orElse(BigDecimal.ZERO))
+                .donchianPosition(donchian.map(DonchianChannel.DonchianValue::position).orElse(BigDecimal.ZERO))
+
+                .mfi(mfi)
+
+                .price(close)
                 .tickCount(candle.tickCount())
                 .build();
     }
@@ -139,31 +152,48 @@ public class FeatureExtractor implements CandleEventListener {
                 .multiply(BigDecimal.valueOf(100));
     }
 
-    private BigDecimal calculateSmaDistance(BigDecimal close, Optional<BigDecimal> sma) {
-        if (sma.isEmpty() || close.compareTo(BigDecimal.ZERO) == 0) {
+    /**
+     * Distance from a moving average as a percentage of the close. A zero reference means the
+     * indicator is still warming up (no real price is zero), so the distance is reported as zero.
+     */
+    private BigDecimal percentDistance(BigDecimal close, BigDecimal reference) {
+        if (close.compareTo(BigDecimal.ZERO) == 0 || reference.compareTo(BigDecimal.ZERO) == 0) {
             return BigDecimal.ZERO;
         }
-        return close.subtract(sma.get())
+        return close.subtract(reference)
                 .divide(close, 8, RoundingMode.HALF_UP)
                 .multiply(BigDecimal.valueOf(100));
     }
 
-    private BigDecimal calculateEmaDistance(BigDecimal close, BigDecimal ema) {
+    /** Distance as a percentage of the reference itself, which is how VWAP distance is defined. */
+    private BigDecimal percentDistanceFrom(BigDecimal close, BigDecimal reference) {
+        if (reference.compareTo(BigDecimal.ZERO) == 0) {
+            return BigDecimal.ZERO;
+        }
+        return close.subtract(reference)
+                .divide(reference, 8, RoundingMode.HALF_UP)
+                .multiply(BigDecimal.valueOf(100));
+    }
+
+    /**
+     * ATR as a percentage of price. AtrRule used to compute this inline; it is a regime feature
+     * consumed by more than one rule, so it lives in the vector now and is calculated once.
+     */
+    private BigDecimal calculateAtrPercent(BigDecimal atrValue, BigDecimal close) {
         if (close.compareTo(BigDecimal.ZERO) == 0) {
             return BigDecimal.ZERO;
         }
-        return close.subtract(ema)
-                .divide(close, 8, RoundingMode.HALF_UP)
+        return atrValue.divide(close, 8, RoundingMode.HALF_UP)
                 .multiply(BigDecimal.valueOf(100));
     }
 
     private BigDecimal calculateVolumeRatio(CandleEvent candle) {
-        var avgVolume = buffer.averageVolume(volumeAveragePeriods);
-        if (avgVolume.isEmpty() || avgVolume.get().compareTo(BigDecimal.ZERO) == 0) {
+        BigDecimal averageVolume = buffer.averageVolume(volumeAveragePeriods).orElse(BigDecimal.ZERO);
+        if (averageVolume.compareTo(BigDecimal.ZERO) == 0) {
             return BigDecimal.ONE;
         }
         return candle.volume()
-                .divide(avgVolume.get(), 8, RoundingMode.HALF_UP);
+                .divide(averageVolume, 8, RoundingMode.HALF_UP);
     }
 
     private BigDecimal calculateHighLowRatio(CandleEvent candle) {
@@ -186,4 +216,3 @@ public class FeatureExtractor implements CandleEventListener {
                 .divide(range, 8, RoundingMode.HALF_UP);
     }
 }
-

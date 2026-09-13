@@ -591,7 +591,7 @@ footer{
   <div class="row">
     <div class="panel">
       <div class="panel-head">
-        <h3>Technical features · 14</h3>
+        <h3>Technical features · 21</h3>
         <span class="meta" id="lastUpdate">—</span>
       </div>
       <div class="metrics">
@@ -642,6 +642,34 @@ footer{
         <div class="metric">
           <label data-tip="Posição relativa do fechamento no range da candle, normalizada entre 0 e 1. Idêntico ao H/L ratio, com nomenclatura diferente.">Close pos</label>
           <b id="closePosition">—</b><small>0 — 1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Average Directional Index. Mede força da tendência (não a direção). Abaixo de 20 = mercado lateral (sinais de breakout não valem); acima de 25 = tendência (sinais de reversão à média não valem).">ADX</label>
+          <b id="adx">—</b><small>trend strength</small>
+        </div>
+        <div class="metric">
+          <label data-tip="ATR em percentual do preço. Filtro de regime: volatilidade baixa = pouco movimento esperado, sinais menos confiáveis.">ATR %</label>
+          <b id="atrPercent">—</b><small>regime</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Largura das Bandas de Bollinger em % da banda média. Valor baixo = squeeze (compressão de volatilidade, costuma anteceder movimento).">BB width</label>
+          <b id="bbWidth">—</b><small>squeeze</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Posição do preço dentro das Bandas de Bollinger, normalizada. 0 = na banda inferior, 1 = na superior. Usado apenas como confirmação.">BB %B</label>
+          <b id="bbPercentB">—</b><small>0 — 1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Money Flow Index. Como o RSI, mas ponderado por volume. Abaixo de 20 = sobrevendido, acima de 80 = sobrecomprado.">MFI</label>
+          <b id="mfi">—</b><small>0 — 100</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Distância percentual do preço em relação ao VWAP (preço médio ponderado por volume da sessão UTC). Positivo = preço acima do custo médio do dia.">VWAP dist</label>
+          <b id="vwapDistance">—</b><small>vs session</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Posição do preço dentro do Canal de Donchian (máxima e mínima do período), normalizada. 1 = rompendo o topo do canal, 0 = rompendo o fundo.">Donchian pos</label>
+          <b id="donchianPosition">—</b><small>0 — 1</small>
         </div>
         <div class="metric">
           <label data-tip="Hora do dia em UTC. Útil para identificar sessões mais voláteis (Ásia, Europa, EUA).">Hour</label>
@@ -1053,11 +1081,16 @@ function renderCandle(c){
 
 /* ═══════════ RENDER: METRICS ═══════════ */
 function renderMetrics(m){
+  // FeatureVector groups its fields by role (core/regime/context/flow/deriv), so flatten the
+  // payload before reading it by id. Keep this in sync with the record's groups.
+  const f = Object.assign({}, m.core, m.regime, m.context, m.flow, m.deriv);
   ['returnPct1m','volatility5m','volatility20m','smaDistance','emaDistance',
    'rsiValue','macdValue','macdSignal','atrValue','volumeRatio',
-   'highLowRatio','closePosition'].forEach(id => text(id, fmt(m[id])));
-  text('hourOfDay', m.hourOfDay);
-  text('dayOfWeek', m.dayOfWeek);
+   'highLowRatio','closePosition',
+   'adx','atrPercent','bbWidth','bbPercentB','mfi','vwapDistance',
+   'donchianPosition'].forEach(id => text(id, fmt(f[id])));
+  text('hourOfDay', f.hourOfDay);
+  text('dayOfWeek', f.dayOfWeek);
   text('lastUpdate', m.timestamp ? `updated ${time(m.timestamp)}` : '—');
 }
 

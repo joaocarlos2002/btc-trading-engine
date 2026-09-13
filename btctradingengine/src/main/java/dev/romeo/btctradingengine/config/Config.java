@@ -1,5 +1,7 @@
 package dev.romeo.btctradingengine.config;
 
+import dev.romeo.btctradingengine.indicator.VwapAnchor;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
@@ -57,6 +59,15 @@ public class Config {
     public static int getVolatilityLongPeriods() { return Integer.parseInt(getProperty("feature.volatility.long.periods", "300")); }
     public static int getVolumeAveragePeriods() { return Integer.parseInt(getProperty("feature.volume.average.periods", "300")); }
 
+    // Periods below are scaled x15 for 1m candles, like the ones above (e.g. ADX 14*15m -> 210*1m).
+    public static int getAdxPeriod() { return Integer.parseInt(getProperty("indicator.adx.period", "210")); }
+    public static int getBollingerPeriod() { return Integer.parseInt(getProperty("indicator.bollinger.period", "300")); }
+    public static BigDecimal getBollingerStdDev() { return getDecimal("indicator.bollinger.stddev", "2.0"); }
+    public static int getMfiPeriod() { return Integer.parseInt(getProperty("indicator.mfi.period", "210")); }
+    public static int getDonchianPeriod() { return Integer.parseInt(getProperty("indicator.donchian.period", "300")); }
+    public static VwapAnchor getVwapAnchor() { return VwapAnchor.fromProperty(getProperty("indicator.vwap.anchor", "daily")); }
+    public static int getVwapRollingPeriods() { return Integer.parseInt(getProperty("indicator.vwap.rolling.periods", "300")); }
+
     public static BigDecimal getDecimal(String key, String defaultValue) {
         return new BigDecimal(getProperty(key, defaultValue));
     }
@@ -74,6 +85,13 @@ public class Config {
         return getDecimal("prediction.macd.histogram.strong.atr.ratio", "0.20");
     }
     public static BigDecimal getVolatilityRatioHigh() { return getDecimal("prediction.volatility.ratio.high", "1.5"); }
+    public static BigDecimal getAdxTrendMin() { return getDecimal("prediction.adx.trend.min", "20"); }
+    public static BigDecimal getAdxTrendStrong() { return getDecimal("prediction.adx.trend.strong", "25"); }
+    public static BigDecimal getMfiOversold() { return getDecimal("prediction.mfi.oversold", "20"); }
+    public static BigDecimal getMfiNeutralLow() { return getDecimal("prediction.mfi.neutral.low", "40"); }
+    public static BigDecimal getMfiNeutralHigh() { return getDecimal("prediction.mfi.neutral.high", "60"); }
+    public static BigDecimal getMfiOverbought() { return getDecimal("prediction.mfi.overbought", "80"); }
+    public static BigDecimal getBollingerSqueezeThreshold() { return getDecimal("prediction.bollinger.squeeze.threshold", "0.5"); }
     public static double getBuyThreshold() { return Double.parseDouble(getProperty("prediction.buy.threshold", "0.28")); }
     public static double getSellThreshold() { return Double.parseDouble(getProperty("prediction.sell.threshold", "-0.28")); }
     public static double getHoldMin() { return Double.parseDouble(getProperty("prediction.hold.min", "-0.3")); }
@@ -108,9 +126,23 @@ public class Config {
         requirePositive("feature.volatility.short.periods", getVolatilityShortPeriods());
         requirePositive("feature.volatility.long.periods", getVolatilityLongPeriods());
         requirePositive("feature.volume.average.periods", getVolumeAveragePeriods());
+        requirePositive("indicator.adx.period", getAdxPeriod());
+        requirePositive("indicator.bollinger.period", getBollingerPeriod());
+        requirePositive("indicator.mfi.period", getMfiPeriod());
+        requirePositive("indicator.donchian.period", getDonchianPeriod());
+        requirePositive("indicator.vwap.rolling.periods", getVwapRollingPeriods());
 
         if (getMacdFastPeriod() >= getMacdSlowPeriod()) {
             throw new IllegalArgumentException("indicator.macd.fast.period must be lower than slow.period");
+        }
+        if (getBollingerStdDev().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("indicator.bollinger.stddev must be positive");
+        }
+        if (getAdxTrendMin().compareTo(getAdxTrendStrong()) > 0) {
+            throw new IllegalArgumentException("prediction.adx.trend.min cannot be above prediction.adx.trend.strong");
+        }
+        if (getMfiOversold().compareTo(getMfiOverbought()) >= 0) {
+            throw new IllegalArgumentException("prediction.mfi.oversold must be lower than prediction.mfi.overbought");
         }
         if (getHoldMin() >= getHoldMax()) {
             throw new IllegalArgumentException("prediction.hold.min must be lower than hold.max");
