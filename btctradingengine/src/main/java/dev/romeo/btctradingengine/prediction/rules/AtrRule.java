@@ -24,32 +24,22 @@ public class AtrRule implements SignalRule {
 
     @Override
     public double evaluate(FeatureVector features) {
-        BigDecimal atr = features.atrValue();
-        BigDecimal price = features.price();
+        // ATR% is computed once in FeatureExtractor and carried as a regime feature instead of
+        // being recalculated here - more than one filter rule consumes the same value.
+        BigDecimal atrPercent = features.regime().atrPercent();
 
-        if (atr.compareTo(BigDecimal.ZERO) == 0 || price.compareTo(BigDecimal.ZERO) == 0) {
-            return 0.0; // Sem dados
+        if (atrPercent.compareTo(BigDecimal.ZERO) == 0) {
+            return 0.0;
         }
 
-        // Calcular ATR em % do preÃ§o
-        BigDecimal atrPercent = atr.divide(price, 8, java.math.RoundingMode.HALF_UP)
-                .multiply(BigDecimal.valueOf(100));
-
-        // ATR nÃ£o prediz direÃ§Ã£o, mas afeta confianÃ§a
-        // ATR baixo: movimento baixo (confianÃ§a baixa nas regras)
-        // ATR alto: movimento esperado maior (confianÃ§a mÃ©dia)
 
         if (atrPercent.compareTo(volatilityLow) < 0) {
-            // BaixÃ­ssima volatilidade: desconfiar de sinais (pouco movimento esperado)
             return -0.3;
         } else if (atrPercent.compareTo(volatilityNormal) < 0) {
-            // Volatilidade normal
             return 0.0;
         } else if (atrPercent.compareTo(volatilityHigh) < 0) {
-            // Volatilidade moderada
             return 0.1;
         } else {
-            // Volatilidade alta (possÃ­vel breakout)
             return 0.2;
         }
     }

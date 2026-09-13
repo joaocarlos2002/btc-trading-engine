@@ -1,6 +1,8 @@
 package dev.romeo.btctradingengine.backtest;
 
 import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.feature.IndicatorPeriods;
+import dev.romeo.btctradingengine.indicator.VwapAnchor;
 
 import java.math.BigDecimal;
 
@@ -9,6 +11,10 @@ import java.math.BigDecimal;
  * Config (which is static/shared and could affect a concurrently running live bot). Covers
  * indicator periods (FeatureExtractor), each rule's internal sub-thresholds, the entry
  * threshold/confirmation (RuleBasedPredictor), and the risk/backtest settings (BacktestEngine).
+ *
+ * The periods stay flat here on purpose: these component names are the /backtest query parameter
+ * names, so renaming or nesting them would break the HTTP contract. indicatorPeriods() converts
+ * them into the grouped object FeatureExtractor takes.
  */
 public record BacktestParams(
         int smaPeriod,
@@ -21,6 +27,13 @@ public record BacktestParams(
         int volatilityShortPeriods,
         int volatilityLongPeriods,
         int volumeAveragePeriods,
+        int adxPeriod,
+        int bollingerPeriod,
+        BigDecimal bollingerStdDev,
+        int mfiPeriod,
+        int donchianPeriod,
+        VwapAnchor vwapAnchor,
+        int vwapRollingPeriods,
 
         BigDecimal rsiOversold,
         BigDecimal rsiNeutralLow,
@@ -33,6 +46,12 @@ public record BacktestParams(
         BigDecimal atrVolatilityNormal,
         BigDecimal atrVolatilityHigh,
         BigDecimal volatilityRatioHigh,
+        BigDecimal mfiOversold,
+        BigDecimal mfiNeutralLow,
+        BigDecimal mfiNeutralHigh,
+        BigDecimal mfiOverbought,
+        BigDecimal adxTrendMin,
+        BigDecimal bollingerSqueezeThreshold,
 
         double buyThreshold,
         double sellThreshold,
@@ -54,6 +73,13 @@ public record BacktestParams(
                 Config.getVolatilityShortPeriods(),
                 Config.getVolatilityLongPeriods(),
                 Config.getVolumeAveragePeriods(),
+                Config.getAdxPeriod(),
+                Config.getBollingerPeriod(),
+                Config.getBollingerStdDev(),
+                Config.getMfiPeriod(),
+                Config.getDonchianPeriod(),
+                Config.getVwapAnchor(),
+                Config.getVwapRollingPeriods(),
 
                 Config.getRsiOversold(),
                 Config.getRsiNeutralLow(),
@@ -66,6 +92,12 @@ public record BacktestParams(
                 Config.getAtrVolatilityNormal(),
                 Config.getAtrVolatilityHigh(),
                 Config.getVolatilityRatioHigh(),
+                Config.getMfiOversold(),
+                Config.getMfiNeutralLow(),
+                Config.getMfiNeutralHigh(),
+                Config.getMfiOverbought(),
+                Config.getAdxTrendMin(),
+                Config.getBollingerSqueezeThreshold(),
 
                 Config.getBuyThreshold(),
                 Config.getSellThreshold(),
@@ -75,5 +107,15 @@ public record BacktestParams(
                 Config.getTradingStopLossPercent(),
                 Config.getBacktestCommissionRate()
         );
+    }
+
+    public IndicatorPeriods indicatorPeriods() {
+        return new IndicatorPeriods(
+                smaPeriod, emaPeriod, rsiPeriod, atrPeriod,
+                macdFastPeriod, macdSlowPeriod, macdSignalPeriod,
+                volatilityShortPeriods, volatilityLongPeriods, volumeAveragePeriods,
+                adxPeriod, bollingerPeriod, bollingerStdDev,
+                mfiPeriod, donchianPeriod,
+                vwapAnchor, vwapRollingPeriods);
     }
 }

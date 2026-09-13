@@ -76,6 +76,11 @@ public class AtrRuleTest {
                 .macdValue(new BigDecimal("0"))
                 .macdSignal(new BigDecimal("0"))
                 .atrValue(new BigDecimal(atr))
+                // AtrRule reads the ATR% regime feature that FeatureExtractor computes, so the
+                // test has to supply it the same way: atr / price * 100.
+                .atrPercent(new BigDecimal(atr)
+                        .divide(new BigDecimal(price), 8, java.math.RoundingMode.HALF_UP)
+                        .multiply(BigDecimal.valueOf(100)))
                 .volumeRatio(new BigDecimal("1.0"))
                 .highLowRatio(new BigDecimal("2"))
                 .closePosition(new BigDecimal("0.5"))
