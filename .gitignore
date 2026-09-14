@@ -13,3 +13,7 @@ target/
 ### OS ###
 .DS_Store
 Thumbs.db
+
+
+vault/
+context/
