@@ -257,6 +257,14 @@ public class Config {
                 : java.nio.file.Path.of(dir);
     }
 
+    /** Blank means a folder under java.io.tmpdir, like the metrics cache. */
+    public static java.nio.file.Path getAggTradesCacheDir() {
+        String dir = getProperty("backtest.aggtrades.cache.dir", "");
+        return dir.isBlank()
+                ? java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), "btc-trading-engine", "aggtrades")
+                : java.nio.file.Path.of(dir);
+    }
+
     public static String getDbUrl() {
         return getProperty("db.url", "jdbc:postgresql://localhost:5432/btc-trading-engine_btc");
     }
