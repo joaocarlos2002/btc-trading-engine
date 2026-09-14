@@ -77,6 +77,21 @@ CREATE TABLE IF NOT EXISTS derivatives_snapshots (
 CREATE INDEX IF NOT EXISTS idx_derivatives_symbol_time
     ON derivatives_snapshots(symbol, time_ms DESC);
 
+-- Order book snapshots polled from the spot depth endpoint (issue #10). Binance has no free order
+-- book history, so these rows are what order book features can eventually be backtested against.
+CREATE TABLE IF NOT EXISTS order_book_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    symbol VARCHAR(20) NOT NULL,
+    time_ms BIGINT NOT NULL,
+    levels INTEGER NOT NULL,
+    bid_volume NUMERIC(28, 8) NOT NULL,
+    ask_volume NUMERIC(28, 8) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_book_symbol_time
+    ON order_book_snapshots(symbol, time_ms DESC);
+
 -- Optional: partition candles by month for better performance on large datasets
 -- Run this after accumulating some data
 -- ALTER TABLE candles PARTITION BY RANGE (EXTRACT(EPOCH FROM created_at));

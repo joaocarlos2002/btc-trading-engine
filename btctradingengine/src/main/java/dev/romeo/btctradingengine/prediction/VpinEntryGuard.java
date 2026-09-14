@@ -14,7 +14,7 @@ import java.math.BigDecimal;
  * guarantee the block. And it only marks the prediction instead of turning it into HOLD: the same
  * prediction also closes an opposite position on signal reversal, and that exit must still happen.
  */
-public class VpinEntryGuard {
+public class VpinEntryGuard implements EntryGuard {
     private final boolean enabled;
     private final BigDecimal highThreshold;
 
@@ -37,5 +37,11 @@ public class VpinEntryGuard {
         return enabled
                 && vpin.compareTo(BigDecimal.ZERO) > 0
                 && vpin.compareTo(highThreshold) >= 0;
+    }
+
+    /** Toxic flow is bad for either direction, so the signal does not matter. */
+    @Override
+    public String blockReason(FeatureVector features, Signal signal) {
+        return blocksEntry(features) ? "VPIN=" + features.flow().vpin() : null;
     }
 }

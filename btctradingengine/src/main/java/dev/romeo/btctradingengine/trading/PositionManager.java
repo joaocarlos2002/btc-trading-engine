@@ -156,7 +156,7 @@ public class PositionManager {
             }
             if (!prediction.entryAllowed()) {
                 // Only new entries: the reversal close above has already run for this prediction
-                logger.info("Toxic order flow (VPIN) - blocking new {} entry", prediction.signal());
+                logger.info("Entry guard (VPIN / order book) - blocking new {} entry", prediction.signal());
                 return;
             }
             openNewPosition(prediction, candle);

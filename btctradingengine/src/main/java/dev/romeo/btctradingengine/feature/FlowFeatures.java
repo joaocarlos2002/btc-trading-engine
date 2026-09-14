@@ -15,8 +15,9 @@ import java.math.BigDecimal;
  * VPIN (issue #13) is not directional either: it only gates new entries, see VpinEntryGuard.
  * Absorption (issue #12) is directional but has no rule yet, for the same reason as the CVD fields.
  *
- * Order book imbalance belongs in this group too, but it needs a depth stream and does not come
- * out of CandleEvent - issue #10 will add it as a component here.
+ * orderBookImbalance (issue #10) comes from polling the order book outside the candle stream. It is
+ * live only and, unlike the other fields, null when unavailable: an imbalance of 0 is a real reading
+ * (a book with only asks). Like VPIN it only gates new entries, see OrderBookEntryGuard.
  *
  * While MFI is warming up the neutral 50 is reported, the same convention rsiValue uses - a zero
  * here would be indistinguishable from a genuinely fully-oversold reading. For the delta/CVD and
@@ -33,7 +34,8 @@ public record FlowFeatures(
         BigDecimal largeVolumeShare,      // large trade volume / taker volume of the window [0-1] (needs trade sizes)
         BigDecimal vpin,                  // approximate VPIN [0-1], 0 while warming up
         BigDecimal absorption,            // candle absorption [-1, 1]: + buy absorption, - sell absorption
-        BigDecimal absorptionSum          // absorption summed over feature.absorption.window candles
+        BigDecimal absorptionSum,         // absorption summed over feature.absorption.window candles
+        BigDecimal orderBookImbalance     // mean book bid share [0-1] during the candle; null when unavailable
 ) {
 
     public static FlowFeatures empty() {
@@ -55,6 +57,7 @@ public record FlowFeatures(
         private BigDecimal vpin = BigDecimal.ZERO;
         private BigDecimal absorption = BigDecimal.ZERO;
         private BigDecimal absorptionSum = BigDecimal.ZERO;
+        private BigDecimal orderBookImbalance;
 
         public Builder mfi(BigDecimal mfi) { this.mfi = mfi; return this; }
         public Builder volumeDelta(BigDecimal volumeDelta) { this.volumeDelta = volumeDelta; return this; }
@@ -66,10 +69,11 @@ public record FlowFeatures(
         public Builder vpin(BigDecimal vpin) { this.vpin = vpin; return this; }
         public Builder absorption(BigDecimal absorption) { this.absorption = absorption; return this; }
         public Builder absorptionSum(BigDecimal absorptionSum) { this.absorptionSum = absorptionSum; return this; }
+        public Builder orderBookImbalance(BigDecimal orderBookImbalance) { this.orderBookImbalance = orderBookImbalance; return this; }
 
         public FlowFeatures build() {
             return new FlowFeatures(mfi, volumeDelta, deltaRatio, cvd, cvdRatio, largeCvd, largeVolumeShare,
-                    vpin, absorption, absorptionSum);
+                    vpin, absorption, absorptionSum, orderBookImbalance);
         }
     }
 }

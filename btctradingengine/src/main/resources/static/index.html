@@ -591,7 +591,7 @@ footer{
   <div class="row">
     <div class="panel">
       <div class="panel-head">
-        <h3>Technical features · 45</h3>
+        <h3>Technical features · 46</h3>
         <span class="meta" id="lastUpdate">—</span>
       </div>
       <div class="metrics">
@@ -766,6 +766,10 @@ footer{
         <div class="metric">
           <label data-tip="Soma da absorção nas últimas feature.absorption.window velas. Absorção repetida no mesmo lado é mais relevante que um evento isolado.">Absorp. sum</label>
           <b id="absorptionSum">—</b><small>window</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Desequilíbrio do order book: volume de compra ÷ (compra + venda) nos níveis lidos, média dos retratos tirados durante a vela. 0.5 = equilibrado, acima = mais compradores esperando, abaixo = mais vendedores. Filtro de execução (prediction.orderbook.filter.enabled), não voto. Só ao vivo: sem histórico no backtest.">Book imbal.</label>
+          <b id="orderBookImbalance">—</b><small>0 — 1 · live only</small>
         </div>
         <div class="metric">
           <label data-tip="Hora do dia em UTC. Útil para identificar sessões mais voláteis (Ásia, Europa, EUA).">Hour</label>
@@ -1191,7 +1195,7 @@ function renderMetrics(m){
    'donchianPosition',
    'bodyRatio','upperWickRatio','lowerWickRatio','recentHighDistance','recentLowDistance',
    'supportDistance','resistanceDistance',
-   'deltaRatio','cvd','cvdRatio','largeCvd','largeVolumeShare','vpin','absorption','absorptionSum'].forEach(id => text(id, fmt(f[id])));
+   'deltaRatio','cvd','cvdRatio','largeCvd','largeVolumeShare','vpin','absorption','absorptionSum','orderBookImbalance'].forEach(id => text(id, fmt(f[id])));
   // Derivatives are null (not 0) when unavailable; fmt already renders null as —
   text('fundingRate', f.fundingRate == null ? '—' : `${fmt(f.fundingRate * 100, 4)}%`);
   text('basisPercent', fmt(f.basisPercent, 4));

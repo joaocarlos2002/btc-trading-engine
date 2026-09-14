@@ -115,6 +115,7 @@ public record FeatureVector(
         public Builder vpin(BigDecimal vpin) { flow.vpin(vpin); return this; }
         public Builder absorption(BigDecimal absorption) { flow.absorption(absorption); return this; }
         public Builder absorptionSum(BigDecimal absorptionSum) { flow.absorptionSum(absorptionSum); return this; }
+        public Builder orderBookImbalance(BigDecimal orderBookImbalance) { flow.orderBookImbalance(orderBookImbalance); return this; }
         public Builder deriv(DerivFeatures deriv) { this.deriv = deriv; return this; }
         public Builder priceAction(PriceActionFeatures priceAction) { this.priceAction = priceAction; return this; }
 

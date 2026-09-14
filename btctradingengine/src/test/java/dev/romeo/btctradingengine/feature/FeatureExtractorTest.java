@@ -252,6 +252,30 @@ public class FeatureExtractorTest {
     }
 
     @Test
+    public void attachesTheOrderBookImbalanceLookedUpForEachCandle() {
+        List<FeatureVector> features = new ArrayList<>();
+        FeatureExtractor extractor = new FeatureExtractor(
+                IndicatorPeriods.fromConfig(), DerivativesLookup.NONE,
+                candle -> new BigDecimal("0.42"),
+                features::add);
+
+        extractor.onEvent(createCandle("100", "110", "95", "105", "1000", 50));
+
+        assertEquals(0, features.get(0).flow().orderBookImbalance().compareTo(new BigDecimal("0.42")));
+    }
+
+    @Test
+    public void orderBookImbalanceIsNullWithoutALookup() {
+        List<FeatureVector> features = new ArrayList<>();
+        FeatureExtractor extractor = new FeatureExtractor(50, 26, 14, features::add);
+
+        extractor.onEvent(createCandle("100", "110", "95", "105", "1000", 50));
+
+        // null, not 0: an imbalance of 0 would mean a book with only asks
+        assertNull(features.get(0).flow().orderBookImbalance());
+    }
+
+    @Test
     public void candleWithoutFlowDataReportsNeutralDelta() {
         List<FeatureVector> features = new ArrayList<>();
         FeatureExtractor extractor = new FeatureExtractor(50, 26, 14, features::add);
