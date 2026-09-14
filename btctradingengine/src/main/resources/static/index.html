@@ -744,16 +744,16 @@ footer{
           <b id="basisPercent">—</b><small>% perp vs spot</small>
         </div>
         <div class="metric">
-          <label data-tip="Open interest: contratos abertos no perpétuo, em BTC. Só ao vivo: a API guarda apenas 30 dias de histórico, então fica vazio no backtest.">Open int</label>
-          <b id="openInterest">—</b><small>BTC · live only</small>
+          <label data-tip="Open interest: contratos abertos no perpétuo, em BTC. No backtest vem dos dumps diários da Binance (valor de 5 em 5 minutos).">Open int</label>
+          <b id="openInterest">—</b><small>BTC</small>
         </div>
         <div class="metric">
           <label data-tip="Variação % do open interest contra derivatives.open.interest.change.minutes atrás. Subindo com o preço = dinheiro novo entrando; caindo = posições sendo fechadas ou liquidadas.">OI change</label>
-          <b id="openInterestChangePercent">—</b><small>% · live only</small>
+          <b id="openInterestChangePercent">—</b><small>%</small>
         </div>
         <div class="metric">
-          <label data-tip="Razão entre contas compradas e vendidas no perpétuo. Acima de 1 = mais contas long. Extremos costumam indicar posicionamento lotado. Só ao vivo.">L/S ratio</label>
-          <b id="longShortRatio">—</b><small>accounts · live only</small>
+          <label data-tip="Razão entre contas compradas e vendidas no perpétuo. Acima de 1 = mais contas long. Extremos costumam indicar posicionamento lotado.">L/S ratio</label>
+          <b id="longShortRatio">—</b><small>accounts</small>
         </div>
         <div class="metric">
           <label data-tip="VPIN aproximado: desequilíbrio médio entre compra e venda agressora em baldes de volume (cada balde ≈ 20 min de volume médio, últimos 50). Perto de 1 = fluxo muito unilateral (tóxico). Com prediction.vpin.filter.enabled, a partir de prediction.vpin.high bloqueia novas entradas; saídas continuam. Não é probabilidade de verdade. 0 = aquecendo.">VPIN</label>

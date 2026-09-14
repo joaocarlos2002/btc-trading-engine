@@ -247,6 +247,15 @@ public class Config {
     public static long getDerivativesBasisPollSeconds() { return Long.parseLong(getProperty("derivatives.basis.poll.seconds", "5")); }
     public static long getDerivativesStaleSeconds() { return Long.parseLong(getProperty("derivatives.stale.seconds", "300")); }
     public static long getOpenInterestChangeMinutes() { return Long.parseLong(getProperty("derivatives.open.interest.change.minutes", "60")); }
+    public static String getBinanceDataUrl() { return getProperty("binance.data.url", "https://data.binance.vision"); }
+
+    /** Blank means a folder under java.io.tmpdir, so a fresh checkout needs no setup. */
+    public static java.nio.file.Path getMetricsCacheDir() {
+        String dir = getProperty("derivatives.metrics.cache.dir", "");
+        return dir.isBlank()
+                ? java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), "btc-trading-engine", "metrics")
+                : java.nio.file.Path.of(dir);
+    }
 
     public static String getDbUrl() {
         return getProperty("db.url", "jdbc:postgresql://localhost:5432/btc-trading-engine_btc");
