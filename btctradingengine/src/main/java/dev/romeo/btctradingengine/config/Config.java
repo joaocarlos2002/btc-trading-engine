@@ -73,6 +73,10 @@ public class Config {
     public static int getEmaSlopePeriods() { return Integer.parseInt(getProperty("indicator.ema.slope.periods", "15")); }
     public static int getVpinBuckets() { return Integer.parseInt(getProperty("indicator.vpin.buckets", "50")); }
     public static int getVpinBucketCandles() { return Integer.parseInt(getProperty("indicator.vpin.bucket.candles", "20")); }
+    public static BigDecimal getAbsorptionDeltaMin() { return getDecimal("feature.absorption.delta.min", "0.3"); }
+    public static BigDecimal getAbsorptionVolumeRatioMin() { return getDecimal("feature.absorption.volume.ratio.min", "1.5"); }
+    public static BigDecimal getAbsorptionMaxMoveAtr() { return getDecimal("feature.absorption.max.move.atr", "0.25"); }
+    public static int getAbsorptionWindow() { return Integer.parseInt(getProperty("feature.absorption.window", "15")); }
     public static BigDecimal getLargeTradeNotional() { return getDecimal("feature.flow.large.trade.notional", "100000"); }
 
     public static BigDecimal getDecimal(String key, String defaultValue) {
@@ -147,6 +151,13 @@ public class Config {
         requirePositive("indicator.ema.slope.periods", getEmaSlopePeriods());
         requirePositive("indicator.vpin.buckets", getVpinBuckets());
         requirePositive("indicator.vpin.bucket.candles", getVpinBucketCandles());
+        requirePositive("feature.absorption.window", getAbsorptionWindow());
+        if (getAbsorptionDeltaMin().compareTo(BigDecimal.ZERO) <= 0 || getAbsorptionDeltaMin().compareTo(BigDecimal.ONE) > 0) {
+            throw new IllegalArgumentException("feature.absorption.delta.min must be in (0, 1]");
+        }
+        if (getAbsorptionVolumeRatioMin().compareTo(BigDecimal.ZERO) <= 0 || getAbsorptionMaxMoveAtr().compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException("feature.absorption.volume.ratio.min must be positive and max.move.atr non-negative");
+        }
         if (getVpinHighThreshold().compareTo(BigDecimal.ZERO) <= 0 || getVpinHighThreshold().compareTo(BigDecimal.ONE) > 0) {
             throw new IllegalArgumentException("prediction.vpin.high must be in (0, 1]");
         }

@@ -24,7 +24,9 @@ public record IndicatorPeriods(
         VwapAnchor vwapAnchor, int vwapRollingPeriods,
         int priceActionLookback, int priceActionSwingStrength,
         int cvd, int emaSlope,
-        int vpinBuckets, int vpinBucketCandles
+        int vpinBuckets, int vpinBucketCandles,
+        BigDecimal absorptionDeltaMin, BigDecimal absorptionVolumeRatioMin,
+        BigDecimal absorptionMaxMoveAtr, int absorptionWindow
 ) {
 
     public static IndicatorPeriods fromConfig() {
@@ -37,7 +39,9 @@ public record IndicatorPeriods(
                 Config.getVwapAnchor(), Config.getVwapRollingPeriods(),
                 Config.getPriceActionLookback(), Config.getPriceActionSwingStrength(),
                 Config.getCvdPeriod(), Config.getEmaSlopePeriods(),
-                Config.getVpinBuckets(), Config.getVpinBucketCandles());
+                Config.getVpinBuckets(), Config.getVpinBucketCandles(),
+                Config.getAbsorptionDeltaMin(), Config.getAbsorptionVolumeRatioMin(),
+                Config.getAbsorptionMaxMoveAtr(), Config.getAbsorptionWindow());
     }
 
     /** Overrides only the three periods the short FeatureExtractor constructor takes. */
@@ -51,6 +55,8 @@ public record IndicatorPeriods(
                 vwapAnchor, vwapRollingPeriods,
                 priceActionLookback, priceActionSwingStrength,
                 cvd, emaSlope,
-                vpinBuckets, vpinBucketCandles);
+                vpinBuckets, vpinBucketCandles,
+                absorptionDeltaMin, absorptionVolumeRatioMin,
+                absorptionMaxMoveAtr, absorptionWindow);
     }
 }
