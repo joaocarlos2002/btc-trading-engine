@@ -16,6 +16,7 @@ public record PredictionVector(
         BigDecimal price,           // PreÃ§o no momento
         String modelVersion,        // "rules-v1", "rules-v2", etc
         MarketRegime marketRegime,  // regime the decision was made in (issue #7)
+        boolean entryAllowed,       // false when VPIN blocks NEW entries; exits still apply (issue #13)
         String reason               // ExplicaÃ§Ã£o legÃ­vel da decisÃ£o
 ) {
 
@@ -62,6 +63,7 @@ public record PredictionVector(
         private BigDecimal price;
         private String modelVersion;
         private MarketRegime marketRegime = MarketRegime.UNKNOWN;
+        private boolean entryAllowed = true;
         private String reason;
 
         public Builder instrument(String instrument) { this.instrument = instrument; return this; }
@@ -73,13 +75,14 @@ public record PredictionVector(
         public Builder price(BigDecimal price) { this.price = price; return this; }
         public Builder modelVersion(String modelVersion) { this.modelVersion = modelVersion; return this; }
         public Builder marketRegime(MarketRegime marketRegime) { this.marketRegime = marketRegime; return this; }
+        public Builder entryAllowed(boolean entryAllowed) { this.entryAllowed = entryAllowed; return this; }
         public Builder reason(String reason) { this.reason = reason; return this; }
 
         public PredictionVector build() {
             return new PredictionVector(
                     instrument, timestamp,
                     signal, probabilityUp, probabilityDown, confidence,
-                    price, modelVersion, marketRegime, reason
+                    price, modelVersion, marketRegime, entryAllowed, reason
             );
         }
     }

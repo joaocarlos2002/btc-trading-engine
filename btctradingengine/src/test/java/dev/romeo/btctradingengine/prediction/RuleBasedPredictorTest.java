@@ -225,6 +225,30 @@ public class RuleBasedPredictorTest {
         assertEquals(0, prediction.confidence().compareTo(new BigDecimal("0.650")));
     }
 
+    @Test
+    public void highVpinBlocksEntriesWithoutErasingTheSignal() {
+        List<PredictionVector> predictions = new ArrayList<>();
+        RuleBasedPredictor predictor = new RuleBasedPredictor(predictions::add, 0.28, -0.28, 2,
+                new MarketRegimeClassifier(new BigDecimal("20"), new BigDecimal("25"), new BigDecimal("0.5")),
+                false, new VpinEntryGuard(true, new BigDecimal("0.35")));
+        predictor.addRule(new RsiRule());
+
+        FeatureVector toxic = FeatureVector.builder()
+                .instrument("BTC/USD").timestamp(Instant.now())
+                .rsiValue(new BigDecimal("25"))
+                .vpin(new BigDecimal("0.5"))
+                .price(new BigDecimal("100")).tickCount(40)
+                .build();
+        predictor.onEvent(toxic);
+        predictor.onEvent(toxic);
+
+        PredictionVector prediction = predictions.get(1);
+        // the BUY survives so it can still close an open SELL on reversal; only opening is blocked
+        assertEquals(Signal.BUY, prediction.signal());
+        assertFalse(prediction.entryAllowed());
+        assertTrue(prediction.reason().contains("VPIN"));
+    }
+
     private RuleBasedPredictor gatedPredictor(PredictionEventListener listener, boolean gatingEnabled) {
         return new RuleBasedPredictor(listener, 0.28, -0.28, 2,
                 new MarketRegimeClassifier(new BigDecimal("20"), new BigDecimal("25"), new BigDecimal("0.5")),

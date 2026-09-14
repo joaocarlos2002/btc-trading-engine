@@ -65,7 +65,8 @@ public class BacktestEngine {
             }
         }
 
-        if (!closedByRisk && signal == Signal.BUY && !openTrade.isPresent()) {
+        // entryAllowed only gates opening: the reversal close above already ran, as in PositionManager
+        if (!closedByRisk && signal == Signal.BUY && !openTrade.isPresent() && prediction.entryAllowed()) {
             Trade trade = new Trade(
                     String.format("TRADE_%d", tradeCounter.incrementAndGet()),
                     Signal.BUY,
@@ -75,7 +76,7 @@ public class BacktestEngine {
             openTrade = Optional.of(trade);
             logger.debug("BUY signal: entered at {}", candle.close());
 
-        } else if (!closedByRisk && signal == Signal.SELL && !openTrade.isPresent()) {
+        } else if (!closedByRisk && signal == Signal.SELL && !openTrade.isPresent() && prediction.entryAllowed()) {
             Trade trade = new Trade(
                     String.format("TRADE_%d", tradeCounter.incrementAndGet()),
                     Signal.SELL,
