@@ -165,6 +165,13 @@ public class Config {
         requirePositive("derivatives.basis.poll.seconds", getDerivativesBasisPollSeconds());
         requirePositive("derivatives.stale.seconds", getDerivativesStaleSeconds());
         requirePositive("derivatives.open.interest.change.minutes", getOpenInterestChangeMinutes());
+        requirePositive("orderbook.poll.seconds", getOrderBookPollSeconds());
+        if (!java.util.Set.of(5, 10, 20, 50, 100, 500, 1000, 5000).contains(getOrderBookDepthLevels())) {
+            throw new IllegalArgumentException("orderbook.depth.levels must be one of 5, 10, 20, 50, 100, 500, 1000, 5000");
+        }
+        if (getOrderBookBuyMin().compareTo(getOrderBookSellMax()) >= 0) {
+            throw new IllegalArgumentException("prediction.orderbook.buy.min must be lower than prediction.orderbook.sell.max");
+        }
         if (getLargeTradeNotional().compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("feature.flow.large.trade.notional must be positive");
         }
@@ -264,6 +271,15 @@ public class Config {
                 ? java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), "btc-trading-engine", "aggtrades")
                 : java.nio.file.Path.of(dir);
     }
+
+    // Order book (issue #10): mainnet by default, the testnet book is synthetic.
+    public static boolean isOrderBookEnabled() { return Boolean.parseBoolean(getProperty("orderbook.enabled", "true")); }
+    public static String getOrderBookRestUrl() { return getProperty("orderbook.rest.url", "https://api.binance.com"); }
+    public static long getOrderBookPollSeconds() { return Long.parseLong(getProperty("orderbook.poll.seconds", "5")); }
+    public static int getOrderBookDepthLevels() { return Integer.parseInt(getProperty("orderbook.depth.levels", "100")); }
+    public static boolean isOrderBookFilterEnabled() { return Boolean.parseBoolean(getProperty("prediction.orderbook.filter.enabled", "false")); }
+    public static BigDecimal getOrderBookBuyMin() { return getDecimal("prediction.orderbook.buy.min", "0.35"); }
+    public static BigDecimal getOrderBookSellMax() { return getDecimal("prediction.orderbook.sell.max", "0.65"); }
 
     public static String getDbUrl() {
         return getProperty("db.url", "jdbc:postgresql://localhost:5432/btc-trading-engine_btc");
