@@ -79,8 +79,6 @@ Fluxo resumido:
 3. **Fechamento do candle.** O `FeatureExtractor` gera um `FeatureVector`; o `RuleBasedPredictor` gera um `PredictionVector`; o `PositionManager` decide saída, reversão e entrada.
 4. **Backtest.** `GET /api/backtest` baixa candles 1m da Mainnet, passa pelo mesmo `FeatureExtractor` e `RuleBasedPredictor` e simula as operações em `BacktestEngine`.
 
-Detalhes em [docs/ARQUITETURA.md](docs/ARQUITETURA.md).
-
 ## Estrutura de pastas
 
 ```text
@@ -178,7 +176,7 @@ Variáveis de ambiente lidas pelo código (têm precedência sobre o arquivo):
 | `btc-trading-engine_BINANCE_API_SECRET` | `binance.api.secret` |
 | `btc-trading-engine_ALERT_DISCORD_WEBHOOK_URL` | `alert.discord.webhook.url` |
 
-O hífen torna esses nomes impossíveis de exportar em bash/zsh (`export` recusa). No Linux, use `env 'btc-trading-engine_DB_PASSWORD=...' mvn ...`; no PowerShell, `[Environment]::SetEnvironmentVariable(...)`. A correção proposta está em [docs/AUDITORIA.md](docs/AUDITORIA.md) (item A6).
+O hífen torna esses nomes impossíveis de exportar em bash/zsh (`export` recusa). No Linux, use `env 'btc-trading-engine_DB_PASSWORD=...' mvn ...`; no PowerShell, `[Environment]::SetEnvironmentVariable(...)`.
 
 ### 3. Subir o PostgreSQL
 
@@ -200,7 +198,7 @@ mvn spring-boot:run -Dspring-boot.run.main-class=dev.romeo.btctradingengine.Main
 
 - Dashboard: <http://localhost:8080>
 - Backtest: <http://localhost:8080/backtest.html>
-- API REST: <http://localhost:8080/api/...> (ver [docs/API.md](docs/API.md))
+- API REST: <http://localhost:8080/api/...>
 
 > Não use `java -jar target/*.jar` por enquanto. O `spring-boot-maven-plugin` não declara `mainClass`, e o único `public static void main` do projeto é o de `DashboardApplication`: o jar sobe só o dashboard, sem o pipeline de dados.
 
@@ -234,8 +232,6 @@ Para operar de verdade:
 3. Para Mainnet, também `binance.rest.url=https://api.binance.com`, `binance.ws.url=wss://stream.binance.com:9443/ws/` e `trading.confirm.mainnet=true`. Sem essa confirmação a aplicação não sobe.
 4. Saldo USDT positivo. Cada entrada usa **50% do saldo USDT**.
 
-> Antes de habilitar, corrija os itens **C1 a C5** e **A1 a A3** de [docs/AUDITORIA.md](docs/AUDITORIA.md). Entre eles: a confirmação de ordem zera a quantidade da posição (a saída real nunca é enviada), a reconciliação não recupera a quantidade após reinício, os endpoints de ordem manual não têm autenticação e um sinal SELL no spot tenta vender BTC que o bot não tem.
-
 ## Testes e CI
 
 ```bash
@@ -244,24 +240,6 @@ mvn test
 ```
 
 GitHub Actions em PRs para `main` e `dev`: `build.yml` (`mvn clean package -DskipTests`) e `test.yml` (`mvn test`), ambos com Temurin 25. O `qodana_code_quality.yml` roda em PRs e em pushes para `main`/`develop`.
-
-## Documentação detalhada
-
-| Arquivo | Conteúdo |
-| :--- | :--- |
-| [docs/ARQUITETURA.md](docs/ARQUITETURA.md) | Componentes, threads, sequência de partida, fluxos de dados |
-| [docs/REGRAS_NEGOCIO_DADOS.md](docs/REGRAS_NEGOCIO_DADOS.md) | Ingestão, agregação de candles, aquecimento, derivativos, order book |
-| [docs/REGRAS_NEGOCIO_PREDICAO.md](docs/REGRAS_NEGOCIO_PREDICAO.md) | Regras, score, confirmação, filtros, regime e guardas |
-| [docs/REGRAS_NEGOCIO_TRADING.md](docs/REGRAS_NEGOCIO_TRADING.md) | Posições, alvo/stop, reversão, execução real, reconciliação, riscos |
-| [docs/REGRAS_NEGOCIO_BACKTEST.md](docs/REGRAS_NEGOCIO_BACKTEST.md) | Motor de backtest e diferenças em relação ao ao vivo |
-| [docs/INDICADORES_TECNICOS.md](docs/INDICADORES_TECNICOS.md) | Fórmulas de SMA, EMA, RSI, ATR, MACD, ADX, Bollinger, VWAP, MFI, Donchian |
-| [docs/INDICADORES_FLUXO_DERIVATIVOS_PRICE_ACTION.md](docs/INDICADORES_FLUXO_DERIVATIVOS_PRICE_ACTION.md) | CVD, VPIN, absorção, order book, derivativos, price action, features básicas |
-| [docs/METRICAS_DESEMPENHO.md](docs/METRICAS_DESEMPENHO.md) | KPIs do backtest, do dashboard, do relatório de testnet e do portfólio |
-| [docs/API.md](docs/API.md) | Endpoints REST e mensagens WebSocket |
-| [docs/BANCO_DE_DADOS.md](docs/BANCO_DE_DADOS.md) | Tabelas, índices, escrita e leitura |
-| [docs/CONFIGURACAO.md](docs/CONFIGURACAO.md) | Todas as propriedades, padrões e validações |
-| [docs/AUDITORIA.md](docs/AUDITORIA.md) | Bugs, falhas de segurança e gargalos, com correções |
-| [docs/RECOMENDACOES_TECNOLOGICAS.md](docs/RECOMENDACOES_TECNOLOGICAS.md) | Tecnologias e padrões sugeridos para as próximas fases |
 
 ## Limitações conhecidas
 
