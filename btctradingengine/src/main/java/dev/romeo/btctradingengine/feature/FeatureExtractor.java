@@ -49,6 +49,7 @@ public class FeatureExtractor implements CandleEventListener {
     private final Vpin vpin;
     private final Absorption absorption;
     private final DerivativesLookup derivatives;
+    private final OrderBookLookup orderBook;
     private final Deque<BigDecimal> emaHistory = new ArrayDeque<>();
     private final int emaSlopePeriods;
     private final FeatureEventListener listener;
@@ -67,7 +68,14 @@ public class FeatureExtractor implements CandleEventListener {
 
     /** Derivatives do not come out of the candle stream, so they are looked up per candle. */
     public FeatureExtractor(IndicatorPeriods periods, DerivativesLookup derivatives, FeatureEventListener listener) {
+        this(periods, derivatives, OrderBookLookup.NONE, listener);
+    }
+
+    /** The order book is also polled outside the candle stream (issue #10), so it is looked up per candle too. */
+    public FeatureExtractor(IndicatorPeriods periods, DerivativesLookup derivatives, OrderBookLookup orderBook,
+                            FeatureEventListener listener) {
         this.derivatives = Objects.requireNonNull(derivatives, "derivatives");
+        this.orderBook = Objects.requireNonNull(orderBook, "orderBook");
         this.smaIncremental = new SmaIncremental(periods.sma());
         this.emaIncremental = new Ema(periods.ema());
         this.rsiIncremental = new Rsi(periods.rsi());
@@ -178,6 +186,7 @@ public class FeatureExtractor implements CandleEventListener {
                 .vpin(vpinValue)
                 .absorption(absorptionValue.strength())
                 .absorptionSum(absorptionValue.windowSum())
+                .orderBookImbalance(orderBook.imbalanceFor(candle))
 
                 .priceAction(PriceActionFeatures.from(priceActionValue))
                 .deriv(derivatives.featuresFor(candle))
