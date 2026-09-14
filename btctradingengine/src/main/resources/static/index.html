@@ -591,7 +591,7 @@ footer{
   <div class="row">
     <div class="panel">
       <div class="panel-head">
-        <h3>Technical features · 43</h3>
+        <h3>Technical features · 45</h3>
         <span class="meta" id="lastUpdate">—</span>
       </div>
       <div class="metrics">
@@ -758,6 +758,14 @@ footer{
         <div class="metric">
           <label data-tip="VPIN aproximado: desequilíbrio médio entre compra e venda agressora em baldes de volume (cada balde ≈ 20 min de volume médio, últimos 50). Perto de 1 = fluxo muito unilateral (tóxico). Com prediction.vpin.filter.enabled, a partir de prediction.vpin.high bloqueia novas entradas; saídas continuam. Não é probabilidade de verdade. 0 = aquecendo.">VPIN</label>
           <b id="vpin">—</b><small>0 — 1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Absorção na vela: agressão forte de um lado com o preço sem se mover. Positivo = venda agressora absorvida (compradores passivos segurando o preço, viés de alta); negativo = compra agressora absorvida (viés de baixa). 0 = sem absorção. Inferido só pelos trades, sem order book.">Absorption</label>
+          <b id="absorption">—</b><small>−1 — 1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Soma da absorção nas últimas feature.absorption.window velas. Absorção repetida no mesmo lado é mais relevante que um evento isolado.">Absorp. sum</label>
+          <b id="absorptionSum">—</b><small>window</small>
         </div>
         <div class="metric">
           <label data-tip="Hora do dia em UTC. Útil para identificar sessões mais voláteis (Ásia, Europa, EUA).">Hour</label>
@@ -1183,7 +1191,7 @@ function renderMetrics(m){
    'donchianPosition',
    'bodyRatio','upperWickRatio','lowerWickRatio','recentHighDistance','recentLowDistance',
    'supportDistance','resistanceDistance',
-   'deltaRatio','cvd','cvdRatio','largeCvd','largeVolumeShare','vpin'].forEach(id => text(id, fmt(f[id])));
+   'deltaRatio','cvd','cvdRatio','largeCvd','largeVolumeShare','vpin','absorption','absorptionSum'].forEach(id => text(id, fmt(f[id])));
   // Derivatives are null (not 0) when unavailable; fmt already renders null as —
   text('fundingRate', f.fundingRate == null ? '—' : `${fmt(f.fundingRate * 100, 4)}%`);
   text('basisPercent', fmt(f.basisPercent, 4));
