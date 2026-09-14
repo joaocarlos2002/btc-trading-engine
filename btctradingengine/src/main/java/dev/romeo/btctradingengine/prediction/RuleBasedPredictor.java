@@ -30,7 +30,7 @@ public class RuleBasedPredictor implements FeatureEventListener {
     private final int confirmationSnapshots;
     private final MarketRegimeClassifier regimeClassifier;
     private final boolean regimeGatingEnabled;
-    private final VpinEntryGuard vpinGuard;
+    private final EntryGuard entryGuard;
 
     // Estado para confirmaÃ§Ã£o temporal
     private Signal lastSignal = Signal.HOLD;
@@ -38,13 +38,14 @@ public class RuleBasedPredictor implements FeatureEventListener {
 
     public RuleBasedPredictor(PredictionEventListener listener) {
         this(listener, Config.getBuyThreshold(), Config.getSellThreshold(), Config.getConfirmationSnapshots(),
-                MarketRegimeClassifier.fromConfig(), Config.isRegimeGatingEnabled(), VpinEntryGuard.fromConfig());
+                MarketRegimeClassifier.fromConfig(), Config.isRegimeGatingEnabled(),
+                EntryGuard.allOf(VpinEntryGuard.fromConfig(), OrderBookEntryGuard.fromConfig()));
     }
 
     /** Allows overriding the entry threshold/confirmation without touching global Config - used by on-demand backtests. */
     public RuleBasedPredictor(PredictionEventListener listener, double buyThreshold, double sellThreshold, int confirmationSnapshots) {
         this(listener, buyThreshold, sellThreshold, confirmationSnapshots, MarketRegimeClassifier.fromConfig(), false,
-                VpinEntryGuard.disabled());
+                EntryGuard.NONE);
     }
 
     /**
@@ -55,18 +56,18 @@ public class RuleBasedPredictor implements FeatureEventListener {
                               int confirmationSnapshots, MarketRegimeClassifier regimeClassifier,
                               boolean regimeGatingEnabled) {
         this(listener, buyThreshold, sellThreshold, confirmationSnapshots, regimeClassifier, regimeGatingEnabled,
-                VpinEntryGuard.disabled());
+                EntryGuard.NONE);
     }
 
     /**
-     * vpinGuard marks the prediction as "no new entries" instead of turning it into HOLD: the same
-     * prediction also closes an opposite position on signal reversal, and toxic flow is exactly when
-     * that exit must still go through (issue #13).
+     * entryGuard (VPIN, order book) marks the prediction as "no new entries" instead of turning it into
+     * HOLD: the same prediction also closes an opposite position on signal reversal, and a bad moment
+     * to enter is exactly when that exit must still go through (issues #13 and #10).
      */
     public RuleBasedPredictor(PredictionEventListener listener, double buyThreshold, double sellThreshold,
                               int confirmationSnapshots, MarketRegimeClassifier regimeClassifier,
-                              boolean regimeGatingEnabled, VpinEntryGuard vpinGuard) {
-        this.vpinGuard = vpinGuard;
+                              boolean regimeGatingEnabled, EntryGuard entryGuard) {
+        this.entryGuard = entryGuard;
         this.regimeClassifier = regimeClassifier;
         this.regimeGatingEnabled = regimeGatingEnabled;
         this.rules = new ArrayList<>();
@@ -142,9 +143,11 @@ public class RuleBasedPredictor implements FeatureEventListener {
             finalSignal = Signal.HOLD;
         }
 
-        boolean entryAllowed = !vpinGuard.blocksEntry(features);
-        if (!entryAllowed && finalSignal != Signal.HOLD) {
-            confirmationStatus += String.format(" [new entries blocked: VPIN=%s]", features.flow().vpin());
+        // Guards are directional (the order book one is), so they only have something to judge on BUY/SELL
+        String entryBlockReason = finalSignal == Signal.HOLD ? null : entryGuard.blockReason(features, finalSignal);
+        boolean entryAllowed = entryBlockReason == null;
+        if (!entryAllowed) {
+            confirmationStatus += " [new entries blocked: " + entryBlockReason + "]";
         }
 
         return PredictionVector.builder()
