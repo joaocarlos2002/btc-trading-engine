@@ -1,5 +1,6 @@
 package dev.romeo.btctradingengine.dashboard;
 
+import dev.romeo.btctradingengine.adapter.BinanceAggTradeArchive;
 import dev.romeo.btctradingengine.adapter.BinanceKlineClient;
 import dev.romeo.btctradingengine.backtest.BacktestParams;
 import dev.romeo.btctradingengine.backtest.BacktestReport;
@@ -24,6 +25,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -37,9 +39,42 @@ public class DashboardController {
     private final BinanceKlineClient futuresKlineClient = BinanceKlineClient.usdmFutures();
     private final BinanceFuturesClient futuresClient = new BinanceFuturesClient();
     private final BinanceMetricsArchive metricsArchive = new BinanceMetricsArchive();
+    private final BinanceAggTradeArchive aggTradeArchive = new BinanceAggTradeArchive();
 
     public DashboardController(DashboardState state) {
         this.state = state;
+    }
+
+    /**
+     * Replaces each candle's kline flow (taker split only) with flow rebuilt from the aggTrades dumps,
+     * so the size split exists in the backtest (issue #51). Minutes without a dump keep their kline
+     * flow, and a failure returns the candles unchanged instead of failing the request.
+     */
+    private List<CandleEvent> withTradeSizeSplit(List<CandleEvent> candles) {
+        try {
+            LocalDate from = candles.get(0).openTime().atZone(ZoneOffset.UTC).toLocalDate();
+            LocalDate to = candles.get(candles.size() - 1).closeTime().atZone(ZoneOffset.UTC).toLocalDate();
+            Map<java.time.Instant, BinanceAggTradeArchive.SizeBuckets> buckets =
+                    aggTradeArchive.load(Config.getMarketSymbol(), from, to);
+            BigDecimal largeTradeNotional = Config.getLargeTradeNotional();
+
+            List<CandleEvent> merged = new ArrayList<>(candles.size());
+            for (CandleEvent candle : candles) {
+                BinanceAggTradeArchive.SizeBuckets candleBuckets = buckets.get(candle.openTime());
+                merged.add(candleBuckets == null ? candle : new CandleEvent(
+                        candle.instrument(), candle.openTime(), candle.closeTime(),
+                        candle.open(), candle.high(), candle.low(), candle.close(),
+                        candle.volume(), candle.tickCount(), candleBuckets.toTradeFlow(largeTradeNotional)));
+            }
+            return merged;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("Interrupted loading aggTrades for the backtest size split");
+            return candles;
+        } catch (Exception e) {
+            logger.warn("Could not load aggTrades for the backtest size split, continuing with kline flow: {}", e.getMessage());
+            return candles;
+        }
     }
 
     /**
@@ -134,6 +169,7 @@ public class DashboardController {
     @GetMapping("/backtest")
     public ResponseEntity<?> backtest(
             @RequestParam(defaultValue = "30") int days,
+            @RequestParam(defaultValue = "false") boolean sizeSplit,
             @RequestParam(required = false) Integer smaPeriod,
             @RequestParam(required = false) Integer emaPeriod,
             @RequestParam(required = false) Integer rsiPeriod,
@@ -254,6 +290,9 @@ public class DashboardController {
                     stopLossPercent != null ? stopLossPercent : defaults.stopLossPercent(),
                     commissionRate != null ? commissionRate : defaults.commissionRate());
 
+            if (sizeSplit) {
+                candles = withTradeSizeSplit(candles);
+            }
             DerivativesHistory derivatives = loadBacktestDerivatives(candles, clampedDays);
             BacktestReport report = new BacktestRunner().run(candles, Config.getTradingInitialCapital(), params, derivatives);
             return ResponseEntity.ok(Map.of(
@@ -265,6 +304,7 @@ public class DashboardController {
                     "rangeEnd", candles.get(candles.size() - 1).closeTime(),
                     "params", params,
                     "derivativesLoaded", !derivatives.isEmpty(),
+                    "sizeSplitCandles", BinanceAggTradeArchive.candlesWithSizeSplit(candles),
                     "report", report
             ));
         } catch (Exception e) {

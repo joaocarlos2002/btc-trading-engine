@@ -10,7 +10,8 @@ import java.math.BigDecimal;
  * <ul>
  *   <li>NONE: no aggressor data at all, every volume is 0 and must be ignored</li>
  *   <li>KLINE: Binance klines give the taker buy volume but no trade sizes, so large* is 0</li>
- *   <li>TRADES: built from live aggTrades, both the side and the size split are known</li>
+ *   <li>TRADES: built from aggTrades (live, or the daily dumps in backtests), both the side and the
+ *       size split are known</li>
  * </ul>
  */
 public record TradeFlow(
