@@ -9,7 +9,8 @@ import java.math.BigDecimal;
  * The delta/CVD fields (issue #11) split volume by aggressor side and have no rule yet: wiring one
  * into the score average would change its denominator and require re-running the backtest sweep.
  * The taker split comes from klines in backtests and warmup, and from aggTrades live. The size split
- * (largeCvd, largeVolumeShare) only exists live and is 0 everywhere else.
+ * (largeCvd, largeVolumeShare) needs trade sizes: live it always exists, in backtests only with
+ * /backtest?sizeSplit=true (issue #51), and it is 0 otherwise.
  *
  * VPIN (issue #13) is not directional either: it only gates new entries, see VpinEntryGuard.
  * Absorption (issue #12) is directional but has no rule yet, for the same reason as the CVD fields.
@@ -28,8 +29,8 @@ public record FlowFeatures(
         BigDecimal deltaRatio,            // volumeDelta / taker volume of the candle [-1, 1]
         BigDecimal cvd,                   // sum of volumeDelta over the CVD window (base units)
         BigDecimal cvdRatio,              // cvd / taker volume of the window [-1, 1]
-        BigDecimal largeCvd,              // cvd of large trades only (live only)
-        BigDecimal largeVolumeShare,      // large trade volume / taker volume of the window [0-1] (live only)
+        BigDecimal largeCvd,              // cvd of large trades only (needs trade sizes)
+        BigDecimal largeVolumeShare,      // large trade volume / taker volume of the window [0-1] (needs trade sizes)
         BigDecimal vpin,                  // approximate VPIN [0-1], 0 while warming up
         BigDecimal absorption,            // candle absorption [-1, 1]: + buy absorption, - sell absorption
         BigDecimal absorptionSum          // absorption summed over feature.absorption.window candles

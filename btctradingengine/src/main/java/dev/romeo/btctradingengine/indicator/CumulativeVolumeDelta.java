@@ -19,8 +19,8 @@ import java.util.Deque;
  * window, in [-1, 1] - is the number that stays comparable across regimes.
  *
  * Candles without flow data contribute neither delta nor volume, so a gap does not dilute the ratio
- * as if flow had been balanced. The size split only accumulates candles built from live trades
- * (klines carry no trade sizes), which is why largeCvd and largeVolumeShare stay 0 in backtests.
+ * as if flow had been balanced. The size split only accumulates candles built from trades - live, or
+ * the aggTrades dumps with /backtest?sizeSplit=true - since klines carry no trade sizes.
  *
  * Always returns a value: every field is a sum over whatever part of the window has been seen.
  */
