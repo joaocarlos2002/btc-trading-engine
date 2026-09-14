@@ -154,6 +154,11 @@ public class PositionManager {
                         connectivityGuard.get().getUnhealthyReason(), prediction.signal());
                 return;
             }
+            if (!prediction.entryAllowed()) {
+                // Only new entries: the reversal close above has already run for this prediction
+                logger.info("Toxic order flow (VPIN) - blocking new {} entry", prediction.signal());
+                return;
+            }
             openNewPosition(prediction, candle);
         }
     }

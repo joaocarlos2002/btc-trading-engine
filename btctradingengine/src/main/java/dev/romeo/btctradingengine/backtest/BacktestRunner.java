@@ -6,6 +6,7 @@ import dev.romeo.btctradingengine.feature.FeatureExtractor;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.prediction.MarketRegimeClassifier;
 import dev.romeo.btctradingengine.prediction.RuleBasedPredictor;
+import dev.romeo.btctradingengine.prediction.VpinEntryGuard;
 import dev.romeo.btctradingengine.prediction.rules.AdxRegimeRule;
 import dev.romeo.btctradingengine.prediction.rules.AtrRule;
 import dev.romeo.btctradingengine.prediction.rules.MacdRule;
@@ -47,7 +48,8 @@ public class BacktestRunner {
                 prediction -> engine.processPrediction(prediction, currentCandle[0]),
                 params.buyThreshold(), params.sellThreshold(), params.confirmationSnapshots(),
                 new MarketRegimeClassifier(params.adxTrendMin(), params.adxTrendStrong(), params.bollingerSqueezeThreshold()),
-                params.regimeGatingEnabled());
+                params.regimeGatingEnabled(),
+                new VpinEntryGuard(params.vpinFilterEnabled(), params.vpinHighThreshold()));
         predictor.addRule(new RsiRule(params.rsiOversold(), params.rsiNeutralLow(), params.rsiNeutralHigh(), params.rsiOverbought()));
         predictor.addRule(new SmaMomentumRule(params.smaDistanceExtreme(), params.smaDistanceModerate()));
         predictor.addRule(new MacdRule(params.macdStrongHistogramAtrRatio()));

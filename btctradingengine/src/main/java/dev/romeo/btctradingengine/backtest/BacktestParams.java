@@ -38,6 +38,8 @@ public record BacktestParams(
         int priceActionSwingStrength,
         int cvdPeriod,
         int emaSlopePeriods,
+        int vpinBuckets,
+        int vpinBucketCandles,
 
         BigDecimal rsiOversold,
         BigDecimal rsiNeutralLow,
@@ -58,6 +60,8 @@ public record BacktestParams(
         BigDecimal bollingerSqueezeThreshold,
         BigDecimal adxTrendStrong,
         boolean regimeGatingEnabled,
+        boolean vpinFilterEnabled,
+        BigDecimal vpinHighThreshold,
 
         double buyThreshold,
         double sellThreshold,
@@ -90,6 +94,8 @@ public record BacktestParams(
                 Config.getPriceActionSwingStrength(),
                 Config.getCvdPeriod(),
                 Config.getEmaSlopePeriods(),
+                Config.getVpinBuckets(),
+                Config.getVpinBucketCandles(),
 
                 Config.getRsiOversold(),
                 Config.getRsiNeutralLow(),
@@ -110,6 +116,8 @@ public record BacktestParams(
                 Config.getBollingerSqueezeThreshold(),
                 Config.getAdxTrendStrong(),
                 Config.isRegimeGatingEnabled(),
+                Config.isVpinFilterEnabled(),
+                Config.getVpinHighThreshold(),
 
                 Config.getBuyThreshold(),
                 Config.getSellThreshold(),
@@ -130,6 +138,7 @@ public record BacktestParams(
                 mfiPeriod, donchianPeriod,
                 vwapAnchor, vwapRollingPeriods,
                 priceActionLookback, priceActionSwingStrength,
-                cvdPeriod, emaSlopePeriods);
+                cvdPeriod, emaSlopePeriods,
+                vpinBuckets, vpinBucketCandles);
     }
 }
