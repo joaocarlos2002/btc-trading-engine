@@ -1,6 +1,7 @@
 package dev.romeo.btctradingengine.feature;
 
 import dev.romeo.btctradingengine.adapter.CandleEventListener;
+import dev.romeo.btctradingengine.indicator.Absorption;
 import dev.romeo.btctradingengine.indicator.AdxIndicator;
 import dev.romeo.btctradingengine.indicator.AtrIndicator;
 import dev.romeo.btctradingengine.indicator.BollingerBands;
@@ -46,6 +47,7 @@ public class FeatureExtractor implements CandleEventListener {
     private final PriceAction priceAction;
     private final CumulativeVolumeDelta cumulativeVolumeDelta;
     private final Vpin vpin;
+    private final Absorption absorption;
     private final DerivativesLookup derivatives;
     private final Deque<BigDecimal> emaHistory = new ArrayDeque<>();
     private final int emaSlopePeriods;
@@ -79,6 +81,8 @@ public class FeatureExtractor implements CandleEventListener {
         this.priceAction = new PriceAction(periods.priceActionLookback(), periods.priceActionSwingStrength());
         this.cumulativeVolumeDelta = new CumulativeVolumeDelta(periods.cvd());
         this.vpin = new Vpin(periods.vpinBuckets(), periods.vpinBucketCandles());
+        this.absorption = new Absorption(periods.absorptionDeltaMin(), periods.absorptionVolumeRatioMin(),
+                periods.absorptionMaxMoveAtr(), periods.absorptionWindow());
         this.emaSlopePeriods = periods.emaSlope();
         this.volatilityShortPeriods = periods.volatilityShort();
         this.volatilityLongPeriods = periods.volatilityLong();
@@ -126,6 +130,8 @@ public class FeatureExtractor implements CandleEventListener {
         var priceActionValue = priceAction.update(candle);
         var cvd = cumulativeVolumeDelta.update(candle);
         BigDecimal vpinValue = vpin.update(candle);
+        BigDecimal volumeRatio = calculateVolumeRatio(candle);
+        var absorptionValue = absorption.update(candle, cvd.deltaRatio(), volumeRatio, atr);
 
         ZonedDateTime zdt = candle.closeTime().atZone(ZoneOffset.UTC);
 
@@ -142,7 +148,7 @@ public class FeatureExtractor implements CandleEventListener {
                 .macdValue(macd.map(MacdIndicator.MacdValue::macd).orElse(BigDecimal.ZERO))
                 .macdSignal(macd.map(MacdIndicator.MacdValue::signal).orElse(BigDecimal.ZERO))
                 .atrValue(atr)
-                .volumeRatio(calculateVolumeRatio(candle))
+                .volumeRatio(volumeRatio)
                 .highLowRatio(calculateHighLowRatio(candle))
                 .closePosition(calculateClosePosition(candle))
                 .hourOfDay(zdt.getHour())
@@ -170,6 +176,8 @@ public class FeatureExtractor implements CandleEventListener {
                 .largeCvd(cvd.largeCvd())
                 .largeVolumeShare(cvd.largeVolumeShare())
                 .vpin(vpinValue)
+                .absorption(absorptionValue.strength())
+                .absorptionSum(absorptionValue.windowSum())
 
                 .priceAction(PriceActionFeatures.from(priceActionValue))
                 .deriv(derivatives.featuresFor(candle))

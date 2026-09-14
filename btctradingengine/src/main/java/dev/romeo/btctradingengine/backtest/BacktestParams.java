@@ -40,6 +40,10 @@ public record BacktestParams(
         int emaSlopePeriods,
         int vpinBuckets,
         int vpinBucketCandles,
+        BigDecimal absorptionDeltaMin,
+        BigDecimal absorptionVolumeRatioMin,
+        BigDecimal absorptionMaxMoveAtr,
+        int absorptionWindow,
 
         BigDecimal rsiOversold,
         BigDecimal rsiNeutralLow,
@@ -96,6 +100,10 @@ public record BacktestParams(
                 Config.getEmaSlopePeriods(),
                 Config.getVpinBuckets(),
                 Config.getVpinBucketCandles(),
+                Config.getAbsorptionDeltaMin(),
+                Config.getAbsorptionVolumeRatioMin(),
+                Config.getAbsorptionMaxMoveAtr(),
+                Config.getAbsorptionWindow(),
 
                 Config.getRsiOversold(),
                 Config.getRsiNeutralLow(),
@@ -139,6 +147,8 @@ public record BacktestParams(
                 vwapAnchor, vwapRollingPeriods,
                 priceActionLookback, priceActionSwingStrength,
                 cvdPeriod, emaSlopePeriods,
-                vpinBuckets, vpinBucketCandles);
+                vpinBuckets, vpinBucketCandles,
+                absorptionDeltaMin, absorptionVolumeRatioMin,
+                absorptionMaxMoveAtr, absorptionWindow);
     }
 }
