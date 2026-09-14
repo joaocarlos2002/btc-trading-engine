@@ -12,6 +12,7 @@ import dev.romeo.btctradingengine.indicator.MfiIndicator;
 import dev.romeo.btctradingengine.indicator.PriceAction;
 import dev.romeo.btctradingengine.indicator.Rsi;
 import dev.romeo.btctradingengine.indicator.SmaIncremental;
+import dev.romeo.btctradingengine.indicator.Vpin;
 import dev.romeo.btctradingengine.indicator.Vwap;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import org.slf4j.Logger;
@@ -44,6 +45,7 @@ public class FeatureExtractor implements CandleEventListener {
     private final DonchianChannel donchianChannel;
     private final PriceAction priceAction;
     private final CumulativeVolumeDelta cumulativeVolumeDelta;
+    private final Vpin vpin;
     private final DerivativesLookup derivatives;
     private final Deque<BigDecimal> emaHistory = new ArrayDeque<>();
     private final int emaSlopePeriods;
@@ -76,6 +78,7 @@ public class FeatureExtractor implements CandleEventListener {
         this.donchianChannel = new DonchianChannel(periods.donchian());
         this.priceAction = new PriceAction(periods.priceActionLookback(), periods.priceActionSwingStrength());
         this.cumulativeVolumeDelta = new CumulativeVolumeDelta(periods.cvd());
+        this.vpin = new Vpin(periods.vpinBuckets(), periods.vpinBucketCandles());
         this.emaSlopePeriods = periods.emaSlope();
         this.volatilityShortPeriods = periods.volatilityShort();
         this.volatilityLongPeriods = periods.volatilityLong();
@@ -122,6 +125,7 @@ public class FeatureExtractor implements CandleEventListener {
         var donchian = donchianChannel.update(candle);
         var priceActionValue = priceAction.update(candle);
         var cvd = cumulativeVolumeDelta.update(candle);
+        BigDecimal vpinValue = vpin.update(candle);
 
         ZonedDateTime zdt = candle.closeTime().atZone(ZoneOffset.UTC);
 
@@ -165,6 +169,7 @@ public class FeatureExtractor implements CandleEventListener {
                 .cvdRatio(cvd.cvdRatio())
                 .largeCvd(cvd.largeCvd())
                 .largeVolumeShare(cvd.largeVolumeShare())
+                .vpin(vpinValue)
 
                 .priceAction(PriceActionFeatures.from(priceActionValue))
                 .deriv(derivatives.featuresFor(candle))

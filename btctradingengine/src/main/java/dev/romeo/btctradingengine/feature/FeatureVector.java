@@ -112,6 +112,7 @@ public record FeatureVector(
         public Builder cvdRatio(BigDecimal cvdRatio) { flow.cvdRatio(cvdRatio); return this; }
         public Builder largeCvd(BigDecimal largeCvd) { flow.largeCvd(largeCvd); return this; }
         public Builder largeVolumeShare(BigDecimal largeVolumeShare) { flow.largeVolumeShare(largeVolumeShare); return this; }
+        public Builder vpin(BigDecimal vpin) { flow.vpin(vpin); return this; }
         public Builder deriv(DerivFeatures deriv) { this.deriv = deriv; return this; }
         public Builder priceAction(PriceActionFeatures priceAction) { this.priceAction = priceAction; return this; }
 
