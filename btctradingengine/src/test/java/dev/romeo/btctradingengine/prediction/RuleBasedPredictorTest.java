@@ -99,8 +99,11 @@ public class RuleBasedPredictorTest {
         predictor.onEvent(features);
 
         assertEquals(2, predictions.size());
-        assertEquals(Signal.HOLD, predictions.get(1).signal(),
-                "A negative filter rule average must veto an otherwise-confirmed BUY");
+        PredictionVector vetoed = predictions.get(1);
+        // The veto blocks opening a position, but the BUY must survive: it is also what closes an open SELL
+        assertEquals(Signal.BUY, vetoed.signal());
+        assertFalse(vetoed.entryAllowed(), "A negative filter rule average must block a new entry");
+        assertTrue(vetoed.reason().contains("filter rules"));
     }
 
     @Test
@@ -118,6 +121,7 @@ public class RuleBasedPredictorTest {
         assertEquals(2, predictions.size());
         assertEquals(Signal.BUY, predictions.get(1).signal(),
                 "A non-negative filter rule average must not block a confirmed BUY");
+        assertTrue(predictions.get(1).entryAllowed());
     }
 
     @Test

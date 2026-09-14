@@ -138,13 +138,16 @@ public class RuleBasedPredictor implements FeatureEventListener {
                     candidateSignal, signalConfirmationCount, confirmationSnapshots);
         }
 
-        if (finalSignal != Signal.HOLD && isVetoedByFilters(features, reasonBuilder)) {
-            confirmationStatus += " [blocked by filter rules]";
-            finalSignal = Signal.HOLD;
+        // A filter veto blocks NEW entries only, exactly like the entry guards. It used to turn the signal
+        // into HOLD, which also swallowed the reversal that closes an opposite position - a position
+        // opened before conditions turned bad then stayed open until target or stop.
+        // Guards are directional (the order book one is), so there is only something to judge on BUY/SELL.
+        String entryBlockReason = null;
+        if (finalSignal != Signal.HOLD) {
+            entryBlockReason = isVetoedByFilters(features, reasonBuilder)
+                    ? "filter rules"
+                    : entryGuard.blockReason(features, finalSignal);
         }
-
-        // Guards are directional (the order book one is), so they only have something to judge on BUY/SELL
-        String entryBlockReason = finalSignal == Signal.HOLD ? null : entryGuard.blockReason(features, finalSignal);
         boolean entryAllowed = entryBlockReason == null;
         if (!entryAllowed) {
             confirmationStatus += " [new entries blocked: " + entryBlockReason + "]";

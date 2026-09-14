@@ -35,6 +35,44 @@ public class BacktestEngineEntryGuardTest {
         assertEquals(1, engine.getClosedTrades().size(), "The reversal exit must still happen");
     }
 
+    @Test
+    public void filterVetoedReversalClosesTheTradeThroughThePredictor() {
+        // End to end with the real predictor: a SELL vetoed by the filters must still close an open BUY
+        BacktestEngine engine = new BacktestEngine(new BigDecimal("0.001"));
+        CandleEvent[] current = new CandleEvent[1];
+        dev.romeo.btctradingengine.prediction.RuleBasedPredictor predictor =
+                new dev.romeo.btctradingengine.prediction.RuleBasedPredictor(
+                        p -> engine.processPrediction(p, current[0]), 0.28, -0.28, 1);
+        predictor.addRule(new dev.romeo.btctradingengine.prediction.rules.RsiRule());
+        double[] filterScore = {0.1};
+        predictor.addFilterRule(new dev.romeo.btctradingengine.prediction.SignalRule() {
+            @Override public double evaluate(dev.romeo.btctradingengine.feature.FeatureVector features) { return filterScore[0]; }
+            @Override public String getName() { return "TestFilter"; }
+        });
+
+        // Each new signal is sent twice: the predictor always answers HOLD to the first snapshot of a change
+        current[0] = candle("100");
+        predictor.onEvent(features("25"));                  // oversold -> BUY candidate
+        predictor.onEvent(features("25"));                  // confirmed BUY, filters allow it
+        assertEquals(Signal.BUY, engine.getOpenTrade().orElseThrow().getSignal());
+
+        filterScore[0] = -0.5;                              // conditions turn bad
+        current[0] = candle("105");
+        predictor.onEvent(features("75"));                  // overbought -> SELL candidate
+        predictor.onEvent(features("75"));                  // confirmed SELL, vetoed by the filters
+
+        assertEquals(1, engine.getClosedTrades().size(), "The vetoed SELL must still close the BUY");
+        assertTrue(engine.getOpenTrade().isEmpty(), "The vetoed SELL must not open a short");
+    }
+
+    private dev.romeo.btctradingengine.feature.FeatureVector features(String rsi) {
+        return dev.romeo.btctradingengine.feature.FeatureVector.builder()
+                .instrument("BTC/USD").timestamp(Instant.parse("2026-09-08T10:01:00Z"))
+                .rsiValue(new BigDecimal(rsi))
+                .price(new BigDecimal("100")).tickCount(10)
+                .build();
+    }
+
     private PredictionVector prediction(Signal signal, boolean entryAllowed) {
         return PredictionVector.builder()
                 .instrument("BTC/USD")

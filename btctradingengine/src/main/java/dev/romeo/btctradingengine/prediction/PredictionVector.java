@@ -16,7 +16,7 @@ public record PredictionVector(
         BigDecimal price,           // PreÃ§o no momento
         String modelVersion,        // "rules-v1", "rules-v2", etc
         MarketRegime marketRegime,  // regime the decision was made in (issue #7)
-        boolean entryAllowed,       // false when an entry guard (VPIN, order book) blocks NEW entries; exits still apply
+        boolean entryAllowed,       // false when filter rules or an entry guard (VPIN, order book) block NEW entries; exits still apply
         String reason               // ExplicaÃ§Ã£o legÃ­vel da decisÃ£o
 ) {
 

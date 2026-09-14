@@ -156,7 +156,8 @@ public class PositionManager {
             }
             if (!prediction.entryAllowed()) {
                 // Only new entries: the reversal close above has already run for this prediction
-                logger.info("Entry guard (VPIN / order book) - blocking new {} entry", prediction.signal());
+                logger.info("Entry blocked (filter rules / VPIN / order book) - not opening new {} position",
+                        prediction.signal());
                 return;
             }
             openNewPosition(prediction, candle);
