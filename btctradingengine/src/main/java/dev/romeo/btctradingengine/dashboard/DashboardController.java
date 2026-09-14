@@ -6,6 +6,7 @@ import dev.romeo.btctradingengine.backtest.BacktestReport;
 import dev.romeo.btctradingengine.backtest.BacktestRunner;
 import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.derivatives.BinanceFuturesClient;
+import dev.romeo.btctradingengine.derivatives.BinanceMetricsArchive;
 import dev.romeo.btctradingengine.derivatives.DerivativesHistory;
 import dev.romeo.btctradingengine.indicator.VwapAnchor;
 import dev.romeo.btctradingengine.model.CandleEvent;
@@ -19,7 +20,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 
@@ -32,15 +36,16 @@ public class DashboardController {
     private final BinanceKlineClient klineClient = new BinanceKlineClient();
     private final BinanceKlineClient futuresKlineClient = BinanceKlineClient.usdmFutures();
     private final BinanceFuturesClient futuresClient = new BinanceFuturesClient();
+    private final BinanceMetricsArchive metricsArchive = new BinanceMetricsArchive();
 
     public DashboardController(DashboardState state) {
         this.state = state;
     }
 
     /**
-     * Funding and basis for the backtest range. Open interest and long/short have no usable history
-     * (the futures REST keeps 30 days - issue #54) and stay empty. A futures API failure runs the
-     * backtest without derivatives instead of failing the request.
+     * Derivatives history for the backtest range: funding and basis from the futures REST API, open
+     * interest and long/short from the data.binance.vision metrics dumps (issue #54). Each source fails
+     * on its own - the backtest runs with whatever loaded instead of failing the request.
      */
     private DerivativesHistory loadBacktestDerivatives(List<CandleEvent> candles, int days) {
         DerivativesHistory history = DerivativesHistory.forBacktest();
@@ -57,6 +62,27 @@ public class DashboardController {
                     .forEach(rate -> history.addFundingRate(rate.time(), rate.value()));
         } catch (Exception e) {
             logger.warn("Could not load derivatives history for the backtest, continuing without it: {}", e.getMessage());
+        }
+        try {
+            // Start one change window early, so the first candles already have an open interest to compare against
+            LocalDate from = candles.get(0).openTime()
+                    .minus(Duration.ofMinutes(Config.getOpenInterestChangeMinutes()))
+                    .atZone(ZoneOffset.UTC).toLocalDate();
+            LocalDate to = candles.get(candles.size() - 1).closeTime().atZone(ZoneOffset.UTC).toLocalDate();
+            metricsArchive.load(Config.getMarketSymbol(), from, to).forEach(row -> {
+                if (row.openInterest() != null) {
+                    history.addOpenInterest(row.publishedAt(), row.openInterest());
+                }
+                if (row.longShortRatio() != null) {
+                    history.addLongShortRatio(row.publishedAt(), row.longShortRatio());
+                }
+            });
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("Interrupted loading the open interest / long-short history for the backtest");
+        } catch (Exception e) {
+            logger.warn("Could not load open interest / long-short history for the backtest, continuing without it: {}",
+                    e.getMessage());
         }
         return history;
     }
