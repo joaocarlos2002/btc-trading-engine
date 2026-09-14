@@ -728,12 +728,12 @@ footer{
           <b id="cvdRatio">—</b><small>−1 — 1</small>
         </div>
         <div class="metric">
-          <label data-tip="CVD só das agressões grandes (valor ≥ feature.flow.large.trade.notional). Baleia vs varejo é heurística. Só ao vivo: fica 0 no backtest e no warmup.">Large CVD</label>
-          <b id="largeCvd">—</b><small>BTC · live only</small>
+          <label data-tip="CVD só das agressões grandes (valor ≥ feature.flow.large.trade.notional). Baleia vs varejo é heurística. Precisa do tamanho dos trades: ao vivo sempre; no backtest só com sizeSplit=true; 0 no warmup.">Large CVD</label>
+          <b id="largeCvd">—</b><small>BTC · large trades</small>
         </div>
         <div class="metric">
-          <label data-tip="Parcela do volume agressor da janela que veio de trades grandes. Só ao vivo: klines não trazem o tamanho dos trades.">Large share</label>
-          <b id="largeVolumeShare">—</b><small>0 — 1 · live only</small>
+          <label data-tip="Parcela do volume agressor da janela que veio de trades grandes. Klines não trazem o tamanho dos trades: no backtest só com sizeSplit=true.">Large share</label>
+          <b id="largeVolumeShare">—</b><small>0 — 1</small>
         </div>
         <div class="metric">
           <label data-tip="Último funding rate liquidado do perpétuo BTCUSDT (a cada 8h). Positivo = longs pagam shorts (mercado alavancado comprado); negativo = shorts pagam longs.">Funding</label>
