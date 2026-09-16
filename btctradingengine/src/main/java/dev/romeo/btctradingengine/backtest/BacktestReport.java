@@ -17,6 +17,22 @@ public class BacktestReport {
         this.commissionRate = commissionRate;
     }
 
+    /**
+     * The trades behind the metrics, so walk-forward can pool out-of-sample trades into one report.
+     * Deliberately not a getter: the report is serialized as JSON and the metrics are what goes out.
+     */
+    public List<Trade> trades() {
+        return List.copyOf(trades);
+    }
+
+    public BigDecimal commissionRate() {
+        return commissionRate;
+    }
+
+    public BigDecimal initialCapital() {
+        return initialCapital;
+    }
+
     public int getTotalTrades() {
         return trades.size();
     }
