@@ -185,17 +185,9 @@ public class PositionManager {
                         : "SELL signal does not open a position: the spot market has no short selling");
                 return;
             }
-            if (!simulationMode && !reconciliationComplete) {
-                logger.warn("Ignoring entry: Binance reconciliation is not complete");
-                return;
-            }
-            if (portfolioManager.isPresent() && !portfolioManager.get().canTrade()) {
-                logger.warn("âš  Portfolio stop-loss active - blocking new {} entry", prediction.signal());
-                return;
-            }
-            if (connectivityGuard.isPresent() && !connectivityGuard.get().isHealthy()) {
-                logger.warn("Connectivity guard unhealthy ({}) - blocking new {} entry",
-                        connectivityGuard.get().getUnhealthyReason(), prediction.signal());
+            Optional<String> blocked = entryBlockReason();
+            if (blocked.isPresent()) {
+                logger.warn("Blocking new {} entry: {}", prediction.signal(), blocked.get());
                 return;
             }
             if (!prediction.entryAllowed()) {
@@ -227,16 +219,49 @@ public class PositionManager {
         }
     }
 
-    public synchronized boolean openManualBuy(BigDecimal price, java.time.Instant time) {
-        if (openPosition.isPresent()) {
-            return false;
+    /**
+     * Guards shared by automatic and manual entries (issue #79): the dashboard starts before the
+     * Binance reconciliation, so a manual BUY must not bypass them.
+     */
+    private Optional<String> entryBlockReason() {
+        if (!simulationMode && !reconciliationComplete) {
+            return Optional.of("Binance reconciliation is not complete");
         }
         if (portfolioManager.isPresent() && !portfolioManager.get().canTrade()) {
-            return false;
+            return Optional.of("Portfolio stop-loss is active (max drawdown reached)");
+        }
+        if (connectivityGuard.isPresent() && !connectivityGuard.get().isHealthy()) {
+            return Optional.of("Connectivity guard is unhealthy: " + connectivityGuard.get().getUnhealthyReason());
+        }
+        return Optional.empty();
+    }
+
+    public synchronized ManualBuyResult openManualBuy(BigDecimal price, java.time.Instant time) {
+        if (openPosition.isPresent()) {
+            return ManualBuyResult.blocked("A position is already open");
+        }
+        if (price == null || price.compareTo(BigDecimal.ZERO) <= 0) {
+            return ManualBuyResult.blocked("No valid market price");
+        }
+        Optional<String> blocked = entryBlockReason();
+        if (blocked.isPresent()) {
+            logger.warn("Blocking manual BUY: {}", blocked.get());
+            return ManualBuyResult.blocked(blocked.get());
         }
 
         openNewPosition(Signal.BUY, price, time, 0.0);
-        return true;
+        if (openPosition.isEmpty()) {
+            // The real entry order failed and the position was closed with its failure reason
+            ExitReason reason = closedPositions.isEmpty() ? null : closedPositions.getLast().getExitReason();
+            return ManualBuyResult.blocked("Entry order was not executed (" + reason + ")");
+        }
+        return new ManualBuyResult(true, "Manual BUY opened");
+    }
+
+    public record ManualBuyResult(boolean opened, String message) {
+        static ManualBuyResult blocked(String message) {
+            return new ManualBuyResult(false, message);
+        }
     }
 
     public synchronized boolean restoreOpenPosition(Position position) {

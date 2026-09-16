@@ -105,13 +105,11 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
             return new ManualBuyResult(false, "Waiting for a current market price");
         }
 
-        boolean opened = manager.openManualBuy(tick.price(), tick.eventTimestamp() != null ? tick.eventTimestamp() : Instant.now());
-        if (!opened) {
-            return new ManualBuyResult(false, "A position is already open or trading is blocked");
-        }
-
+        PositionManager.ManualBuyResult result = manager.openManualBuy(
+                tick.price(), tick.eventTimestamp() != null ? tick.eventTimestamp() : Instant.now());
+        // Refresh either way: a failed real entry still adds a closed position
         refreshPositions();
-        return new ManualBuyResult(true, "Manual BUY opened");
+        return new ManualBuyResult(result.opened(), result.message());
     }
 
     public ManualBuyResult manualClose() {
