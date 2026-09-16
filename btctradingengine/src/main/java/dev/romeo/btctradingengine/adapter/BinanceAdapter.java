@@ -19,7 +19,8 @@ public class BinanceAdapter implements MarketDataSource {
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final HttpClient client = HttpClient.newHttpClient();
-    private final String wsUrl = Config.getBinanceWsUrl() + Config.getMarketSymbol().toLowerCase() + "@aggTrade";
+    // Market data URL, not the execution one: mainnet ticks even when orders go to the testnet (issue #76).
+    private final String wsUrl;
     private final int maxRetries = Config.getBinanceMaxRetries();
     private final long initialBackoffMs = Config.getBinanceInitialBackoffMs();
     private final long maxBackoffMs = Config.getBinanceMaxBackoffMs();
@@ -98,6 +99,18 @@ public class BinanceAdapter implements MarketDataSource {
             return WebSocket.Listener.super.onClose(webSocket, statusCode, reason);
         }
     };
+
+    public BinanceAdapter() {
+        this(Config.getMarketDataWsUrl());
+    }
+
+    BinanceAdapter(String baseWsUrl) {
+        this.wsUrl = baseWsUrl + Config.getMarketSymbol().toLowerCase() + "@aggTrade";
+    }
+
+    String streamUrl() {
+        return wsUrl;
+    }
 
     public void setStatusListener(Consumer<String> statusListener) {
         this.statusListener = statusListener;

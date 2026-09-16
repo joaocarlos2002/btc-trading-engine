@@ -36,13 +36,13 @@ public class BinanceKlineClient {
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
     private final HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
 
-    /** null = Config.getBinanceRestUrl(), which may point at testnet for live trading. */
+    /** Live warmup candles: market.data.rest.url, never the execution URL, which may be the testnet (issue #76). */
     private final String liveBaseUrl;
     private final String historyBaseUrl;
     private final String klinesPath;
 
     public BinanceKlineClient() {
-        this(null, MAINNET_REST_URL, "/api/v3/klines");
+        this(Config.getMarketDataRestUrl(), MAINNET_REST_URL, "/api/v3/klines");
     }
 
     private BinanceKlineClient(String liveBaseUrl, String historyBaseUrl, String klinesPath) {
@@ -57,9 +57,12 @@ public class BinanceKlineClient {
         return new BinanceKlineClient(futuresUrl, futuresUrl, "/fapi/v1/klines");
     }
 
+    String liveBaseUrl() {
+        return liveBaseUrl;
+    }
+
     public List<CandleEvent> loadClosedCandles(String symbol, String interval, int limit) throws Exception {
-        String baseUrl = liveBaseUrl != null ? liveBaseUrl : Config.getBinanceRestUrl();
-        return fetchPage(baseUrl, symbol, interval, Math.min(Math.max(limit, 1), 1000), null);
+        return fetchPage(liveBaseUrl, symbol, interval, Math.min(Math.max(limit, 1), 1000), null);
     }
 
     /**
