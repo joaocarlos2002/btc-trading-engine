@@ -106,9 +106,12 @@ public class PositionManager {
         this.alertNotifier = Optional.of(notifier);
     }
 
-    private void onOrderConfirmed(OrderConfirmationManager.OrderConfirmation confirmation) {
-        if (openPosition.isEmpty()) {
-            logger.warn("Received order confirmation but no open position: {}", confirmation.orderId());
+    // synchronized: confirmations come from the User Data Stream and timeout threads
+    private synchronized void onOrderConfirmed(OrderConfirmationManager.OrderConfirmation confirmation) {
+        if (openPosition.isEmpty()
+                || !entryClientOrderId(openPosition.get()).equals(confirmation.clientOrderId())) {
+            logger.warn("Received order confirmation that does not match the open position: {} ({})",
+                    confirmation.orderId(), confirmation.clientOrderId());
             return;
         }
 
@@ -135,7 +138,18 @@ public class PositionManager {
             alertNotifier.ifPresent(a -> a.alert(String.format(
                     "Order %s for position %s failed: %s", confirmation.orderId(), pos.getPositionId(), confirmation.status())));
             closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), "ORDER_FAILED");
+        } else if (confirmation.isTimeout()) {
+            // Never guess a fill: keep the quantity already known and ask for a manual check
+            logger.error("Order {} for position {} could not be confirmed; keeping qty={}",
+                    confirmation.clientOrderId(), pos.getPositionId(), pos.getQuantity());
+            alertNotifier.ifPresent(a -> a.alert(String.format(
+                    "Order %s for position %s could not be confirmed on Binance; position kept with qty=%s, check it manually",
+                    confirmation.clientOrderId(), pos.getPositionId(), pos.getQuantity())));
         }
+    }
+
+    private String entryClientOrderId(Position pos) {
+        return "btce-" + symbol + "-" + pos.getPositionId() + "-entry";
     }
 
     public synchronized void processPrediction(PredictionVector prediction, CandleEvent candle) {
@@ -345,7 +359,11 @@ public class PositionManager {
 
             BinanceOrderExecutor executor = orderExecutor.get();
             BinanceOrderExecutor.OrderResult result;
-            String clientOrderId = "btce-" + symbol + "-" + pos.getPositionId() + "-entry";
+            String clientOrderId = entryClientOrderId(pos);
+            // Before sending: a MARKET order fills at once and its report can beat the REST response
+            if (confirmationManager.isPresent()) {
+                confirmationManager.get().registerOrder(clientOrderId, symbol, signal.toString(), quantity, pos.getEntryPrice());
+            }
 
             if (signal == Signal.BUY) {
                 result = executor.executeBuyMarket(symbol, quantity, clientOrderId);
@@ -354,12 +372,6 @@ public class PositionManager {
             }
 
             if (result.success()) {
-                long orderId = Long.parseLong(result.orderId());
-
-                if (confirmationManager.isPresent()) {
-                    confirmationManager.get().registerOrder(orderId, symbol, signal.toString(), quantity, pos.getEntryPrice());
-                }
-
                 pos.applyFill(result.executedQuantity());
                 if (result.averagePrice().compareTo(BigDecimal.ZERO) > 0) {
                     pos.setEntryPrice(result.averagePrice());
@@ -370,6 +382,7 @@ public class PositionManager {
                         result.orderId(), result.executedQuantity(), result.averagePrice());
                 pos.updatePrice(result.averagePrice(), pos.getEntryTime());
             } else {
+                confirmationManager.ifPresent(m -> m.unregisterOrder(clientOrderId));
                 logger.error("âœ— Real order failed: {}", result.error());
                 alertNotifier.ifPresent(a -> a.alert(String.format(
                         "Real order failed for position %s: %s", pos.getPositionId(), result.error())));

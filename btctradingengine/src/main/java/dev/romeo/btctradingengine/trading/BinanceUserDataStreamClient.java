@@ -259,11 +259,15 @@ public class BinanceUserDataStreamClient {
         }
     }
 
-    private ExecutionReport parseExecutionReport(JsonNode json) {
+    static ExecutionReport parseExecutionReport(JsonNode json) {
         try {
+            // "c" is the clientOrderId (text); on a cancel it is the cancel request's id and the
+            // original one comes in "C"
+            String originalClientOrderId = json.path("C").asText("");
             return new ExecutionReport(
                     json.get("s").asText(),                    // symbol
-                    json.get("c").asLong(),                    // orderId
+                    json.get("i").asLong(),                    // orderId
+                    originalClientOrderId.isEmpty() ? json.get("c").asText() : originalClientOrderId,
                     json.get("o").asText(),                    // orderType (MARKET, LIMIT, etc)
                     json.get("S").asText(),                    // side (BUY/SELL)
                     json.get("x").asText(),                    // executionType (NEW, FILLED, etc)
@@ -285,6 +289,7 @@ public class BinanceUserDataStreamClient {
     public record ExecutionReport(
             String symbol,
             long orderId,
+            String clientOrderId,
             String orderType,
             String side,
             String executionType,           // NEW, PARTIALLY_FILLED, FILLED, CANCELED
