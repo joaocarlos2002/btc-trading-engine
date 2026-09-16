@@ -163,27 +163,12 @@ public class BinanceOrderExecutor {
             HttpResponse<String> response = send(request, false);
 
             if (response.statusCode() == 200) {
-                JsonNode json = mapper.readTree(response.body());
-
-                // Null-safe parsing
-                String orderId = json.has("orderId") && !json.get("orderId").isNull()
-                    ? json.get("orderId").asText()
-                    : "UNKNOWN";
-                String executedQty = json.has("executedQty") && !json.get("executedQty").isNull()
-                    ? json.get("executedQty").asText()
-                    : "0";
-                String cumulativeQuoteQty = json.has("cumulativeQuoteQty") && !json.get("cumulativeQuoteQty").isNull()
-                    ? json.get("cumulativeQuoteQty").asText()
-                    : "0";
-
-                BigDecimal actualQty = new BigDecimal(executedQty);
-                BigDecimal totalCost = new BigDecimal(cumulativeQuoteQty);
-                BigDecimal avgPrice = totalCost.compareTo(BigDecimal.ZERO) > 0 && actualQty.compareTo(BigDecimal.ZERO) > 0
-                    ? totalCost.divide(actualQty, 8, java.math.RoundingMode.HALF_UP)
-                    : BigDecimal.ZERO;
+                OrderResult result = parseOrderResult(mapper.readTree(response.body()));
+                BigDecimal actualQty = result.executedQuantity();
+                BigDecimal avgPrice = result.averagePrice();
 
                 logger.info("âœ“ Order executed: {} {} {} @ avg {}", side, actualQty, symbol, avgPrice);
-                return new OrderResult(true, orderId, actualQty, avgPrice, null);
+                return result;
             } else {
                 String error = response.body();
                 logger.error("âœ— Order failed: {} {}", response.statusCode(), error);
@@ -202,6 +187,19 @@ public class BinanceOrderExecutor {
             logger.error("âœ— Order execution error: {}", e.getMessage(), e);
             return new OrderResult(false, null, BigDecimal.ZERO, BigDecimal.ZERO, e.getMessage());
         }
+    }
+
+    /**
+     * Shared by the POST response and GET /api/v3/order. Binance spells the field
+     * "cummulativeQuoteQty" (double m); a misspelling silently yields an average price of 0.
+     */
+    private OrderResult parseOrderResult(JsonNode json) {
+        String orderId = json.hasNonNull("orderId") ? json.get("orderId").asText() : "UNKNOWN";
+        BigDecimal qty = new BigDecimal(json.path("executedQty").asText("0"));
+        BigDecimal quote = new BigDecimal(json.path("cummulativeQuoteQty").asText("0"));
+        BigDecimal avgPrice = qty.signum() > 0 && quote.signum() > 0
+                ? quote.divide(qty, 8, java.math.RoundingMode.HALF_UP) : BigDecimal.ZERO;
+        return new OrderResult(true, orderId, qty, avgPrice, null);
     }
 
     private OrderResult failedOrder(String error) {
@@ -425,12 +423,9 @@ public class BinanceOrderExecutor {
             HttpResponse<String> response = send(request, true);
             if (response.statusCode() != 200) return Optional.empty();
             JsonNode json = mapper.readTree(response.body());
-            BigDecimal qty = new BigDecimal(json.path("executedQty").asText("0"));
-            BigDecimal quote = new BigDecimal(json.path("cummulativeQuoteQty").asText("0"));
-            BigDecimal price = qty.signum() > 0
-                    ? quote.divide(qty, 8, java.math.RoundingMode.HALF_UP) : BigDecimal.ZERO;
+            OrderResult parsed = parseOrderResult(json);
             return Optional.of(new QueriedOrder(json.path("orderId").asLong(), clientOrderId,
-                    json.path("status").asText(""), qty, price));
+                    json.path("status").asText(""), parsed.executedQuantity(), parsed.averagePrice()));
         } catch (Exception ignored) {
             return Optional.empty();
         }
