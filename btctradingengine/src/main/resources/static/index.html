@@ -1408,6 +1408,8 @@ function handle(msg){
   if(msg.type === 'candle') renderCandle(d);
   if(msg.type === 'metrics') renderMetrics(d);
   if(msg.type === 'prediction') renderPrediction(d);
+  // Live price/P&L of the open position; 'trades' only arrives when positions change (issue #85)
+  if(msg.type === 'position') renderPosition(d);
   if(msg.type === 'trades'){
     renderPosition(d.open);
     renderTrades(d.closed || []);

@@ -1463,6 +1463,17 @@ public class PositionManager {
         return new ArrayList<>(closedPositions);
     }
 
+    /** Closed positions count without copying the list, for cheap change detection (issue #85). */
+    public synchronized int getClosedPositionCount() {
+        return closedPositions.size();
+    }
+
+    /** Copy of only the last {@code limit} closed positions, oldest first (issue #85). */
+    public synchronized List<Position> getRecentClosedPositions(int limit) {
+        int from = Math.max(0, closedPositions.size() - Math.max(0, limit));
+        return new ArrayList<>(closedPositions.subList(from, closedPositions.size()));
+    }
+
     public synchronized List<ExecutionEvent> getExecutionLog() {
         return new ArrayList<>(executionLog);
     }
