@@ -7,6 +7,7 @@ import dev.romeo.btctradingengine.feature.FeatureVector;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
 import dev.romeo.btctradingengine.prediction.PredictionVector;
+import dev.romeo.btctradingengine.trading.ExitReason;
 import dev.romeo.btctradingengine.trading.Position;
 import dev.romeo.btctradingengine.trading.PositionManager;
 import dev.romeo.btctradingengine.trading.OrderConfirmationManager;
@@ -167,7 +168,10 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
 
     public Stats stats() {
         if (positionManager == null) return new Stats(0, 0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
-        List<Position> positions = positionManager.getClosedPositions();
+        // Same filter as PositionManager's counters: failed entries are not trades
+        List<Position> positions = positionManager.getClosedPositions().stream()
+                .filter(ExitReason::isPerformanceTrade)
+                .toList();
         BigDecimal pnl = positionManager.getTotalPnL();
         BigDecimal peak = BigDecimal.ZERO;
         BigDecimal equity = BigDecimal.ZERO;

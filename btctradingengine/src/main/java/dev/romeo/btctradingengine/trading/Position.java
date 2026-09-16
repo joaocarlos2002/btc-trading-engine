@@ -19,7 +19,7 @@ public class Position {
     private PositionStatus status;
     private BigDecimal exitPrice;
     private Instant exitTime;
-    private String exitReason;                                      // "TARGET_HIT", "STOP_LOSS", "MANUAL_CLOSE"
+    private ExitReason exitReason;
     private BigDecimal quantity = BigDecimal.ZERO;                  // quantidade preenchida (cumulativa)
     private BigDecimal targetQuantity = BigDecimal.ZERO;            // quantidade total solicitada na ordem
 
@@ -84,22 +84,23 @@ public class Position {
     }
 
     public void closeAtTarget(BigDecimal exitPrice, Instant exitTime) {
-        close(exitPrice, exitTime, "TARGET_HIT");
+        close(exitPrice, exitTime, ExitReason.TARGET_HIT);
     }
 
     public void closeAtStopLoss(BigDecimal exitPrice, Instant exitTime) {
-        close(exitPrice, exitTime, "STOP_LOSS");
+        close(exitPrice, exitTime, ExitReason.STOP_LOSS);
     }
 
     public void closeManual(BigDecimal exitPrice, Instant exitTime) {
-        close(exitPrice, exitTime, "MANUAL_CLOSE");
+        close(exitPrice, exitTime, ExitReason.MANUAL_CLOSE);
     }
 
+    /** Restores a row from the trade journal; an unknown stored reason becomes null. */
     public void restoreClosed(BigDecimal exitPrice, Instant exitTime, String reason) {
-        close(exitPrice, exitTime, reason);
+        close(exitPrice, exitTime, ExitReason.parse(reason));
     }
 
-    private void close(BigDecimal exitPrice, Instant exitTime, String reason) {
+    public void close(BigDecimal exitPrice, Instant exitTime, ExitReason reason) {
         this.exitPrice = exitPrice;
         this.exitTime = exitTime;
         this.exitReason = reason;
@@ -136,7 +137,7 @@ public class Position {
     public BigDecimal getCurrentPrice() { return currentPrice; }
     public BigDecimal getExitPrice() { return exitPrice; }
     public Instant getExitTime() { return exitTime; }
-    public String getExitReason() { return exitReason; }
+    public ExitReason getExitReason() { return exitReason; }
     public PositionStatus getStatus() { return status; }
     public boolean isOpen() { return status == PositionStatus.OPEN; }
     public BigDecimal getTargetPercent() { return targetPercent; }
