@@ -434,7 +434,7 @@ public class PositionManager {
                 syncPortfolioBalance(pos.getEntryPrice());
                 logger.info("âœ“ Real order executed: orderId={} qty={} @ price={}",
                         result.orderId(), result.executedQuantity(), result.averagePrice());
-                pos.updatePrice(result.averagePrice(), pos.getEntryTime());
+                if (result.averagePrice().signum() > 0) pos.updatePrice(result.averagePrice(), pos.getEntryTime());
             } else {
                 confirmationManager.ifPresent(m -> m.unregisterOrder(clientOrderId));
                 logger.error("âœ— Real order failed: {}", result.error());

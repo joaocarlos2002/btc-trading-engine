@@ -18,65 +18,80 @@ public class BinanceSymbolValidationService {
         this.orderExecutor = orderExecutor;
     }
 
+    /** Never raises the order above the notional originally requested (quantity * price). */
     public Optional<BigDecimal> validateAndAdjustQuantity(String symbol, BigDecimal quantity, BigDecimal price) {
+        return validateAndAdjustQuantity(symbol, quantity, price, quantity.multiply(price));
+    }
+
+    /**
+     * Fits the quantity to LOT_SIZE and MIN_NOTIONAL/NOTIONAL. It may round up to the exchange
+     * minimum, but rejects the order when that would cost more than {@code maxNotional}
+     * (the capital allocated to the position) instead of silently spending more.
+     */
+    public Optional<BigDecimal> validateAndAdjustQuantity(String symbol, BigDecimal quantity, BigDecimal price,
+                                                          BigDecimal maxNotional) {
         BinanceOrderExecutor.SymbolFilters filters = getOrCacheFilters(symbol);
         if (filters == null) {
-            logger.error("âœ— Could not fetch filters for {}, rejecting order", symbol);
+            logger.error("Could not fetch filters for {}, rejecting order", symbol);
+            return Optional.empty();
+        }
+        if (price == null || price.signum() <= 0) {
+            logger.error("Invalid price {} for {}, rejecting order", price, symbol);
             return Optional.empty();
         }
 
-        return validateQuantity(filters, quantity, price);
+        return validateQuantity(filters, quantity, price, maxNotional);
     }
 
     private Optional<BigDecimal> validateQuantity(BinanceOrderExecutor.SymbolFilters filters,
-                                                   BigDecimal quantity, BigDecimal price) {
-        // 1. Validate minimum quantity (LOT_SIZE)
-        if (quantity.compareTo(filters.minQty()) < 0) {
-            logger.warn("âš  Quantity {} is below minimum {}", quantity, filters.minQty());
-            quantity = filters.minQty();
+                                                   BigDecimal quantity, BigDecimal price, BigDecimal maxNotional) {
+        BigDecimal step = filters.stepSize();
+        BigDecimal adjusted = floorToStep(quantity, step);
+
+        // maxQty 0 means the LOT_SIZE filter was absent
+        if (filters.maxQty().signum() > 0 && adjusted.compareTo(filters.maxQty()) > 0) {
+            logger.warn("Quantity {} exceeds maximum {}, reducing", adjusted, filters.maxQty());
+            adjusted = floorToStep(filters.maxQty(), step);
         }
 
-        // 2. Validate maximum quantity (LOT_SIZE)
-        if (quantity.compareTo(filters.maxQty()) > 0) {
-            logger.warn("âš  Quantity {} exceeds maximum {}, reducing", quantity, filters.maxQty());
-            quantity = filters.maxQty();
-        }
+        BigDecimal minByNotional = filters.minNotional().signum() > 0
+                ? filters.minNotional().divide(price, 8, RoundingMode.UP) : BigDecimal.ZERO;
+        BigDecimal required = ceilToStep(filters.minQty().max(minByNotional), step);
 
-        // 3. Adjust to step size
-        BigDecimal adjustedQty = adjustToStepSize(quantity, filters.stepSize());
-        if (!adjustedQty.equals(quantity)) {
-            logger.warn("âš  Adjusted quantity {} to step size {} â†’ {}", quantity, filters.stepSize(), adjustedQty);
-            quantity = adjustedQty;
-        }
-
-        // 4. Validate minimum notional (price * quantity >= MIN_NOTIONAL)
-        BigDecimal notional = quantity.multiply(price);
-        if (notional.compareTo(filters.minNotional()) < 0) {
-            logger.warn("âš  Notional {} is below minimum {}. Increasing quantity.",
-                    notional, filters.minNotional());
-            quantity = filters.minNotional()
-                    .divide(price, 8, RoundingMode.UP)
-                    .min(filters.maxQty());
-            quantity = adjustToStepSize(quantity, filters.stepSize());
-
-            notional = quantity.multiply(price);
-            if (notional.compareTo(filters.minNotional()) < 0) {
-                logger.error("âœ— Cannot meet minimum notional {} with max quantity {}",
-                        filters.minNotional(), filters.maxQty());
+        if (adjusted.compareTo(required) < 0) {
+            BigDecimal requiredNotional = required.multiply(price);
+            if (maxNotional == null || requiredNotional.compareTo(maxNotional) > 0) {
+                logger.error("Order rejected: exchange minimum qty {} (notional {}) exceeds allocated {}",
+                        required, requiredNotional, maxNotional);
                 return Optional.empty();
             }
+            logger.warn("Quantity {} below exchange minimum, raising to {} (within allocated {})",
+                    adjusted, required, maxNotional);
+            adjusted = required;
         }
 
-        logger.info("âœ“ Quantity validated and adjusted: {} (notional: {})", quantity, notional);
-        return Optional.of(quantity);
+        if (adjusted.signum() <= 0
+                || (filters.maxQty().signum() > 0 && adjusted.compareTo(filters.maxQty()) > 0)) {
+            logger.error("Cannot fit quantity {} into LOT_SIZE {}..{}", adjusted, filters.minQty(), filters.maxQty());
+            return Optional.empty();
+        }
+
+        logger.info("Quantity validated and adjusted: {} (notional: {})", adjusted, adjusted.multiply(price));
+        return Optional.of(adjusted);
     }
 
-    private BigDecimal adjustToStepSize(BigDecimal quantity, BigDecimal stepSize) {
-        if (stepSize.compareTo(BigDecimal.ZERO) == 0) {
+    private BigDecimal floorToStep(BigDecimal quantity, BigDecimal stepSize) {
+        if (stepSize.signum() == 0) {
             return quantity;
         }
-        BigDecimal stepCount = quantity.divide(stepSize, 0, RoundingMode.DOWN);
-        return stepCount.multiply(stepSize);
+        return quantity.divide(stepSize, 0, RoundingMode.DOWN).multiply(stepSize);
+    }
+
+    private BigDecimal ceilToStep(BigDecimal quantity, BigDecimal stepSize) {
+        if (stepSize.signum() == 0) {
+            return quantity;
+        }
+        return quantity.divide(stepSize, 0, RoundingMode.UP).multiply(stepSize);
     }
 
     private BinanceOrderExecutor.SymbolFilters getOrCacheFilters(String symbol) {
