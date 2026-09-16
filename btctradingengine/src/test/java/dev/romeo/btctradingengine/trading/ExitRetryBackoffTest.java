@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -42,6 +43,12 @@ public class ExitRetryBackoffTest {
         public SymbolFilters getSymbolFilters(String symbol) {
             return new SymbolFilters(symbol, new BigDecimal("10"), new BigDecimal("0.00001"),
                     new BigDecimal("1000"), new BigDecimal("0.00001"));
+        }
+
+        // Binance does not know the rejected exit orders
+        @Override
+        public Optional<QueriedOrder> queryOrder(String symbol, String clientOrderId) {
+            return Optional.empty();
         }
 
         @Override
