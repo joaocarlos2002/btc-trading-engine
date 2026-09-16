@@ -80,7 +80,9 @@ public class BinanceKlineClient {
             return cached.candles();
         }
 
-        List<CandleEvent> all = new ArrayList<>();
+        // Pages arrive newest first; prepending each one to a single list was O(n^2), so they are
+        // collected here and joined oldest first once the loop is done (issue #95).
+        List<List<CandleEvent>> pages = new ArrayList<>();
         long endTime = System.currentTimeMillis();
         long targetStart = endTime - Duration.ofDays(days).toMillis();
 
@@ -89,7 +91,7 @@ public class BinanceKlineClient {
             if (page.isEmpty()) {
                 break;
             }
-            all.addAll(0, page);
+            pages.add(page);
             long firstOpenTime = page.get(0).openTime().toEpochMilli();
             if (firstOpenTime >= endTime) {
                 break;
@@ -103,6 +105,10 @@ public class BinanceKlineClient {
             }
         }
 
+        List<CandleEvent> all = new ArrayList<>();
+        for (int i = pages.size() - 1; i >= 0; i--) {
+            all.addAll(pages.get(i));
+        }
         all.removeIf(c -> c.openTime().toEpochMilli() < targetStart);
         cache.put(key, new CacheEntry(all, Instant.now()));
         return all;
