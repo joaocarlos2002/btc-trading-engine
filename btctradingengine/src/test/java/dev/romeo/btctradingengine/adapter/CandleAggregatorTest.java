@@ -118,6 +118,51 @@ public class CandleAggregatorTest {
     }
 
     @Test
+    public void lateTickAfterTimerCloseDoesNotEmitTheCandleAgain() {
+        List<CandleEvent> candles = new ArrayList<>();
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles::add);
+
+        aggregator.onEvent(event("100", "2026-09-08T10:00:30Z", "1"));
+        aggregator.closeExpiredCandle(Instant.parse("2026-09-08T10:01:00.250Z"));
+        assertEquals(1, candles.size());
+
+        // a trade from the window that was just emitted arrives after the timer closed it (issue #74)
+        aggregator.onEvent(event("101", "2026-09-08T10:00:59.900Z", "1"));
+        aggregator.closeExpiredCandle(Instant.parse("2026-09-08T10:02:00.250Z"));
+        aggregator.onEvent(event("102", "2026-09-08T10:02:10Z", "1"));
+        aggregator.onEvent(event("103", "2026-09-08T10:03:10Z", "1"));
+
+        assertEquals(2, candles.size());
+        assertEquals(Instant.parse("2026-09-08T10:00:00Z"), candles.get(0).openTime());
+        assertEquals(Instant.parse("2026-09-08T10:02:00Z"), candles.get(1).openTime());
+        assertEquals(new BigDecimal("102"), candles.get(1).open());
+        assertEquals(1, aggregator.getLateTicksDropped());
+    }
+
+    @Test
+    public void tickOlderThanTheOpenCandleIsDropped() {
+        List<CandleEvent> candles = new ArrayList<>();
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles::add);
+
+        aggregator.onEvent(event("100", "2026-09-08T10:05:10Z", "1"));
+        aggregator.onEvent(event("90", "2026-09-08T10:04:59Z", "1"));
+        aggregator.onEvent(event("110", "2026-09-08T10:06:00Z", "1"));
+
+        assertEquals(1, candles.size());
+        assertEquals(Instant.parse("2026-09-08T10:05:00Z"), candles.get(0).openTime());
+        assertEquals(new BigDecimal("100"), candles.get(0).low());
+        assertEquals(1, aggregator.getLateTicksDropped());
+    }
+
+    @Test
+    public void timerIsAlignedToTheNextIntervalBoundaryPlusTolerance() {
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles -> { });
+
+        assertEquals(20_250, aggregator.initialTimerDelayMillis(Instant.parse("2026-09-08T10:00:40Z")));
+        assertEquals(60_250, aggregator.initialTimerDelayMillis(Instant.parse("2026-09-08T10:00:00Z")));
+    }
+
+    @Test
     public void binanceBuyerMakerFlagMeansTheSellerWasTheAggressor() {
         assertEquals(AggressorSide.SELL, AggressorSide.fromBuyerMaker(true));
         assertEquals(AggressorSide.BUY, AggressorSide.fromBuyerMaker(false));
