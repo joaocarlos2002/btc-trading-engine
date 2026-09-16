@@ -23,6 +23,7 @@ import dev.romeo.btctradingengine.prediction.PredictionSettings;
 import dev.romeo.btctradingengine.trading.ConnectivityGuard;
 import dev.romeo.btctradingengine.trading.PositionManager;
 import dev.romeo.btctradingengine.trading.TradeJournal;
+import org.flywaydb.core.Flyway;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -41,29 +42,54 @@ import java.time.Duration;
  * <p>Every bean here has {@code destroyMethod = ""}: shutdown order matters (stop the feed, drain the
  * order I/O, save the trades, then the writers), so {@link LivePipeline#close()} does it explicitly
  * instead of leaving it to Spring's reverse creation order.
+ *
+ * <p>The schema comes from the Flyway migrations in engine-data's {@code db/migration} (issue #102), applied
+ * by the {@link #flyway} bean while the context starts; the beans that use the database depend on it. Being
+ * here, it only runs with the pipeline: the dashboard alone, its tests and the replay tool never migrate.
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "engine.pipeline.enabled", havingValue = "true", matchIfMissing = true)
 @DependsOn("startupSettingsValidator")
 public class LivePipelineConfiguration {
 
+    /**
+     * Applies the pending migrations (issue #102) when the context starts, before any bean below touches
+     * the database. A database created before Flyway (no flyway_schema_history table, but the tables
+     * V1__baseline.sql creates already exist) is baselined at version 1: V1 is recorded, not run, and only
+     * V2 onwards are applied. A failed migration fails the startup.
+     */
+    @Bean(initMethod = "migrate")
+    Flyway flyway(DataSource dataSource) {
+        return Flyway.configure()
+                .dataSource(dataSource)
+                .locations("classpath:db/migration")
+                .baselineOnMigrate(true)
+                .baselineVersion("1")
+                .baselineDescription("pre-Flyway schema")
+                .load();
+    }
+
     @Bean(destroyMethod = "")
+    @DependsOn("flyway")
     DatabaseWriter databaseWriter(DataSource dataSource) {
         return new DatabaseWriter(dataSource);
     }
 
     @Bean(destroyMethod = "")
+    @DependsOn("flyway")
     TickRetentionJob tickRetentionJob(DataSource dataSource, DbProperties db) {
         return TickRetentionJob.create(dataSource, db.ticksRetentionDays(), db.ticksRetentionBatchSize(),
                 db.ticksRetentionInterval());
     }
 
     @Bean
+    @DependsOn("flyway")
     TradeJournal tradeJournal(DataSource dataSource) {
         return new TradeJournal(dataSource);
     }
 
     @Bean
+    @DependsOn("flyway")
     JdbcOrderCommandStore orderCommandStore(DataSource dataSource) {
         return new JdbcOrderCommandStore(() -> dataSource);
     }
@@ -100,6 +126,7 @@ public class LivePipelineConfiguration {
 
     @Bean(destroyMethod = "")
     @ConditionalOnProperty(name = "derivatives.enabled", havingValue = "true")
+    @DependsOn("flyway")
     DerivativesPoller derivativesPoller(BinanceFuturesClient futuresClient,
                                         @Qualifier("futuresKlineClient") BinanceKlineClient futuresKlineClient,
                                         DerivativesHistory history, DataSource dataSource,
@@ -118,6 +145,7 @@ public class LivePipelineConfiguration {
 
     @Bean(destroyMethod = "")
     @ConditionalOnProperty(name = "orderbook.enabled", havingValue = "true")
+    @DependsOn("flyway")
     OrderBookPoller orderBookPoller(OrderBookHistory history, DataSource dataSource, OrderBookProperties orderBook,
                                     MarketProperties market) {
         return new OrderBookPoller(new BinanceDepthClient(orderBook.restUrl()), history,
@@ -137,6 +165,7 @@ public class LivePipelineConfiguration {
     }
 
     @Bean(destroyMethod = "close")
+    @DependsOn("flyway")
     LivePipeline livePipeline(DataSource dataSource, DatabaseWriter dbWriter, TickRetentionJob tickRetention,
                               TradeJournal tradeJournal, JdbcOrderCommandStore orderCommands,
                               PositionManager positionManager, ConnectivityGuard connectivityGuard,

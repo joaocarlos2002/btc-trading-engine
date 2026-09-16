@@ -20,7 +20,6 @@ import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.orderbook.OrderBookHistory;
 import dev.romeo.btctradingengine.orderbook.OrderBookPoller;
 import dev.romeo.btctradingengine.persistence.DatabaseCandleReader;
-import dev.romeo.btctradingengine.persistence.DatabaseInitializer;
 import dev.romeo.btctradingengine.persistence.DatabaseWriter;
 import dev.romeo.btctradingengine.persistence.JdbcOrderCommandStore;
 import dev.romeo.btctradingengine.persistence.TickRetentionJob;
@@ -105,15 +104,11 @@ public class LivePipeline implements ApplicationRunner, AutoCloseable {
     @Override
     public void run(ApplicationArguments args) throws Exception {
         String symbol = market.symbol();
-        initializeDatabase();
 
         c.dbWriter().start();
         c.tickRetention().start();
 
         TradeJournal tradeJournal = c.tradeJournal();
-        tradeJournal.createTableIfNotExists();
-        tradeJournal.createExecutionLogTableIfNotExists();
-        c.orderCommands().createTableIfNotExists();
 
         PositionManager positionManager = c.positionManager();
         DashboardState dashboardState = c.dashboardState();
@@ -207,17 +202,6 @@ public class LivePipeline implements ApplicationRunner, AutoCloseable {
         started = true;
         source.start(priceEventBus);
         logger.info("Live pipeline started for {} ({} candles)", symbol, market.binanceInterval());
-    }
-
-    private void initializeDatabase() {
-        logger.info("Initializing database...");
-        try {
-            DatabaseInitializer.initializeSchema(c.dataSource());
-            logger.info("Database initialization complete");
-        } catch (Exception e) {
-            logger.error("Failed to initialize database", e);
-            throw new RuntimeException("Database initialization failed", e);
-        }
     }
 
     private void startRealTrading(String symbol) {
