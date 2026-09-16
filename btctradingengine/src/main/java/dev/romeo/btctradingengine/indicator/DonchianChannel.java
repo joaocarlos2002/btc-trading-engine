@@ -4,8 +4,6 @@ import dev.romeo.btctradingengine.model.CandleEvent;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.Optional;
 
 /**
@@ -18,27 +16,25 @@ import java.util.Optional;
  */
 public class DonchianChannel {
     private final int period;
-    private final Deque<BigDecimal> highs = new ArrayDeque<>();
-    private final Deque<BigDecimal> lows = new ArrayDeque<>();
+    private final RollingExtremum highs;
+    private final RollingExtremum lows;
 
     public DonchianChannel(int period) {
         this.period = period;
+        this.highs = RollingExtremum.max(period);
+        this.lows = RollingExtremum.min(period);
     }
 
     public Optional<DonchianValue> update(CandleEvent candle) {
-        highs.addLast(candle.high());
-        lows.addLast(candle.low());
+        highs.add(candle.high());
+        lows.add(candle.low());
 
-        if (highs.size() > period) {
-            highs.removeFirst();
-            lows.removeFirst();
-        }
         if (highs.size() < period) {
             return Optional.empty();
         }
 
-        BigDecimal upper = highest();
-        BigDecimal lower = lowest();
+        BigDecimal upper = highs.value();
+        BigDecimal lower = lows.value();
 
         return Optional.of(new DonchianValue(upper, lower, position(candle.close(), upper, lower)));
     }
@@ -51,22 +47,6 @@ public class DonchianChannel {
         }
         return close.subtract(lower)
                 .divide(channelRange, 8, RoundingMode.HALF_EVEN);
-    }
-
-    private BigDecimal highest() {
-        BigDecimal highest = null;
-        for (BigDecimal high : highs) {
-            highest = highest == null ? high : highest.max(high);
-        }
-        return highest;
-    }
-
-    private BigDecimal lowest() {
-        BigDecimal lowest = null;
-        for (BigDecimal low : lows) {
-            lowest = lowest == null ? low : lowest.min(low);
-        }
-        return lowest;
     }
 
     public record DonchianValue(
