@@ -31,7 +31,10 @@ public class BinanceKlineClient {
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
     private final ObjectMapper mapper = new ObjectMapper();
-    private final HttpClient client = HttpClient.newHttpClient();
+    // Without timeouts a stalled connection blocks the caller forever
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
+    private final HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
 
     /** null = Config.getBinanceRestUrl(), which may point at testnet for live trading. */
     private final String liveBaseUrl;
@@ -110,6 +113,7 @@ public class BinanceKlineClient {
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(endpoint))
+                .timeout(REQUEST_TIMEOUT)
                 .GET()
                 .build();
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
