@@ -174,6 +174,11 @@ public class Config {
     public static boolean isMainnetTradingConfirmed() { return Boolean.parseBoolean(getProperty("trading.confirm.mainnet", "false")); }
     public static BigDecimal getTradingInitialCapital() { return getDecimal("trading.initial.capital.usdt", "100"); }
     public static BigDecimal getTradingMaxDrawdownPercent() { return getDecimal("trading.max.drawdown.percent", "5"); }
+    /** OCO target/stop resting on Binance for real positions (issue #99); BTC_ENGINE_TRADING_OCO_ENABLED overrides. */
+    public static boolean isOcoProtectionEnabled() {
+        return Boolean.parseBoolean(getEnvironmentOrProperty("BTC_ENGINE_TRADING_OCO_ENABLED", "trading.oco.enabled", "true"));
+    }
+    public static BigDecimal getOcoStopLimitOffsetPercent() { return getDecimal("trading.oco.stop.limit.offset.percent", "0.1"); }
     public static boolean isShortSellingAllowed() { return Boolean.parseBoolean(getProperty("trading.allow.short", "false")); }
     public static long getMaxDataStalenessSeconds() { return Long.parseLong(getProperty("trading.max.data.staleness.seconds", "60")); }
     public static BigDecimal getBacktestCommissionRate() { return getDecimal("backtest.commission.rate", "0.001"); }
@@ -262,6 +267,10 @@ public class Config {
             throw new IllegalArgumentException("Trading capital and max drawdown must be positive");
         }
         requirePositive("trading.max.data.staleness.seconds", getMaxDataStalenessSeconds());
+        if (getOcoStopLimitOffsetPercent().compareTo(BigDecimal.ZERO) <= 0
+                || getOcoStopLimitOffsetPercent().compareTo(BigDecimal.TEN) >= 0) {
+            throw new IllegalArgumentException("trading.oco.stop.limit.offset.percent must be in (0, 10)");
+        }
         if (getDbPassword().isBlank()) {
             logger.warn("db.password is blank: set BTC_ENGINE_DB_PASSWORD in .env (see .env.example), "
                     + "the same variable docker-compose uses to create the database. "
