@@ -37,7 +37,7 @@ public class SecretsEnvironmentPostProcessor implements EnvironmentPostProcessor
 
     @Override
     public void postProcessEnvironment(ConfigurableEnvironment environment, SpringApplication application) {
-        Map<String, String> dotEnv = DotEnv.load(Path.of(".env"), Path.of("../.env"));
+        Map<String, String> dotEnv = DotEnv.load(Path.of(".env"), Path.of("../.env"), Path.of("../../.env"));
         Map<String, Object> resolved = resolve(environment::getProperty, dotEnv);
         if (resolved.isEmpty()) {
             return;

@@ -13,8 +13,8 @@ public final class DotEnv {
     }
 
     /**
-     * Reads the first of the given .env files that exists, so `docker compose up` and
-     * `mvn spring-boot:run` (whose working directory is the module, one level down) both find it.
+     * Reads the first of the given .env files that exists, so `docker compose up`, `java -jar` from the reactor root and
+     * `mvn spring-boot:run` (whose working directory is the engine-app module, two levels down) all find it.
      * Missing or unreadable files are simply ignored - .env is optional.
      */
     public static Map<String, String> load(Path... candidates) {
