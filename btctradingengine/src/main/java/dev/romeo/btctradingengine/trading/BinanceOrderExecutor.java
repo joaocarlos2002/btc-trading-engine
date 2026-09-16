@@ -339,7 +339,8 @@ public class BinanceOrderExecutor {
     }
 
     private String formatQuantity(BigDecimal qty) {
-        return qty.setScale(4, java.math.RoundingMode.DOWN).stripTrailingZeros().toPlainString();
+        // Quantities arrive already rounded to the LOT_SIZE step; 4 decimals would truncate BTC (step 0.00001)
+        return qty.setScale(8, java.math.RoundingMode.DOWN).stripTrailingZeros().toPlainString();
     }
 
     public record OrderResult(

@@ -392,11 +392,11 @@ public class PositionManager {
                     .setScale(2, java.math.RoundingMode.DOWN);
 
             BigDecimal quantity = allocatedCapital
-                    .divide(pos.getEntryPrice(), 4, java.math.RoundingMode.DOWN);
+                    .divide(pos.getEntryPrice(), 8, java.math.RoundingMode.DOWN);
 
             if (validationService.isPresent()) {
                 java.util.Optional<BigDecimal> validatedQty = validationService.get()
-                        .validateAndAdjustQuantity(symbol, quantity, pos.getEntryPrice());
+                        .validateAndAdjustQuantity(symbol, quantity, pos.getEntryPrice(), allocatedCapital);
                 if (validatedQty.isEmpty()) {
                     logger.error("âœ— Order rejected: quantity validation failed for {}", symbol);
                     alertNotifier.ifPresent(a -> a.alert(String.format(
