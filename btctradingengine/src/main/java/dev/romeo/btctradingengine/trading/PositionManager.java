@@ -49,6 +49,7 @@ public class PositionManager {
     private Supplier<Instant> clock = Instant::now;
     private int exitFailureCount = 0;
     private Instant nextExitAttemptAt = null;
+    private BigDecimal cachedStepSize = null;
 
     public PositionManager(BigDecimal targetPercent, BigDecimal stopLossPercent) {
         this(targetPercent, stopLossPercent, position -> {}, event -> {});
@@ -509,14 +510,77 @@ public class PositionManager {
         nextExitAttemptAt = null;
     }
 
+    private String exitClientOrderId(Position pos) {
+        return "btce-" + symbol + "-" + pos.getPositionId() + "-exit";
+    }
+
+    /**
+     * Quantity to sell when closing a BUY (issue #69): without BNB fees Binance takes the buy
+     * commission from the base asset, so the free balance can be below the filled quantity.
+     * Uses min(position qty, free base balance), rounded down to the LOT_SIZE step.
+     */
+    BigDecimal sellableExitQuantity(Position pos) {
+        BinanceOrderExecutor executor = orderExecutor.get();
+        BigDecimal quantity = pos.getQuantity();
+
+        String baseAsset = symbol.endsWith("USDT") ? symbol.substring(0, symbol.length() - 4) : symbol;
+        BinanceOrderExecutor.BalanceResult balance = executor.getBalance(baseAsset);
+        if (balance != null && balance.success()) {
+            if (balance.free().compareTo(quantity) < 0) {
+                logger.warn("Free {} balance {} is below position {} qty {}; selling the free balance",
+                        baseAsset, balance.free(), pos.getPositionId(), quantity);
+                quantity = balance.free();
+            }
+        } else {
+            logger.warn("Could not fetch free {} balance before exit ({}); using position qty {}",
+                    baseAsset, balance == null ? "no response" : balance.error(), quantity);
+        }
+
+        BigDecimal stepSize = exitStepSize();
+        if (stepSize == null) {
+            logger.warn("Could not fetch LOT_SIZE step for {}; exit qty {} not rounded", symbol, quantity);
+            return quantity;
+        }
+        return quantity.divide(stepSize, 0, java.math.RoundingMode.DOWN).multiply(stepSize).stripTrailingZeros();
+    }
+
+    // Cached on success: the step rarely changes and exits run inside this lock
+    private BigDecimal exitStepSize() {
+        if (cachedStepSize == null) {
+            BinanceOrderExecutor.SymbolFilters filters = orderExecutor.get().getSymbolFilters(symbol);
+            if (filters != null && filters.stepSize() != null && filters.stepSize().compareTo(BigDecimal.ZERO) > 0) {
+                cachedStepSize = filters.stepSize();
+            }
+        }
+        return cachedStepSize;
+    }
+
     private Optional<BinanceOrderExecutor.OrderResult> closeRealPosition(Position pos) {
         try {
             BinanceOrderExecutor executor = orderExecutor.get();
-            BinanceOrderExecutor.OrderResult result = pos.getSignal() == Signal.BUY
-                    ? executor.executeSellMarket(symbol, pos.getQuantity())
-                    : executor.executeBuyMarket(symbol, pos.getQuantity());
+            String clientOrderId = exitClientOrderId(pos);
+            BinanceOrderExecutor.OrderResult result;
+            if (pos.getSignal() == Signal.BUY) {
+                BigDecimal quantity = sellableExitQuantity(pos);
+                if (quantity.compareTo(BigDecimal.ZERO) <= 0) {
+                    logger.error("No sellable quantity for {} (position qty={})", pos.getPositionId(), pos.getQuantity());
+                    return Optional.empty();
+                }
+                result = executor.executeSellMarket(symbol, quantity, clientOrderId);
+            } else {
+                result = executor.executeBuyMarket(symbol, pos.getQuantity(), clientOrderId);
+            }
 
             if (!result.success()) {
+                // The error may be ambiguous (e.g. a timeout after Binance accepted the order)
+                Optional<BinanceOrderExecutor.QueriedOrder> sent = executor.queryOrder(symbol, clientOrderId);
+                if (sent.isPresent() && "FILLED".equals(sent.get().status())) {
+                    BinanceOrderExecutor.QueriedOrder order = sent.get();
+                    logger.warn("Exit order {} reported an error but is FILLED on Binance: {}", clientOrderId, result.error());
+                    syncPortfolioBalance();
+                    return Optional.of(new BinanceOrderExecutor.OrderResult(true, String.valueOf(order.orderId()),
+                            order.executedQuantity(), order.averagePrice(), null));
+                }
                 logger.error("âœ— Real exit order failed for {}: {}", pos.getPositionId(), result.error());
                 return Optional.empty();
             }
