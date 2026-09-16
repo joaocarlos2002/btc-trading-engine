@@ -146,8 +146,14 @@ public class Position {
     public BigDecimal getTargetQuantity() { return targetQuantity; }
     public void setTargetQuantity(BigDecimal targetQuantity) { this.targetQuantity = targetQuantity; }
 
+    /**
+     * A cumulative fill never shrinks: a late, duplicated or empty confirmation must not drop the
+     * quantity already known, or the exit order would sell less than was bought (issue #63).
+     */
     public void applyFill(BigDecimal cumulativeFilledQuantity) {
-        this.quantity = cumulativeFilledQuantity;
+        if (cumulativeFilledQuantity != null && cumulativeFilledQuantity.compareTo(quantity) > 0) {
+            this.quantity = cumulativeFilledQuantity;
+        }
     }
 
     public BigDecimal getRemainingQuantity() {
