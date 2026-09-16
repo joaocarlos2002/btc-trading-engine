@@ -33,8 +33,8 @@ Motor de trading em tempo real para **BTCUSDT** na Binance. Recebe cada negócio
 | Mercado / timeframe | `BTCUSDT`, candles de **1m** (`market.interval.seconds=60`) |
 | Períodos dos indicadores | Períodos clássicos de 15m multiplicados por 15 (ex.: RSI 14 → 210) |
 | Modo | Simulação (`trading.real.enabled=false`) |
-| Feed de preço e execução | Binance **Testnet** (`stream.testnet.binance.vision`, `testnet.binance.vision`) |
-| Derivativos, order book, backtest | Binance **Mainnet** (dados públicos) |
+| Execução (ordens, user data stream) | Binance **Testnet** (`binance.ws.url`, `binance.rest.url`) |
+| Feed de preço (ticks, warmup), derivativos, order book, backtest | Binance **Mainnet** (dados públicos; `market.data.ws.url`, `market.data.rest.url`) |
 | Regras que votam no score | RSI, distância da SMA, MACD, MFI |
 | Filtros (veto de entrada) | ATR%, razão de volatilidade, ADX + largura de Bollinger |
 | Filtros novos (desligados, não calibrados) | Gating por regime, guarda de VPIN, guarda de order book |
@@ -231,7 +231,7 @@ Para operar de verdade:
 
 1. `trading.real.enabled=true`
 2. Chaves da API (Testnet: <https://testnet.binance.vision>).
-3. Para Mainnet, também `binance.rest.url=https://api.binance.com`, `binance.ws.url=wss://stream.binance.com:9443/ws/` e `trading.confirm.mainnet=true`. Sem essa confirmação a aplicação não sobe.
+3. Para Mainnet, também `binance.rest.url=https://api.binance.com`, `binance.ws.url=wss://stream.binance.com:9443/ws/` e `trading.confirm.mainnet=true`. Sem essa confirmação a aplicação não sobe. O feed de preço (`market.data.*`) já é Mainnet em qualquer caso.
 4. Saldo USDT positivo. Cada entrada usa **50% do saldo USDT**.
 
 > Antes de habilitar, corrija os itens **C1 a C5** e **A1 a A3** de [docs/AUDITORIA.md](docs/AUDITORIA.md). Entre eles: a confirmação de ordem zera a quantidade da posição (a saída real nunca é enviada), a reconciliação não recupera a quantidade após reinício, os endpoints de ordem manual não têm autenticação e um sinal SELL no spot tenta vender BTC que o bot não tem.
