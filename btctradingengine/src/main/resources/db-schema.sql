@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS ticks (
 CREATE INDEX IF NOT EXISTS idx_ticks_symbol_time
     ON ticks(symbol, time_ms DESC);
 
--- Index for time-based queries
+-- Index for time-based queries; also what TickRetentionJob's batched deletes walk (issue #85)
 CREATE INDEX IF NOT EXISTS idx_ticks_time
     ON ticks(time_ms DESC);
 

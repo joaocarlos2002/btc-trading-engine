@@ -14,9 +14,10 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class BinanceKlineClient {
     // Historical backtests must reflect real market conditions - binance.rest.url may point
@@ -27,8 +28,10 @@ public class BinanceKlineClient {
     // window on every backtest call is pure waste - especially at 1m, where 180 days is
     // ~260k candles across ~260 paginated requests. A short TTL still rolls the window
     // forward as time passes without hammering Binance on repeated threshold experiments.
+    // Bounded by entry count and total candles (issue #85): each 180-day 1m window holds ~260k candles.
     private static final Duration CACHE_TTL = Duration.ofMinutes(5);
-    private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
+    private final CandleCache cache = new CandleCache(
+            CACHE_TTL, Config.getKlineCacheMaxEntries(), Config.getKlineCacheMaxCandles());
 
     private final ObjectMapper mapper = new ObjectMapper();
     // Without timeouts a stalled connection blocks the caller forever
@@ -75,9 +78,9 @@ public class BinanceKlineClient {
      */
     public List<CandleEvent> loadClosedCandlesRange(String symbol, String interval, int days) throws Exception {
         String key = symbol + ":" + interval + ":" + days;
-        CacheEntry cached = cache.get(key);
-        if (cached != null && Duration.between(cached.fetchedAt(), Instant.now()).compareTo(CACHE_TTL) < 0) {
-            return cached.candles();
+        List<CandleEvent> cached = cache.get(key, Instant.now());
+        if (cached != null) {
+            return cached;
         }
 
         // Pages arrive newest first; prepending each one to a single list was O(n^2), so they are
@@ -110,7 +113,7 @@ public class BinanceKlineClient {
             all.addAll(pages.get(i));
         }
         all.removeIf(c -> c.openTime().toEpochMilli() < targetStart);
-        cache.put(key, new CacheEntry(all, Instant.now()));
+        cache.put(key, all, Instant.now());
         return all;
     }
 
@@ -156,6 +159,79 @@ public class BinanceKlineClient {
             ));
         }
         return candles;
+    }
+
+    /**
+     * TTL cache of candle windows with a size limit (issue #85): least recently used windows are evicted
+     * once there are more than {@code maxEntries} of them or more than {@code maxCandles} candles in total.
+     * A single window larger than {@code maxCandles} is returned to the caller but not cached.
+     */
+    static final class CandleCache {
+        private final Duration ttl;
+        private final int maxEntries;
+        private final long maxCandles;
+        private final LinkedHashMap<String, CacheEntry> entries = new LinkedHashMap<>(16, 0.75f, true);
+        private long totalCandles;
+
+        CandleCache(Duration ttl, int maxEntries, long maxCandles) {
+            this.ttl = ttl;
+            this.maxEntries = Math.max(0, maxEntries);
+            this.maxCandles = Math.max(0, maxCandles);
+        }
+
+        synchronized List<CandleEvent> get(String key, Instant now) {
+            CacheEntry entry = entries.get(key);
+            if (entry == null) {
+                return null;
+            }
+            if (Duration.between(entry.fetchedAt(), now).compareTo(ttl) >= 0) {
+                remove(key);
+                return null;
+            }
+            return entry.candles();
+        }
+
+        synchronized void put(String key, List<CandleEvent> candles, Instant now) {
+            remove(key);
+            if (maxEntries == 0 || candles.size() > maxCandles) {
+                return;
+            }
+            // Expired windows go first, then the least recently used ones
+            entries.entrySet().removeIf(e -> {
+                boolean expired = Duration.between(e.getValue().fetchedAt(), now).compareTo(ttl) >= 0;
+                if (expired) {
+                    totalCandles -= e.getValue().candles().size();
+                }
+                return expired;
+            });
+            entries.put(key, new CacheEntry(candles, now));
+            totalCandles += candles.size();
+            Iterator<Map.Entry<String, CacheEntry>> eldest = entries.entrySet().iterator();
+            while ((entries.size() > maxEntries || totalCandles > maxCandles) && eldest.hasNext()) {
+                Map.Entry<String, CacheEntry> e = eldest.next();
+                totalCandles -= e.getValue().candles().size();
+                eldest.remove();
+            }
+        }
+
+        synchronized int size() {
+            return entries.size();
+        }
+
+        synchronized long totalCandles() {
+            return totalCandles;
+        }
+
+        synchronized boolean contains(String key) {
+            return entries.containsKey(key);
+        }
+
+        private void remove(String key) {
+            CacheEntry removed = entries.remove(key);
+            if (removed != null) {
+                totalCandles -= removed.candles().size();
+            }
+        }
     }
 
     private record CacheEntry(List<CandleEvent> candles, Instant fetchedAt) {}

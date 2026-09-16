@@ -444,6 +444,41 @@ public class Config {
         return Long.parseLong(getProperty("db.pool.max.lifetime.ms", "1800000"));
     }
 
+    /** Queue capacity per critical PriceEventBus subscriber (aggregator, trading path) (issue #85). */
+    public static int getPriceBusQueueCapacity() {
+        return Integer.parseInt(getProperty("price.bus.queue.capacity", "50000"));
+    }
+
+    /** How long the market data reader waits on a full critical queue before dropping the event (issue #85). */
+    public static long getPriceBusBlockTimeoutMs() {
+        return Long.parseLong(getProperty("price.bus.block.timeout.ms", "1000"));
+    }
+
+    /** Candle windows kept by BinanceKlineClient's backtest cache (issue #85). */
+    public static int getKlineCacheMaxEntries() {
+        return Integer.parseInt(getProperty("backtest.kline.cache.max.entries", "8"));
+    }
+
+    /** Total candles kept by BinanceKlineClient's backtest cache across all windows (issue #85). */
+    public static long getKlineCacheMaxCandles() {
+        return Long.parseLong(getProperty("backtest.kline.cache.max.candles", "600000"));
+    }
+
+    /** Days of raw ticks kept in the database; 0 keeps them forever (issue #85). Also bounds tick replay. */
+    public static int getTicksRetentionDays() {
+        return Integer.parseInt(getProperty("db.ticks.retention.days", "7"));
+    }
+
+    /** Rows removed per DELETE by the ticks retention job (issue #85). */
+    public static int getTicksRetentionBatchSize() {
+        return Integer.parseInt(getProperty("db.ticks.retention.batch.size", "10000"));
+    }
+
+    /** Minutes between ticks retention runs (issue #85). */
+    public static long getTicksRetentionIntervalMinutes() {
+        return Long.parseLong(getProperty("db.ticks.retention.interval.minutes", "60"));
+    }
+
     private static String getProperty(String key, String defaultValue) {
         return props.getProperty(key, defaultValue);
     }

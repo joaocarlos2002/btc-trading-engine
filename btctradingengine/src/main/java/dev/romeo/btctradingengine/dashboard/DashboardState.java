@@ -11,6 +11,7 @@ import dev.romeo.btctradingengine.prediction.PredictionVector;
 import dev.romeo.btctradingengine.trading.ExitReason;
 import dev.romeo.btctradingengine.trading.Position;
 import dev.romeo.btctradingengine.trading.PositionManager;
+import dev.romeo.btctradingengine.trading.PositionState;
 import dev.romeo.btctradingengine.trading.OrderConfirmationManager;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.TextMessage;
@@ -48,6 +49,11 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
     private volatile PredictionVector latestPrediction;
     private volatile PositionManager positionManager;
     private volatile OrderConfirmationManager confirmationManager;
+    private volatile PositionsVersion publishedPositionsVersion;
+
+    static final int MAX_PUBLISHED_CLOSED = 50;
+    /** Placeholder queued for the "position" event: the open position is read when the event is flushed. */
+    private static final Object LIVE_POSITION = new Object();
 
     public DashboardState() {
         publisher.scheduleAtFixedRate(this::flushPendingEvents, 50, 50, TimeUnit.MILLISECONDS);
@@ -88,10 +94,26 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
         confirmationManager = manager;
     }
 
+    /**
+     * Called on every tick (issue #85), so it must stay cheap. The closed trades list is only copied and
+     * published as "trades" when the positions actually change (a position opened, closed or changed state),
+     * and then only the last {@link #MAX_PUBLISHED_CLOSED} of them. Between changes, an open position's live
+     * price and P&L go out as the small "position" event instead.
+     */
     public void refreshPositions() {
         PositionManager manager = positionManager;
-        if (manager != null) {
-            pendingEvents.put("trades", new TradesPayload(manager.getOpenPosition().orElse(null), manager.getClosedPositions()));
+        if (manager == null) {
+            return;
+        }
+        Position open = manager.getOpenPosition().orElse(null);
+        PositionsVersion version = new PositionsVersion(manager.getClosedPositionCount(),
+                open == null ? null : open.getPositionId(),
+                open == null ? null : open.getState());
+        if (!version.equals(publishedPositionsVersion)) {
+            publishedPositionsVersion = version;
+            pendingEvents.put("trades", manager.getRecentClosedPositions(MAX_PUBLISHED_CLOSED));
+        } else if (open != null) {
+            pendingEvents.put("position", LIVE_POSITION);
         }
     }
 
@@ -161,9 +183,7 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
 
     public List<Position> closedPositions(int limit) {
         if (positionManager == null) return List.of();
-        List<Position> positions = positionManager.getClosedPositions();
-        int from = Math.max(0, positions.size() - Math.max(1, Math.min(limit, 500)));
-        return new ArrayList<>(positions.subList(from, positions.size()));
+        return positionManager.getRecentClosedPositions(Math.max(1, Math.min(limit, 500)));
     }
 
     public Stats stats() {
@@ -211,11 +231,44 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
             return;
         }
         Map<String, Object> events = new HashMap<>(pendingEvents);
-        events.forEach((type, payload) -> {
-            if (pendingEvents.remove(type, payload)) {
-                broadcast(type, payload);
+        boolean tradesSent = false;
+        for (Map.Entry<String, Object> event : events.entrySet()) {
+            if (!"position".equals(event.getKey()) && pendingEvents.remove(event.getKey(), event.getValue())) {
+                tradesSent |= "trades".equals(event.getKey());
+                broadcast(event.getKey(), resolvePayload(event.getKey(), event.getValue()));
             }
-        });
+        }
+        // "trades" already carries the current open position, so a live update in the same flush is redundant
+        if (events.containsKey("position") && pendingEvents.remove("position", LIVE_POSITION) && !tradesSent) {
+            Object open = resolvePayload("position", LIVE_POSITION);
+            if (open != null) {
+                broadcast("position", open);
+            }
+        }
+    }
+
+    /** "trades" and "position" read the open position at send time, so a stale one is never broadcast. */
+    @SuppressWarnings("unchecked")
+    private Object resolvePayload(String type, Object payload) {
+        PositionManager manager = positionManager;
+        if ("trades".equals(type)) {
+            Position open = manager == null ? null : manager.getOpenPosition().orElse(null);
+            return new TradesPayload(open, (List<Position>) payload);
+        }
+        if ("position".equals(type)) {
+            return manager == null ? null : manager.getOpenPosition().orElse(null);
+        }
+        return payload;
+    }
+
+    /** Test hook: the payload queued for {@code type}, resolved as it would be broadcast, or null. */
+    Object pendingPayload(String type) {
+        Object payload = pendingEvents.get(type);
+        return payload == null ? null : resolvePayload(type, payload);
+    }
+
+    void clearPendingEvents() {
+        pendingEvents.clear();
     }
 
     private void broadcast(String type, Object payload) {
@@ -242,6 +295,7 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
                         BigDecimal sharpe, BigDecimal maxDrawdown) {}
 
     public record MapPayload(String type, Object data) {}
+    private record PositionsVersion(int closedCount, String openId, PositionState openState) {}
     public record TradesPayload(Position open, List<Position> closed) {}
     public record ManualBuyResult(boolean success, String message) {}
 

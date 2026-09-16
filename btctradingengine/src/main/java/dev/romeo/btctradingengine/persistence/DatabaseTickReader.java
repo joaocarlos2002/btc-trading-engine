@@ -10,7 +10,11 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Reads the ticks DatabaseWriter recorded, in arrival order, for the deterministic replay (issue #111). */
+/**
+ * Reads the ticks DatabaseWriter recorded, in arrival order, for the deterministic replay (issue #111).
+ * Ticks older than {@code db.ticks.retention.days} are purged by {@link TickRetentionJob} (issue #85), so a
+ * replay window reaching further back than that comes back partial or empty.
+ */
 public class DatabaseTickReader {
     static final String SELECT_SQL = "SELECT time_ms, price, quantity, aggressor_side FROM ticks "
             + "WHERE symbol = ? AND time_ms >= ? AND time_ms < ? ORDER BY time_ms, id";

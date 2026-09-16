@@ -21,6 +21,7 @@ import dev.romeo.btctradingengine.persistence.OrderBookSnapshotWriter;
 import dev.romeo.btctradingengine.persistence.DataSourceManager;
 import dev.romeo.btctradingengine.persistence.DatabaseCandleReader;
 import dev.romeo.btctradingengine.persistence.DatabaseInitializer;
+import dev.romeo.btctradingengine.persistence.TickRetentionJob;
 import dev.romeo.btctradingengine.persistence.DatabaseWriter;
 import dev.romeo.btctradingengine.persistence.JdbcOrderCommandStore;
 import dev.romeo.btctradingengine.prediction.RuleBasedPredictor;
@@ -45,6 +46,8 @@ public class Main {
 
             DatabaseWriter dbWriter = new DatabaseWriter();
             dbWriter.start();
+            TickRetentionJob tickRetention = TickRetentionJob.fromConfig();
+            tickRetention.start();
 
             TradeJournal tradeJournal = new TradeJournal();
             tradeJournal.createTableIfNotExists();
@@ -263,6 +266,8 @@ public class Main {
                     });
 
             PriceEventBus priceEventBus = new PriceEventBus();
+            // Aggregator, DB writer and trading path must not lose ticks: bounded queues that block the
+            // reader briefly when full. The dashboard only needs the latest tick (issue #85).
             priceEventBus.subscribe(aggregator);
             priceEventBus.subscribe(dbWriter);
             priceEventBus.subscribe(event -> {
@@ -304,6 +309,7 @@ public class Main {
 
                 logger.info("Trades saved: {}", positionManager.getTotalTrades());
 
+                tickRetention.close();
                 dbWriter.stop();
                 DataSourceManager.close();
                 dashboardState.close();
