@@ -481,7 +481,8 @@ public class BinanceOrderExecutor {
                 for (JsonNode filter : filters) {
                     String filterType = filter.get("filterType").asText();
 
-                    if ("MIN_NOTIONAL".equals(filterType)) {
+                    // Spot pairs moved from MIN_NOTIONAL to NOTIONAL; both carry "minNotional"
+                    if ("MIN_NOTIONAL".equals(filterType) || "NOTIONAL".equals(filterType)) {
                         minNotional = new BigDecimal(filter.get("minNotional").asText());
                     } else if ("LOT_SIZE".equals(filterType)) {
                         minQty = new BigDecimal(filter.get("minQty").asText());
