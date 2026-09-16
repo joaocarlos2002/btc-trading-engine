@@ -126,15 +126,17 @@ public class Position {
         this.exitReason = reason;
     }
 
+    /**
+     * P&L per unit in price points (USDT per 1 BTC), not multiplied by quantity. Open positions are
+     * marked at the current price and closed ones at the exit price, with the same side-aware sign.
+     */
     public BigDecimal getPnL() {
-        if (exitPrice == null) {
-            return currentPrice.subtract(entryPrice);
-        }
+        BigDecimal markPrice = exitPrice != null ? exitPrice : currentPrice;
 
         if (signal == Signal.BUY) {
-            return exitPrice.subtract(entryPrice);
+            return markPrice.subtract(entryPrice);
         } else if (signal == Signal.SELL) {
-            return entryPrice.subtract(exitPrice);
+            return entryPrice.subtract(markPrice);
         }
         return BigDecimal.ZERO;
     }
