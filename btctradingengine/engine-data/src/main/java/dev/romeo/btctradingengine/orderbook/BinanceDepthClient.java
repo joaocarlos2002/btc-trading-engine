@@ -1,5 +1,6 @@
 package dev.romeo.btctradingengine.orderbook;
 
+import dev.romeo.btctradingengine.http.HttpMetrics;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -33,7 +34,7 @@ public class BinanceDepthClient {
                 .timeout(TIMEOUT)
                 .GET()
                 .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = HttpMetrics.send(client, request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() != 200) {
             throw new IllegalStateException("Binance depth returned HTTP " + response.statusCode());
         }

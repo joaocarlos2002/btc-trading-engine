@@ -18,6 +18,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class DatabaseWriter implements CandleEventListener, dev.romeo.btctradingengine.port.PriceEventListener {
     private static final Logger logger = LoggerFactory.getLogger(DatabaseWriter.class);
@@ -37,6 +38,7 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
 
     private final BlockingQueue<Object> queue = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicLong dropped = new AtomicLong();
     private Thread writerThread;
     private final DataSource dataSource;
 
@@ -81,9 +83,20 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
         }
     }
 
+    /** Events (ticks and candles) waiting to be written; read by the metrics (issue #104). */
+    public int queueSize() {
+        return queue.size();
+    }
+
+    /** Events dropped because the queue was full, since startup. */
+    public long droppedEvents() {
+        return dropped.get();
+    }
+
     @Override
     public void onEvent(CandleEvent event) {
         if (!queue.offer(event)) {
+            dropped.incrementAndGet();
             logger.warn("DatabaseWriter queue full, dropping event: {}", event.openTime());
         }
     }
@@ -91,6 +104,7 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
     @Override
     public void onEvent(NormalizedPriceEvent event) {
         if (!queue.offer(event)) {
+            dropped.incrementAndGet();
             logger.warn("DatabaseWriter queue full, dropping tick: {}", event.eventTimestamp());
         }
     }

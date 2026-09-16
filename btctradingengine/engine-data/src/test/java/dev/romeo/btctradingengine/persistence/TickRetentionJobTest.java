@@ -87,6 +87,16 @@ class TickRetentionJobTest {
     }
 
     @Test
+    void deletedTotalAccumulatesAcrossRuns() throws Exception {
+        TickRetentionJob job = job(new FakeDatabase(1000, 250, 10), 7, 1000);
+
+        job.purgeOnce();
+        job.purgeOnce();
+
+        assertEquals(1260, job.deletedTotal(), "exported as ticks.retention.deleted (issue #104)");
+    }
+
+    @Test
     void deleteIsBoundedAndUsesTheIndexedTimeColumn() {
         String sql = TickRetentionJob.DELETE_SQL;
         assertTrue(sql.startsWith("DELETE FROM ticks"));

@@ -1,5 +1,6 @@
 package dev.romeo.btctradingengine.derivatives;
 
+import dev.romeo.btctradingengine.http.HttpMetrics;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -113,7 +114,7 @@ public class BinanceFuturesClient {
                 .timeout(TIMEOUT)
                 .GET()
                 .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = HttpMetrics.send(client, request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() != 200) {
             String path = pathAndQuery.contains("?") ? pathAndQuery.substring(0, pathAndQuery.indexOf('?')) : pathAndQuery;
             throw new IllegalStateException("Binance futures " + path + " returned HTTP " + response.statusCode());

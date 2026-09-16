@@ -1,5 +1,6 @@
 package dev.romeo.btctradingengine.adapter;
 
+import dev.romeo.btctradingengine.http.HttpMetrics;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.romeo.btctradingengine.model.CandleEvent;
@@ -132,7 +133,7 @@ public class BinanceKlineClient {
                 .timeout(REQUEST_TIMEOUT)
                 .GET()
                 .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = HttpMetrics.send(client, request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() != 200) {
             throw new IllegalStateException("Binance klines returned HTTP " + response.statusCode());
