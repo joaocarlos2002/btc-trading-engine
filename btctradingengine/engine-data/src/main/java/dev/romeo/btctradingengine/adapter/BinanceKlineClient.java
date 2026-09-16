@@ -4,10 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.model.TradeFlow;
+import dev.romeo.btctradingengine.resilience.BinanceCall;
+import dev.romeo.btctradingengine.resilience.BinanceEndpoint;
+import dev.romeo.btctradingengine.resilience.BinanceResilience;
 
 import java.math.BigDecimal;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
@@ -32,10 +34,8 @@ public class BinanceKlineClient {
     private final CandleCache cache;
 
     private final ObjectMapper mapper = new ObjectMapper();
-    // Without timeouts a stalled connection blocks the caller forever
-    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
-    private final HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
+    // Timeouts, retries, breaker and request weight (issue #100), shared with every other Binance client
+    private final BinanceResilience resilience;
 
     /** Live warmup candles: market.data.rest.url, never the execution URL, which may be the testnet (issue #76). */
     private final String liveBaseUrl;
@@ -47,12 +47,14 @@ public class BinanceKlineClient {
      * mainnet. The backtest cache keeps at most {@code cacheMaxEntries} windows and {@code cacheMaxCandles}
      * candles (backtest.kline.cache.*, issue #85).
      */
-    public BinanceKlineClient(String marketDataRestUrl, int cacheMaxEntries, long cacheMaxCandles) {
-        this(marketDataRestUrl, MAINNET_REST_URL, "/api/v3/klines", cacheMaxEntries, cacheMaxCandles);
+    public BinanceKlineClient(BinanceResilience resilience, String marketDataRestUrl, int cacheMaxEntries,
+                              long cacheMaxCandles) {
+        this(resilience, marketDataRestUrl, MAINNET_REST_URL, "/api/v3/klines", cacheMaxEntries, cacheMaxCandles);
     }
 
-    private BinanceKlineClient(String liveBaseUrl, String historyBaseUrl, String klinesPath,
-                               int cacheMaxEntries, long cacheMaxCandles) {
+    private BinanceKlineClient(BinanceResilience resilience, String liveBaseUrl, String historyBaseUrl,
+                               String klinesPath, int cacheMaxEntries, long cacheMaxCandles) {
+        this.resilience = resilience;
         this.liveBaseUrl = liveBaseUrl;
         this.historyBaseUrl = historyBaseUrl;
         this.klinesPath = klinesPath;
@@ -60,8 +62,9 @@ public class BinanceKlineClient {
     }
 
     /** USD-M perpetual klines from binance.futures.rest.url: same row format as spot, always mainnet (issue #53). */
-    public static BinanceKlineClient usdmFutures(String futuresRestUrl, int cacheMaxEntries, long cacheMaxCandles) {
-        return new BinanceKlineClient(futuresRestUrl, futuresRestUrl, "/fapi/v1/klines", cacheMaxEntries, cacheMaxCandles);
+    public static BinanceKlineClient usdmFutures(BinanceResilience resilience, String futuresRestUrl,
+                                                 int cacheMaxEntries, long cacheMaxCandles) {
+        return new BinanceKlineClient(resilience, futuresRestUrl, futuresRestUrl, "/fapi/v1/klines", cacheMaxEntries, cacheMaxCandles);
     }
 
     String liveBaseUrl() {
@@ -69,7 +72,7 @@ public class BinanceKlineClient {
     }
 
     public List<CandleEvent> loadClosedCandles(String symbol, String interval, int limit) throws Exception {
-        return fetchPage(liveBaseUrl, symbol, interval, Math.min(Math.max(limit, 1), 1000), null);
+        return fetchPage(liveBaseUrl, symbol, interval, Math.min(Math.max(limit, 1), 1000), null, BinanceCall.MARKET_DATA);
     }
 
     /**
@@ -94,7 +97,8 @@ public class BinanceKlineClient {
         long targetStart = endTime - Duration.ofDays(days).toMillis();
 
         while (endTime > targetStart) {
-            List<CandleEvent> page = fetchPage(historyBaseUrl, symbol, interval, 1000, endTime);
+            // Paced by the shared rate limiter, which keeps a share of the weight for the live bot (issue #100)
+            List<CandleEvent> page = fetchPage(historyBaseUrl, symbol, interval, 1000, endTime, BinanceCall.HISTORY);
             if (page.isEmpty()) {
                 break;
             }
@@ -104,12 +108,6 @@ public class BinanceKlineClient {
                 break;
             }
             endTime = firstOpenTime - 1;
-            try {
-                Thread.sleep(120);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
         }
 
         List<CandleEvent> all = new ArrayList<>();
@@ -121,18 +119,17 @@ public class BinanceKlineClient {
         return all;
     }
 
-    private List<CandleEvent> fetchPage(String baseUrl, String symbol, String interval, int limit, Long endTime) throws Exception {
+    private List<CandleEvent> fetchPage(String baseUrl, String symbol, String interval, int limit, Long endTime,
+                                        BinanceCall call) throws Exception {
         String endpoint = baseUrl + klinesPath + "?symbol=" + symbol
                 + "&interval=" + interval
                 + "&limit=" + limit
                 + (endTime != null ? "&endTime=" + endTime : "");
 
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(endpoint))
-                .timeout(REQUEST_TIMEOUT)
-                .GET()
-                .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        BinanceEndpoint weighted = klinesPath.startsWith("/fapi")
+                ? BinanceEndpoint.futuresKlines(limit) : BinanceEndpoint.spotKlines();
+        HttpResponse<String> response = resilience.send(weighted, call,
+                () -> HttpRequest.newBuilder().uri(URI.create(endpoint)).GET().build());
 
         if (response.statusCode() != 200) {
             throw new IllegalStateException("Binance klines returned HTTP " + response.statusCode());

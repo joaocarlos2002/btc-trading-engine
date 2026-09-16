@@ -1,11 +1,14 @@
 package dev.romeo.btctradingengine.derivatives;
 
+import dev.romeo.btctradingengine.resilience.BinanceCall;
+import dev.romeo.btctradingengine.resilience.BinanceEndpoint;
+import dev.romeo.btctradingengine.resilience.BinanceResilience;
+
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -46,11 +49,14 @@ public class BinanceMetricsArchive {
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private static final DateTimeFormatter CREATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    private final HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
+    private static final BinanceEndpoint METRICS = BinanceEndpoint.archive("futures um metrics", TIMEOUT);
+
+    private final BinanceResilience resilience;
     private final String baseUrl;
     private final Path cacheDir;
 
-    public BinanceMetricsArchive(String baseUrl, Path cacheDir) {
+    public BinanceMetricsArchive(BinanceResilience resilience, String baseUrl, Path cacheDir) {
+        this.resilience = resilience;
         this.baseUrl = baseUrl;
         this.cacheDir = cacheDir;
     }
@@ -74,12 +80,12 @@ public class BinanceMetricsArchive {
             return Files.readAllBytes(cached);
         }
 
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/data/futures/um/daily/metrics/" + symbol + "/" + fileName))
-                .timeout(TIMEOUT)
-                .GET()
-                .build();
-        HttpResponse<byte[]> response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+        HttpResponse<byte[]> response = resilience.send(METRICS, BinanceCall.HISTORY,
+                () -> HttpRequest.newBuilder()
+                        .uri(URI.create(baseUrl + "/data/futures/um/daily/metrics/" + symbol + "/" + fileName))
+                        .GET()
+                        .build(),
+                HttpResponse.BodyHandlers.ofByteArray());
         if (response.statusCode() == 404) {
             return null;
         }

@@ -2,15 +2,16 @@ package dev.romeo.btctradingengine.orderbook;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.romeo.btctradingengine.resilience.BinanceCall;
+import dev.romeo.btctradingengine.resilience.BinanceEndpoint;
+import dev.romeo.btctradingengine.resilience.BinanceResilience;
 
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.Duration;
 
 /**
  * Spot order book depth from /api/v3/depth (issue #10). Uses orderbook.rest.url, mainnet by default:
@@ -18,22 +19,21 @@ import java.time.Duration;
  */
 public class BinanceDepthClient {
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final Duration TIMEOUT = Duration.ofSeconds(10);
 
-    private final HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
+    private final BinanceResilience resilience;
     private final String baseUrl;
 
-    public BinanceDepthClient(String baseUrl) {
+    public BinanceDepthClient(BinanceResilience resilience, String baseUrl) {
+        this.resilience = resilience;
         this.baseUrl = baseUrl;
     }
 
     public DepthSnapshot fetch(String symbol, int levels) throws Exception {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/api/v3/depth?symbol=" + symbol + "&limit=" + levels))
-                .timeout(TIMEOUT)
-                .GET()
-                .build();
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = resilience.send(BinanceEndpoint.spotDepth(levels), BinanceCall.MARKET_DATA,
+                () -> HttpRequest.newBuilder()
+                        .uri(URI.create(baseUrl + "/api/v3/depth?symbol=" + symbol + "&limit=" + levels))
+                        .GET()
+                        .build());
         if (response.statusCode() != 200) {
             throw new IllegalStateException("Binance depth returned HTTP " + response.statusCode());
         }

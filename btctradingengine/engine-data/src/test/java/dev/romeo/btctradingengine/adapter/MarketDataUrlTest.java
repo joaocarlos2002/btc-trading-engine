@@ -1,5 +1,7 @@
 package dev.romeo.btctradingengine.adapter;
 
+import dev.romeo.btctradingengine.resilience.BinanceResilience;
+import dev.romeo.btctradingengine.resilience.BinanceResilienceSettings;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -16,9 +18,9 @@ class MarketDataUrlTest {
 
     @Test
     void warmupKlinesUseTheMarketDataRestUrl() {
-        assertEquals("https://api.binance.com", new BinanceKlineClient("https://api.binance.com", 8, 600_000).liveBaseUrl());
+        assertEquals("https://api.binance.com", new BinanceKlineClient(new BinanceResilience(BinanceResilienceSettings.defaults()), "https://api.binance.com", 8, 600_000).liveBaseUrl());
         assertEquals("https://fapi.binance.com",
-                BinanceKlineClient.usdmFutures("https://fapi.binance.com", 8, 600_000).liveBaseUrl(),
+                BinanceKlineClient.usdmFutures(new BinanceResilience(BinanceResilienceSettings.defaults()), "https://fapi.binance.com", 8, 600_000).liveBaseUrl(),
                 "perpetual klines keep their own mainnet futures URL");
     }
 }

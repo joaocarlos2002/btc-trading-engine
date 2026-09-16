@@ -5,11 +5,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.romeo.btctradingengine.model.AggressorSide;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
+import dev.romeo.btctradingengine.resilience.BinanceResilienceSettings;
+import io.github.resilience4j.core.IntervalFunction;
 
 import java.math.BigDecimal;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.locks.ReentrantLock;
@@ -22,8 +25,9 @@ public class BinanceAdapter implements MarketDataSource {
     // Market data URL, not the execution one: mainnet ticks even when orders go to the testnet (issue #76).
     private final String wsUrl;
     private final int maxRetries;
-    private final long initialBackoffMs;
-    private final long maxBackoffMs;
+    // Shared exponential-with-jitter policy (issue #100): many clients reconnecting after an outage do not
+    // hit Binance in lockstep
+    private final IntervalFunction reconnectBackoff;
 
     private WebSocket webSocket;
     private PriceEventListener priceListener;
@@ -105,10 +109,15 @@ public class BinanceAdapter implements MarketDataSource {
      * @param symbol    market.symbol; the aggTrade stream of that symbol is opened
      */
     public BinanceAdapter(String baseWsUrl, String symbol, int maxRetries, long initialBackoffMs, long maxBackoffMs) {
+        this(baseWsUrl, symbol, maxRetries, BinanceResilienceSettings.defaults()
+                .backoff(Duration.ofMillis(initialBackoffMs), Duration.ofMillis(maxBackoffMs)));
+    }
+
+    /** @param reconnectBackoff wait before reconnect attempt n (1-based), e.g. {@link BinanceResilienceSettings#backoff} */
+    public BinanceAdapter(String baseWsUrl, String symbol, int maxRetries, IntervalFunction reconnectBackoff) {
         this.wsUrl = baseWsUrl + symbol.toLowerCase() + "@aggTrade";
         this.maxRetries = maxRetries;
-        this.initialBackoffMs = initialBackoffMs;
-        this.maxBackoffMs = maxBackoffMs;
+        this.reconnectBackoff = reconnectBackoff;
     }
 
     String streamUrl() {
@@ -150,7 +159,7 @@ public class BinanceAdapter implements MarketDataSource {
                 return;
             } catch (Exception e) {
                 attempt++;
-                long backoffMs = calculateBackoff(attempt);
+                long backoffMs = reconnectBackoff.apply(attempt);
                 System.err.println("Connection attempt " + attempt + " failed: " + e.getMessage() +
                                  ". Retrying in " + backoffMs + "ms...");
                 try {
@@ -188,10 +197,5 @@ public class BinanceAdapter implements MarketDataSource {
         });
         reconnectThread.setDaemon(true);
         reconnectThread.start();
-    }
-
-    private long calculateBackoff(int attempt) {
-        long backoff = initialBackoffMs * (1L << Math.min(attempt - 1, 6));
-        return Math.min(backoff, maxBackoffMs);
     }
 }
