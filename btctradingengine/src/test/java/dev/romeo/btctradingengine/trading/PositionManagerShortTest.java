@@ -24,7 +24,7 @@ public class PositionManagerShortTest {
         private final List<String> orders = new ArrayList<>();
 
         RecordingExecutor() {
-            super("test-key", "test-secret");
+            super("test-key", "test-secret", "https://testnet.binance.vision", 10, 1000, 60000);
         }
 
         @Override

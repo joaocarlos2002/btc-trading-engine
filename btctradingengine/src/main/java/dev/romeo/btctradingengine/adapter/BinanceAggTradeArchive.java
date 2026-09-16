@@ -1,6 +1,5 @@
 package dev.romeo.btctradingengine.adapter;
 
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.model.AggressorSide;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.model.TradeFlow;
@@ -57,10 +56,6 @@ public class BinanceAggTradeArchive {
     private final String baseUrl;
     private final Path cacheDir;
     private final long intervalMillis;
-
-    public BinanceAggTradeArchive() {
-        this(Config.getBinanceDataUrl(), Config.getAggTradesCacheDir(), Config.getMarketInterval());
-    }
 
     public BinanceAggTradeArchive(String baseUrl, Path cacheDir, Duration interval) {
         this.baseUrl = baseUrl;

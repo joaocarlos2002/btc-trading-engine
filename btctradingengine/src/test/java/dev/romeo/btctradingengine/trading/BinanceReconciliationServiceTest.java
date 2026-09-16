@@ -27,7 +27,7 @@ public class BinanceReconciliationServiceTest {
         final List<String> queried = new ArrayList<>();
 
         FakeExecutor() {
-            super("test-key", "test-secret");
+            super("test-key", "test-secret", "https://testnet.binance.vision", 10, 1000, 60000);
         }
 
         @Override

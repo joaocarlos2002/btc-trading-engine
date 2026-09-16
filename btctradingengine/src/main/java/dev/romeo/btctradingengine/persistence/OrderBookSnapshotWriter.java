@@ -4,6 +4,7 @@ import dev.romeo.btctradingengine.orderbook.BinanceDepthClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -16,11 +17,17 @@ import java.time.Instant;
 public class OrderBookSnapshotWriter {
     private static final Logger logger = LoggerFactory.getLogger(OrderBookSnapshotWriter.class);
 
+    private final DataSource dataSource;
+
+    public OrderBookSnapshotWriter(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+
     private static final String INSERT_SQL =
             "INSERT INTO order_book_snapshots (symbol, time_ms, levels, bid_volume, ask_volume) VALUES (?, ?, ?, ?, ?)";
 
     public void write(String symbol, Instant takenAt, BinanceDepthClient.DepthSnapshot snapshot) {
-        try (Connection conn = DataSourceManager.getDataSource().getConnection();
+        try (Connection conn = dataSource.getConnection();
              PreparedStatement stmt = conn.prepareStatement(INSERT_SQL)) {
 
             stmt.setString(1, symbol);

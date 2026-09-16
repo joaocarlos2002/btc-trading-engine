@@ -1,9 +1,9 @@
 package dev.romeo.btctradingengine.persistence;
 
-import dev.romeo.btctradingengine.config.Config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -55,10 +55,9 @@ public class TickRetentionJob implements AutoCloseable {
         this.pauseBetweenBatchesMs = Math.max(0, pauseBetweenBatchesMs);
     }
 
-    public static TickRetentionJob fromConfig() {
-        return new TickRetentionJob(() -> DataSourceManager.getDataSource().getConnection(), Clock.systemUTC(),
-                Config.getTicksRetentionDays(), Config.getTicksRetentionBatchSize(),
-                Duration.ofMinutes(Math.max(1, Config.getTicksRetentionIntervalMinutes())), 50);
+    /** db.ticks.retention.days / batch.size / interval.minutes; 0 days keeps ticks forever. */
+    public static TickRetentionJob create(DataSource dataSource, int retentionDays, int batchSize, Duration interval) {
+        return new TickRetentionJob(dataSource::getConnection, Clock.systemUTC(), retentionDays, batchSize, interval, 50);
     }
 
     public boolean isEnabled() {

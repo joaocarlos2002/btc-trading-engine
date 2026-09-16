@@ -111,6 +111,12 @@ public class Config {
                 getBuyThreshold(), getSellThreshold(), getConfirmationSnapshots());
     }
 
+    /** Transitional: the live strategy as backtest defaults (issue #101). */
+    public static dev.romeo.btctradingengine.backtest.BacktestParams backtestParams() {
+        return dev.romeo.btctradingengine.backtest.BacktestParams.of(indicatorPeriods(), predictionSettings(),
+                isShortSellingAllowed(), getTradingTargetPercent(), getTradingStopLossPercent(), getBacktestCommissionRate());
+    }
+
     public static String getMarketSymbol() {
         return getProperty("market.symbol", "BTCUSDT");
     }

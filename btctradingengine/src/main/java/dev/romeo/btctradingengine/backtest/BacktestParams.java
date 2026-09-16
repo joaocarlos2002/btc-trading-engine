@@ -1,6 +1,6 @@
 package dev.romeo.btctradingengine.backtest;
 
-import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.prediction.PredictionSettings;
 import dev.romeo.btctradingengine.feature.IndicatorPeriods;
 import dev.romeo.btctradingengine.indicator.VwapAnchor;
 
@@ -86,67 +86,43 @@ public record BacktestParams(
         BigDecimal stopLossPercent,
         BigDecimal commissionRate
 ) {
-    public static BacktestParams fromConfig() {
+    /**
+     * The live strategy as a backtest: indicator periods, prediction settings and risk from the same
+     * configuration the live bot binds (issue #101).
+     */
+    public static BacktestParams of(IndicatorPeriods periods, PredictionSettings prediction, boolean allowShort,
+                                    BigDecimal targetPercent, BigDecimal stopLossPercent, BigDecimal commissionRate) {
         return new BacktestParams(
-                Config.getSmaPeriod(),
-                Config.getEmaPeriod(),
-                Config.getRsiPeriod(),
-                Config.getAtrPeriod(),
-                Config.getMacdFastPeriod(),
-                Config.getMacdSlowPeriod(),
-                Config.getMacdSignalPeriod(),
-                Config.getVolatilityShortPeriods(),
-                Config.getVolatilityLongPeriods(),
-                Config.getVolumeAveragePeriods(),
-                Config.getAdxPeriod(),
-                Config.getBollingerPeriod(),
-                Config.getBollingerStdDev(),
-                Config.getMfiPeriod(),
-                Config.getDonchianPeriod(),
-                Config.getVwapAnchor(),
-                Config.getVwapRollingPeriods(),
-                Config.getPriceActionLookback(),
-                Config.getPriceActionSwingStrength(),
-                Config.getCvdPeriod(),
-                Config.getEmaSlopePeriods(),
-                Config.getVpinBuckets(),
-                Config.getVpinBucketCandles(),
-                Config.getAbsorptionDeltaMin(),
-                Config.getAbsorptionVolumeRatioMin(),
-                Config.getAbsorptionMaxMoveAtr(),
-                Config.getAbsorptionWindow(),
+                periods.sma(), periods.ema(), periods.rsi(), periods.atr(),
+                periods.macdFast(), periods.macdSlow(), periods.macdSignal(),
+                periods.volatilityShort(), periods.volatilityLong(), periods.volumeAverage(),
+                periods.adx(), periods.bollinger(), periods.bollingerStdDev(),
+                periods.mfi(), periods.donchian(),
+                periods.vwapAnchor(), periods.vwapRollingPeriods(),
+                periods.priceActionLookback(), periods.priceActionSwingStrength(),
+                periods.cvd(), periods.emaSlope(),
+                periods.vpinBuckets(), periods.vpinBucketCandles(),
+                periods.absorptionDeltaMin(), periods.absorptionVolumeRatioMin(),
+                periods.absorptionMaxMoveAtr(), periods.absorptionWindow(),
 
-                Config.getRsiOversold(),
-                Config.getRsiNeutralLow(),
-                Config.getRsiNeutralHigh(),
-                Config.getRsiOverbought(),
-                Config.getSmaDistanceExtreme(),
-                Config.getSmaDistanceModerate(),
-                Config.getMacdStrongHistogramAtrRatio(),
-                Config.getAtrVolatilityLow(),
-                Config.getAtrVolatilityNormal(),
-                Config.getAtrVolatilityHigh(),
-                Config.getVolatilityRatioHigh(),
-                Config.getMfiOversold(),
-                Config.getMfiNeutralLow(),
-                Config.getMfiNeutralHigh(),
-                Config.getMfiOverbought(),
-                Config.getAdxTrendMin(),
-                Config.getBollingerSqueezeThreshold(),
-                Config.getAdxTrendStrong(),
-                Config.isRegimeGatingEnabled(),
-                Config.isVpinFilterEnabled(),
-                Config.getVpinHighThreshold(),
+                prediction.rsiOversold(), prediction.rsiNeutralLow(), prediction.rsiNeutralHigh(), prediction.rsiOverbought(),
+                prediction.smaDistanceExtreme(), prediction.smaDistanceModerate(),
+                prediction.macdStrongHistogramAtrRatio(),
+                prediction.atrVolatilityLow(), prediction.atrVolatilityNormal(), prediction.atrVolatilityHigh(),
+                prediction.volatilityRatioHigh(),
+                prediction.mfiOversold(), prediction.mfiNeutralLow(), prediction.mfiNeutralHigh(), prediction.mfiOverbought(),
+                prediction.adxTrendMin(), prediction.bollingerSqueezeThreshold(), prediction.adxTrendStrong(),
+                prediction.regimeGatingEnabled(), prediction.vpinFilterEnabled(), prediction.vpinHighThreshold(),
 
-                Config.getBuyThreshold(),
-                Config.getSellThreshold(),
-                Config.getConfirmationSnapshots(),
+                prediction.buyThreshold(), prediction.sellThreshold(), prediction.confirmationSnapshots(),
 
-                Config.isShortSellingAllowed(),
-                Config.getTradingTargetPercent(),
-                Config.getTradingStopLossPercent(),
-                Config.getBacktestCommissionRate()
-        );
+                allowShort, targetPercent, stopLossPercent, commissionRate);
+    }
+
+    /** The shipped strategy (application.properties values); for tests and tools that run without the application. */
+    public static BacktestParams defaults() {
+        return of(IndicatorPeriods.defaults(), PredictionSettings.defaults(), false,
+                new BigDecimal("2.0"), new BigDecimal("1.5"), new BigDecimal("0.001"));
     }
 
     public IndicatorPeriods indicatorPeriods() {

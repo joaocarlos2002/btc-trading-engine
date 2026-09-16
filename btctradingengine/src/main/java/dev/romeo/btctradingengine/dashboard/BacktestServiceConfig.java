@@ -20,7 +20,20 @@ public class BacktestServiceConfig {
     public BacktestService backtestService(
             @Value("${dashboard.backtest.max.concurrent:1}") int maxConcurrent,
             @Value("${dashboard.backtest.max.jobs:50}") int maxJobs) {
-        return BacktestService.create(new BinanceBacktestDataLoader(), Config.getTradingInitialCapital(),
+        return BacktestService.create(new BinanceBacktestDataLoader(
+                new dev.romeo.btctradingengine.adapter.BinanceKlineClient(Config.getMarketDataRestUrl(),
+                        Config.getKlineCacheMaxEntries(), Config.getKlineCacheMaxCandles()),
+                dev.romeo.btctradingengine.adapter.BinanceKlineClient.usdmFutures(Config.getBinanceFuturesRestUrl(),
+                        Config.getKlineCacheMaxEntries(), Config.getKlineCacheMaxCandles()),
+                new dev.romeo.btctradingengine.derivatives.BinanceFuturesClient(Config.getBinanceFuturesRestUrl()),
+                new dev.romeo.btctradingengine.derivatives.BinanceMetricsArchive(Config.getBinanceDataUrl(), Config.getMetricsCacheDir()),
+                new dev.romeo.btctradingengine.adapter.BinanceAggTradeArchive(Config.getBinanceDataUrl(),
+                        Config.getAggTradesCacheDir(), Config.getMarketInterval()),
+                new BinanceBacktestDataLoader.Settings(Config.getMarketSymbol(), Config.getBinanceKlineInterval(),
+                        Config.getLargeTradeNotional(), Config.isDerivativesEnabled(),
+                        java.time.Duration.ofSeconds(Config.getDerivativesStaleSeconds()),
+                        java.time.Duration.ofMinutes(Config.getOpenInterestChangeMinutes()))),
+                Config.getTradingInitialCapital(),
                 maxConcurrent, maxJobs);
     }
 }

@@ -23,7 +23,7 @@ public class ExitRetryBackoffTest {
         boolean sellFails = true;
 
         FlakyExitExecutor() {
-            super("test-key", "test-secret");
+            super("test-key", "test-secret", "https://testnet.binance.vision", 10, 1000, 60000);
         }
 
         @Override

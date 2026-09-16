@@ -2,7 +2,6 @@ package dev.romeo.btctradingengine.backtest;
 
 import dev.romeo.btctradingengine.adapter.BinanceAggTradeArchive;
 import dev.romeo.btctradingengine.adapter.BinanceKlineClient;
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.derivatives.BinanceFuturesClient;
 import dev.romeo.btctradingengine.derivatives.BinanceMetricsArchive;
 import dev.romeo.btctradingengine.derivatives.DerivativesHistory;
@@ -27,19 +26,39 @@ import java.util.Map;
 public class BinanceBacktestDataLoader implements BacktestData.Loader {
     private static final Logger logger = LoggerFactory.getLogger(BinanceBacktestDataLoader.class);
 
-    private final BinanceKlineClient klineClient = new BinanceKlineClient();
-    private final BinanceKlineClient futuresKlineClient = BinanceKlineClient.usdmFutures();
-    private final BinanceFuturesClient futuresClient = new BinanceFuturesClient();
-    private final BinanceMetricsArchive metricsArchive = new BinanceMetricsArchive();
-    private final BinanceAggTradeArchive aggTradeArchive = new BinanceAggTradeArchive();
+    /**
+     * What the loader needs from the configuration: market.symbol, market.binance.interval,
+     * feature.flow.large.trade.notional, derivatives.enabled and the derivatives staleness/OI windows.
+     */
+    public record Settings(String symbol, String interval, BigDecimal largeTradeNotional, boolean derivativesEnabled,
+                           Duration derivativesStaleAfter, Duration openInterestChangeWindow) {
+    }
+
+    private final BinanceKlineClient klineClient;
+    private final BinanceKlineClient futuresKlineClient;
+    private final BinanceFuturesClient futuresClient;
+    private final BinanceMetricsArchive metricsArchive;
+    private final BinanceAggTradeArchive aggTradeArchive;
+    private final Settings settings;
+
+    public BinanceBacktestDataLoader(BinanceKlineClient klineClient, BinanceKlineClient futuresKlineClient,
+                                     BinanceFuturesClient futuresClient, BinanceMetricsArchive metricsArchive,
+                                     BinanceAggTradeArchive aggTradeArchive, Settings settings) {
+        this.klineClient = klineClient;
+        this.futuresKlineClient = futuresKlineClient;
+        this.futuresClient = futuresClient;
+        this.metricsArchive = metricsArchive;
+        this.aggTradeArchive = aggTradeArchive;
+        this.settings = settings;
+    }
 
     @Override
     public BacktestData load(int days, boolean sizeSplit) throws Exception {
-        String symbol = Config.getMarketSymbol();
-        String interval = Config.getBinanceKlineInterval();
+        String symbol = settings.symbol();
+        String interval = settings.interval();
         List<CandleEvent> candles = klineClient.loadClosedCandlesRange(symbol, interval, days);
         if (candles.isEmpty()) {
-            return new BacktestData(symbol, interval, days, candles, DerivativesHistory.forBacktest(), false, 0);
+            return new BacktestData(symbol, interval, days, candles, DerivativesHistory.forBacktest(settings.derivativesStaleAfter(), settings.openInterestChangeWindow()), false, 0);
         }
         if (sizeSplit) {
             candles = withTradeSizeSplit(candles);
@@ -59,8 +78,8 @@ public class BinanceBacktestDataLoader implements BacktestData.Loader {
             LocalDate from = candles.get(0).openTime().atZone(ZoneOffset.UTC).toLocalDate();
             LocalDate to = candles.get(candles.size() - 1).closeTime().atZone(ZoneOffset.UTC).toLocalDate();
             Map<Instant, BinanceAggTradeArchive.SizeBuckets> buckets =
-                    aggTradeArchive.load(Config.getMarketSymbol(), from, to);
-            BigDecimal largeTradeNotional = Config.getLargeTradeNotional();
+                    aggTradeArchive.load(settings.symbol(), from, to);
+            BigDecimal largeTradeNotional = settings.largeTradeNotional();
 
             List<CandleEvent> merged = new ArrayList<>(candles.size());
             for (CandleEvent candle : candles) {
@@ -87,17 +106,17 @@ public class BinanceBacktestDataLoader implements BacktestData.Loader {
      * on its own - the backtest runs with whatever loaded instead of failing the request.
      */
     private DerivativesHistory loadDerivatives(List<CandleEvent> candles, int days) {
-        DerivativesHistory history = DerivativesHistory.forBacktest();
-        if (!Config.isDerivativesEnabled()) {
+        DerivativesHistory history = DerivativesHistory.forBacktest(settings.derivativesStaleAfter(), settings.openInterestChangeWindow());
+        if (!settings.derivativesEnabled()) {
             return history;
         }
         try {
-            futuresKlineClient.loadClosedCandlesRange(Config.getMarketSymbol(), Config.getBinanceKlineInterval(), days)
+            futuresKlineClient.loadClosedCandlesRange(settings.symbol(), settings.interval(), days)
                     .forEach(kline -> history.addPerpClose(kline.openTime(), kline.close()));
             // One funding interval before the first candle, so it already has a settled rate
             Instant from = candles.get(0).openTime().minus(DerivativesHistory.FUNDING_INTERVAL);
             Instant to = candles.get(candles.size() - 1).closeTime();
-            futuresClient.fundingRates(Config.getMarketSymbol(), from, to)
+            futuresClient.fundingRates(settings.symbol(), from, to)
                     .forEach(rate -> history.addFundingRate(rate.time(), rate.value()));
         } catch (Exception e) {
             logger.warn("Could not load derivatives history for the backtest, continuing without it: {}", e.getMessage());
@@ -105,10 +124,10 @@ public class BinanceBacktestDataLoader implements BacktestData.Loader {
         try {
             // Start one change window early, so the first candles already have an open interest to compare against
             LocalDate from = candles.get(0).openTime()
-                    .minus(Duration.ofMinutes(Config.getOpenInterestChangeMinutes()))
+                    .minus(settings.openInterestChangeWindow())
                     .atZone(ZoneOffset.UTC).toLocalDate();
             LocalDate to = candles.get(candles.size() - 1).closeTime().atZone(ZoneOffset.UTC).toLocalDate();
-            metricsArchive.load(Config.getMarketSymbol(), from, to).forEach(row -> {
+            metricsArchive.load(settings.symbol(), from, to).forEach(row -> {
                 if (row.openInterest() != null) {
                     history.addOpenInterest(row.publishedAt(), row.openInterest());
                 }

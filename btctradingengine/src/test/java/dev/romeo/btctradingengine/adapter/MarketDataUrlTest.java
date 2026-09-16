@@ -1,24 +1,24 @@
 package dev.romeo.btctradingengine.adapter;
 
-import dev.romeo.btctradingengine.config.Config;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-/** Issue #76: the live feed and warmup read the market data URLs, never the execution ones. */
+/** Issue #76: the live feed and warmup read the market data URLs they are given, never the execution ones. */
 class MarketDataUrlTest {
 
     @Test
     void aggTradeStreamUsesTheMarketDataWsUrl() {
-        String expected = Config.getMarketDataWsUrl() + Config.getMarketSymbol().toLowerCase() + "@aggTrade";
-        assertEquals(expected, new BinanceAdapter().streamUrl());
-        assertEquals("wss://example/ws/btcusdt@aggTrade", new BinanceAdapter("wss://example/ws/").streamUrl());
+        assertEquals("wss://stream.binance.com:9443/ws/btcusdt@aggTrade",
+                new BinanceAdapter("wss://stream.binance.com:9443/ws/", "BTCUSDT", 1, 1, 1).streamUrl());
+        assertEquals("wss://example/ws/btcusdt@aggTrade", new BinanceAdapter("wss://example/ws/", "BTCUSDT", 1, 1, 1).streamUrl());
     }
 
     @Test
     void warmupKlinesUseTheMarketDataRestUrl() {
-        assertEquals(Config.getMarketDataRestUrl(), new BinanceKlineClient().liveBaseUrl());
-        assertEquals(Config.getBinanceFuturesRestUrl(), BinanceKlineClient.usdmFutures().liveBaseUrl(),
+        assertEquals("https://api.binance.com", new BinanceKlineClient("https://api.binance.com", 8, 600_000).liveBaseUrl());
+        assertEquals("https://fapi.binance.com",
+                BinanceKlineClient.usdmFutures("https://fapi.binance.com", 8, 600_000).liveBaseUrl(),
                 "perpetual klines keep their own mainnet futures URL");
     }
 }

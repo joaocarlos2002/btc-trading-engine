@@ -16,11 +16,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class CandleAggregatorTest {
+    /** feature.flow.large.trade.notional as shipped. */
+    private static final BigDecimal LARGE = new BigDecimal("100000");
 
     @Test
     public void opensCandleWithFirstEvent() {
         List<CandleEvent> candles = new ArrayList<>();
-        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(15), candles::add);
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(15), candles::add, LARGE);
 
         aggregator.onEvent(event("100", "2026-09-08T10:07:30Z"));
 
@@ -30,7 +32,7 @@ public class CandleAggregatorTest {
     @Test
     public void updatesCandleInsideSameIntervalAndEmitsOnRollover() {
         List<CandleEvent> candles = new ArrayList<>();
-        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(15), candles::add);
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(15), candles::add, LARGE);
 
         aggregator.onEvent(event("100", "2026-09-08T10:07:30Z", "2"));
         aggregator.onEvent(event("110", "2026-09-08T10:08:00Z", "3"));
@@ -53,7 +55,7 @@ public class CandleAggregatorTest {
     @Test
     public void startsNewCandleAfterRollover() {
         List<CandleEvent> candles = new ArrayList<>();
-        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(15), candles::add);
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(15), candles::add, LARGE);
 
         aggregator.onEvent(event("100", "2026-09-08T10:14:59Z", "2"));
         aggregator.onEvent(event("95", "2026-09-08T10:15:00Z", "3"));
@@ -78,9 +80,9 @@ public class CandleAggregatorTest {
         List<CandleEvent> candles = new ArrayList<>();
 
         assertThrows(IllegalArgumentException.class,
-                () -> new CandleAggregator(Duration.ZERO, candles::add));
+                () -> new CandleAggregator(Duration.ZERO, candles::add, LARGE));
         assertThrows(IllegalArgumentException.class,
-                () -> new CandleAggregator(Duration.ofMinutes(-1), candles::add));
+                () -> new CandleAggregator(Duration.ofMinutes(-1), candles::add, LARGE));
     }
 
     @Test
@@ -120,7 +122,7 @@ public class CandleAggregatorTest {
     @Test
     public void lateTickAfterTimerCloseDoesNotEmitTheCandleAgain() {
         List<CandleEvent> candles = new ArrayList<>();
-        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles::add);
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles::add, LARGE);
 
         aggregator.onEvent(event("100", "2026-09-08T10:00:30Z", "1"));
         aggregator.closeExpiredCandle(Instant.parse("2026-09-08T10:01:00.250Z"));
@@ -145,7 +147,7 @@ public class CandleAggregatorTest {
         long klineOpenTime = 1788861600000L;
         long klineCloseTime = 1788861659999L;
         List<CandleEvent> candles = new ArrayList<>();
-        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles::add);
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles::add, LARGE);
 
         aggregator.onEvent(event("100", "2026-09-08T10:00:30Z", "1"));
         aggregator.closeExpiredCandle(Instant.parse("2026-09-08T10:01:00.250Z"));
@@ -160,7 +162,7 @@ public class CandleAggregatorTest {
     @Test
     public void tickOlderThanTheOpenCandleIsDropped() {
         List<CandleEvent> candles = new ArrayList<>();
-        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles::add);
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles::add, LARGE);
 
         aggregator.onEvent(event("100", "2026-09-08T10:05:10Z", "1"));
         aggregator.onEvent(event("90", "2026-09-08T10:04:59Z", "1"));
@@ -174,7 +176,7 @@ public class CandleAggregatorTest {
 
     @Test
     public void timerIsAlignedToTheNextIntervalBoundaryPlusTolerance() {
-        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles -> { });
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles -> { }, LARGE);
 
         assertEquals(20_250, aggregator.initialTimerDelayMillis(Instant.parse("2026-09-08T10:00:40Z")));
         assertEquals(60_250, aggregator.initialTimerDelayMillis(Instant.parse("2026-09-08T10:00:00Z")));

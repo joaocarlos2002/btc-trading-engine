@@ -3,6 +3,7 @@ package dev.romeo.btctradingengine.persistence;
 import dev.romeo.btctradingengine.model.AggressorSide;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
 
+import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -16,12 +17,18 @@ import java.util.List;
  * replay window reaching further back than that comes back partial or empty.
  */
 public class DatabaseTickReader {
+    private final DataSource dataSource;
+
+    public DatabaseTickReader(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+
     static final String SELECT_SQL = "SELECT time_ms, price, quantity, aggressor_side FROM ticks "
             + "WHERE symbol = ? AND time_ms >= ? AND time_ms < ? ORDER BY time_ms, id";
 
     public List<NormalizedPriceEvent> loadTicks(String symbol, Instant from, Instant to) throws Exception {
         List<NormalizedPriceEvent> ticks = new ArrayList<>();
-        try (Connection connection = DataSourceManager.getDataSource().getConnection();
+        try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(SELECT_SQL)) {
             statement.setString(1, symbol);
             statement.setLong(2, from.toEpochMilli());

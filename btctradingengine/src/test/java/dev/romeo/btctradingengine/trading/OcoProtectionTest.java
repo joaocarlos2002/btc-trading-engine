@@ -44,7 +44,7 @@ public class OcoProtectionTest {
                        String listId, String targetId, String stopId) {}
 
         FakeExecutor() {
-            super("test-key", "test-secret");
+            super("test-key", "test-secret", "https://testnet.binance.vision", 10, 1000, 60000);
         }
 
         @Override

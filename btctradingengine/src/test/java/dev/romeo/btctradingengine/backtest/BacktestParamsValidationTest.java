@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class BacktestParamsValidationTest {
 
-    private static final BacktestParams DEFAULTS = BacktestParams.fromConfig();
+    private static final BacktestParams DEFAULTS = BacktestParams.defaults();
 
     @Test
     void configuredDefaultsAreValid() {

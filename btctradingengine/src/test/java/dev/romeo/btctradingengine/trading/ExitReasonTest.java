@@ -15,7 +15,7 @@ public class ExitReasonTest {
 
     private static final class FailingBuyExecutor extends BinanceOrderExecutor {
         FailingBuyExecutor() {
-            super("test-key", "test-secret");
+            super("test-key", "test-secret", "https://testnet.binance.vision", 10, 1000, 60000);
         }
 
         @Override

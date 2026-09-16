@@ -2,7 +2,6 @@ package dev.romeo.btctradingengine.adapter;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.model.TradeFlow;
 
@@ -30,8 +29,7 @@ public class BinanceKlineClient {
     // forward as time passes without hammering Binance on repeated threshold experiments.
     // Bounded by entry count and total candles (issue #85): each 180-day 1m window holds ~260k candles.
     private static final Duration CACHE_TTL = Duration.ofMinutes(5);
-    private final CandleCache cache = new CandleCache(
-            CACHE_TTL, Config.getKlineCacheMaxEntries(), Config.getKlineCacheMaxCandles());
+    private final CandleCache cache;
 
     private final ObjectMapper mapper = new ObjectMapper();
     // Without timeouts a stalled connection blocks the caller forever
@@ -44,20 +42,26 @@ public class BinanceKlineClient {
     private final String historyBaseUrl;
     private final String klinesPath;
 
-    public BinanceKlineClient() {
-        this(Config.getMarketDataRestUrl(), MAINNET_REST_URL, "/api/v3/klines");
+    /**
+     * Spot klines: live warmup from {@code marketDataRestUrl} (market.data.rest.url), backtest history from
+     * mainnet. The backtest cache keeps at most {@code cacheMaxEntries} windows and {@code cacheMaxCandles}
+     * candles (backtest.kline.cache.*, issue #85).
+     */
+    public BinanceKlineClient(String marketDataRestUrl, int cacheMaxEntries, long cacheMaxCandles) {
+        this(marketDataRestUrl, MAINNET_REST_URL, "/api/v3/klines", cacheMaxEntries, cacheMaxCandles);
     }
 
-    private BinanceKlineClient(String liveBaseUrl, String historyBaseUrl, String klinesPath) {
+    private BinanceKlineClient(String liveBaseUrl, String historyBaseUrl, String klinesPath,
+                               int cacheMaxEntries, long cacheMaxCandles) {
         this.liveBaseUrl = liveBaseUrl;
         this.historyBaseUrl = historyBaseUrl;
         this.klinesPath = klinesPath;
+        this.cache = new CandleCache(CACHE_TTL, cacheMaxEntries, cacheMaxCandles);
     }
 
-    /** USD-M perpetual klines: same row format as spot, always from mainnet (issue #53). */
-    public static BinanceKlineClient usdmFutures() {
-        String futuresUrl = Config.getBinanceFuturesRestUrl();
-        return new BinanceKlineClient(futuresUrl, futuresUrl, "/fapi/v1/klines");
+    /** USD-M perpetual klines from binance.futures.rest.url: same row format as spot, always mainnet (issue #53). */
+    public static BinanceKlineClient usdmFutures(String futuresRestUrl, int cacheMaxEntries, long cacheMaxCandles) {
+        return new BinanceKlineClient(futuresRestUrl, futuresRestUrl, "/fapi/v1/klines", cacheMaxEntries, cacheMaxCandles);
     }
 
     String liveBaseUrl() {

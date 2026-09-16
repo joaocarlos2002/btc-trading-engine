@@ -55,7 +55,7 @@ class BacktestServiceTest {
         AtomicInteger loads = new AtomicInteger();
         service = service((days, split) -> { loads.incrementAndGet(); return data(CANDLES); },
                 Executors.newSingleThreadExecutor(), null);
-        BacktestParams bad = BacktestParams.fromConfig().withOverrides(Map.of(
+        BacktestParams bad = BacktestParams.defaults().withOverrides(Map.of(
                 "smaPeriod", 0, "macdFastPeriod", 30, "macdSlowPeriod", 26, "confirmationSnapshots", 0));
 
         BacktestService.InvalidRequestException e = assertThrows(BacktestService.InvalidRequestException.class,
@@ -67,9 +67,9 @@ class BacktestServiceTest {
         assertThrows(BacktestService.InvalidRequestException.class,
                 () -> service.runNow(BacktestRequest.single(30, false, bad)));
         assertThrows(BacktestService.InvalidRequestException.class,
-                () -> service.submit(BacktestRequest.single(181, false, BacktestParams.fromConfig())));
+                () -> service.submit(BacktestRequest.single(181, false, BacktestParams.defaults())));
         BacktestService.InvalidRequestException sweep = assertThrows(BacktestService.InvalidRequestException.class,
-                () -> service.submit(BacktestRequest.sweep(30, false, BacktestParams.fromConfig(),
+                () -> service.submit(BacktestRequest.sweep(30, false, BacktestParams.defaults(),
                         "buyThreshold", List.of("0.3", "2", "abc"))));
         assertEquals(2, sweep.errors().size(), sweep.errors().toString());
         assertEquals(0, loads.get());
@@ -225,7 +225,7 @@ class BacktestServiceTest {
         service = service((days, split) -> data(CANDLES), Executors.newSingleThreadExecutor(), null);
         WalkForward.Settings tooLong = new WalkForward.Settings(20, 10, 5, WalkForward.Objective.SHARPE, 1, 0);
         assertThrows(BacktestService.InvalidRequestException.class, () -> service.submit(BacktestRequest.walkForward(
-                30, false, BacktestParams.fromConfig(), "buyThreshold", List.of("0.3"), tooLong)));
+                30, false, BacktestParams.defaults(), "buyThreshold", List.of("0.3"), tooLong)));
     }
 
     @Test

@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import dev.romeo.btctradingengine.config.Config;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -66,9 +65,11 @@ public class BinanceUserDataStreamClient {
     private ScheduledExecutorService scheduler;
     private ScheduledFuture<?> pendingReconnect;
 
-    public BinanceUserDataStreamClient(String apiKey, String apiSecret) {
-        this(apiKey, apiSecret, defaultSocketFactory(defaultWsApiUrl()), System::currentTimeMillis,
-                Config.getBinanceMaxRetries(), Config.getBinanceInitialBackoffMs(), Config.getBinanceMaxBackoffMs());
+    /** @param testnet whether binance.rest.url is the testnet, which selects the matching WebSocket API */
+    public BinanceUserDataStreamClient(String apiKey, String apiSecret, boolean testnet,
+                                       int maxRetries, long initialBackoffMs, long maxBackoffMs) {
+        this(apiKey, apiSecret, defaultSocketFactory(defaultWsApiUrl(testnet)), System::currentTimeMillis,
+                maxRetries, initialBackoffMs, maxBackoffMs);
     }
 
     BinanceUserDataStreamClient(String apiKey, String apiSecret, SocketFactory socketFactory, LongSupplier clock,
@@ -82,8 +83,8 @@ public class BinanceUserDataStreamClient {
         this.maxBackoffMs = maxBackoffMs;
     }
 
-    static String defaultWsApiUrl() {
-        return Config.isBinanceTestnetEndpoint() ? TESTNET_WS_API_URL : MAINNET_WS_API_URL;
+    static String defaultWsApiUrl(boolean testnet) {
+        return testnet ? TESTNET_WS_API_URL : MAINNET_WS_API_URL;
     }
 
     private static SocketFactory defaultSocketFactory(String wsApiUrl) {

@@ -23,7 +23,7 @@ public final class ReplayRunner {
         Config.validate();
         String symbol = args.length > 2 ? args[2] : Config.getMarketSymbol();
         try {
-            var ticks = new DatabaseTickReader().loadTicks(symbol, Instant.parse(args[0]), Instant.parse(args[1]));
+            var ticks = new DatabaseTickReader(DataSourceManager.getDataSource()).loadTicks(symbol, Instant.parse(args[0]), Instant.parse(args[1]));
             DeterministicReplay.Result result = new DeterministicReplay(new DeterministicReplay.Settings(
                     Config.getMarketInterval(), Config.getLargeTradeNotional(), Config.indicatorPeriods(),
                     Config.predictionSettings(), Config.getTradingTargetPercent(), Config.getTradingStopLossPercent(),

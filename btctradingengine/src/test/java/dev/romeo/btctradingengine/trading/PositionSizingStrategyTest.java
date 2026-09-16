@@ -91,7 +91,7 @@ public class PositionSizingStrategyTest {
     @Test
     public void positionManagerSendsTheStrategyQuantity() {
         List<BigDecimal> bought = new ArrayList<>();
-        BinanceOrderExecutor exchange = new BinanceOrderExecutor("test-key", "test-secret") {
+        BinanceOrderExecutor exchange = new BinanceOrderExecutor("test-key", "test-secret", "http://127.0.0.1:9", 0, 1, 1) {
             @Override
             public OrderResult executeBuyMarket(String symbol, BigDecimal quantity, String clientOrderId) {
                 bought.add(quantity);

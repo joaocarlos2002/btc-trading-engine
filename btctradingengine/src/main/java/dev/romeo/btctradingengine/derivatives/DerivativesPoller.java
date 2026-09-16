@@ -1,7 +1,6 @@
 package dev.romeo.btctradingengine.derivatives;
 
 import dev.romeo.btctradingengine.adapter.BinanceKlineClient;
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.persistence.DerivativesSnapshotWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,6 +26,10 @@ public class DerivativesPoller {
     private static final int LATEST_KLINES = 2;
 
     private final BinanceFuturesClient client;
+    private final BinanceKlineClient futuresKlines;
+    private final Duration candleInterval;
+    private final long basisPollSeconds;
+    private final long pollSeconds;
     private final DerivativesHistory history;
     private final DerivativesSnapshotWriter writer;
     private final String symbol;
@@ -39,9 +42,19 @@ public class DerivativesPoller {
 
     private volatile boolean basisFailing;
 
-    public DerivativesPoller(BinanceFuturesClient client, DerivativesHistory history,
-                             DerivativesSnapshotWriter writer, String symbol, String interval) {
+    /**
+     * @param candleInterval   market.interval.seconds, to size the funding history of the warmup
+     * @param basisPollSeconds derivatives.basis.poll.seconds
+     * @param pollSeconds      derivatives.poll.seconds
+     */
+    public DerivativesPoller(BinanceFuturesClient client, BinanceKlineClient futuresKlines, DerivativesHistory history,
+                             DerivativesSnapshotWriter writer, String symbol, String interval, Duration candleInterval,
+                             long basisPollSeconds, long pollSeconds) {
         this.client = client;
+        this.futuresKlines = futuresKlines;
+        this.candleInterval = candleInterval;
+        this.basisPollSeconds = basisPollSeconds;
+        this.pollSeconds = pollSeconds;
         this.history = history;
         this.writer = writer;
         this.symbol = symbol;
@@ -54,7 +67,7 @@ public class DerivativesPoller {
      */
     public void seed(int historyCandles) {
         try {
-            BinanceKlineClient.usdmFutures().loadClosedCandles(symbol, interval, historyCandles)
+            futuresKlines.loadClosedCandles(symbol, interval, historyCandles)
                     .forEach(kline -> history.addPerpClose(kline.openTime(), kline.close()));
         } catch (Exception e) {
             logger.warn("Could not load perpetual klines for the warmup basis: {}", e.getMessage());
@@ -62,7 +75,7 @@ public class DerivativesPoller {
         try {
             Instant now = Instant.now();
             // One extra funding interval so the oldest warmup candle already has a settled rate
-            Duration span = Config.getMarketInterval().multipliedBy(historyCandles)
+            Duration span = candleInterval.multipliedBy(historyCandles)
                     .plus(DerivativesHistory.FUNDING_INTERVAL);
             client.fundingRates(symbol, now.minus(span), now)
                     .forEach(rate -> history.addFundingRate(rate.time(), rate.value()));
@@ -72,8 +85,8 @@ public class DerivativesPoller {
     }
 
     public void start() {
-        scheduler.scheduleWithFixedDelay(this::pollBasis, 0, Config.getDerivativesBasisPollSeconds(), TimeUnit.SECONDS);
-        scheduler.scheduleWithFixedDelay(this::pollReadings, 0, Config.getDerivativesPollSeconds(), TimeUnit.SECONDS);
+        scheduler.scheduleWithFixedDelay(this::pollBasis, 0, basisPollSeconds, TimeUnit.SECONDS);
+        scheduler.scheduleWithFixedDelay(this::pollReadings, 0, pollSeconds, TimeUnit.SECONDS);
     }
 
     public void stop() {

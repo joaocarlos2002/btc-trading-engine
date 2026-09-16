@@ -1,9 +1,9 @@
 package dev.romeo.btctradingengine.trading;
 
-import dev.romeo.btctradingengine.persistence.DataSourceManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.sql.DataSource;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -16,6 +16,12 @@ import dev.romeo.btctradingengine.prediction.Signal;
 
 public class TradeJournal {
     private static final Logger logger = LoggerFactory.getLogger(TradeJournal.class);
+
+    private final DataSource dataSource;
+
+    public TradeJournal(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
 
     public void createTableIfNotExists() {
         String sql = """
@@ -51,7 +57,7 @@ public class TradeJournal {
                 CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(exit_time);
                 """;
 
-        try (Connection conn = DataSourceManager.getDataSource().getConnection();
+        try (Connection conn = dataSource.getConnection();
              var stmt = conn.createStatement()) {
 
             String[] statements = sql.split(";");
@@ -85,7 +91,7 @@ public class TradeJournal {
                     pnl_percent = EXCLUDED.pnl_percent
                 """;
 
-        try (Connection conn = DataSourceManager.getDataSource().getConnection();
+        try (Connection conn = dataSource.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
 
             stmt.setString(1, position.getPositionId());
@@ -127,7 +133,7 @@ public class TradeJournal {
                 + "FROM trades WHERE symbol = ? AND exit_time IS NULL "
                 + "ORDER BY entry_time DESC LIMIT 1";
 
-        try (Connection conn = DataSourceManager.getDataSource().getConnection();
+        try (Connection conn = dataSource.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, symbol);
             try (var result = stmt.executeQuery()) {
@@ -170,7 +176,7 @@ public class TradeJournal {
                 + "ORDER BY exit_time DESC LIMIT ?";
         List<Position> positions = new ArrayList<>();
 
-        try (Connection conn = DataSourceManager.getDataSource().getConnection();
+        try (Connection conn = dataSource.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
             stmt.setString(1, symbol);
             stmt.setInt(2, Math.max(1, Math.min(limit, 5000)));
@@ -207,7 +213,7 @@ public class TradeJournal {
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """;
 
-        try (Connection conn = DataSourceManager.getDataSource().getConnection();
+        try (Connection conn = dataSource.getConnection();
              PreparedStatement stmt = conn.prepareStatement(sql)) {
 
             stmt.setString(1, event.positionId());
@@ -243,7 +249,7 @@ public class TradeJournal {
                 CREATE INDEX IF NOT EXISTS idx_exec_time ON execution_log(event_time DESC);
                 """;
 
-        try (Connection conn = DataSourceManager.getDataSource().getConnection();
+        try (Connection conn = dataSource.getConnection();
              var stmt = conn.createStatement()) {
 
             String[] statements = sql.split(";");

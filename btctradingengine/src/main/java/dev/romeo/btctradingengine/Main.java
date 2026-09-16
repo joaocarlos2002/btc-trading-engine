@@ -44,15 +44,16 @@ public class Main {
             DashboardState dashboardState = dashboardContext.getBean(DashboardState.class);
             initializeDatabase();
 
-            DatabaseWriter dbWriter = new DatabaseWriter();
+            DatabaseWriter dbWriter = new DatabaseWriter(DataSourceManager.getDataSource());
             dbWriter.start();
-            TickRetentionJob tickRetention = TickRetentionJob.fromConfig();
+            TickRetentionJob tickRetention = TickRetentionJob.create(DataSourceManager.getDataSource(), Config.getTicksRetentionDays(),
+                    Config.getTicksRetentionBatchSize(), java.time.Duration.ofMinutes(Math.max(1, Config.getTicksRetentionIntervalMinutes())));
             tickRetention.start();
 
-            TradeJournal tradeJournal = new TradeJournal();
+            TradeJournal tradeJournal = new TradeJournal(DataSourceManager.getDataSource());
             tradeJournal.createTableIfNotExists();
             tradeJournal.createExecutionLogTableIfNotExists();
-            JdbcOrderCommandStore orderCommands = new JdbcOrderCommandStore();
+            JdbcOrderCommandStore orderCommands = new JdbcOrderCommandStore(DataSourceManager::getDataSource);
             orderCommands.createTableIfNotExists();
 
             PositionManager positionManager = new PositionManager(
@@ -81,7 +82,8 @@ public class Main {
 
             if (Config.isRealTradingEnabled()) {
                 BinanceOrderExecutor executor = new BinanceOrderExecutor(
-                    Config.getBinanceApiKey(), Config.getBinanceApiSecret());
+                    Config.getBinanceApiKey(), Config.getBinanceApiSecret(), Config.getBinanceRestUrl(),
+                    Config.getBinanceMaxRetries(), Config.getBinanceInitialBackoffMs(), Config.getBinanceMaxBackoffMs());
                 BinanceOrderExecutor.BalanceResult balance = executor.getBalance("USDT");
                 if (!balance.success() || balance.total().compareTo(BigDecimal.ZERO) <= 0) {
                     alertNotifier.alert("Startup aborted: could not validate positive USDT balance: " + balance.error());
@@ -187,13 +189,17 @@ public class Main {
                     Config.predictionSettings()
             );
 
-            DerivativesHistory derivativesHistory = Config.isDerivativesEnabled() ? DerivativesHistory.forLive() : null;
+            DerivativesHistory derivativesHistory = Config.isDerivativesEnabled() ? DerivativesHistory.forLive(
+                    java.time.Duration.ofSeconds(Config.getDerivativesStaleSeconds()), java.time.Duration.ofMinutes(Config.getOpenInterestChangeMinutes()),
+                    Config.getMarketInterval(), Config.getHistoryCandles()) : null;
             DerivativesPoller derivativesPoller = derivativesHistory == null ? null : new DerivativesPoller(
-                    new BinanceFuturesClient(),
+                    new BinanceFuturesClient(Config.getBinanceFuturesRestUrl()),
+                    BinanceKlineClient.usdmFutures(Config.getBinanceFuturesRestUrl(), Config.getKlineCacheMaxEntries(), Config.getKlineCacheMaxCandles()),
                     derivativesHistory,
-                    new DerivativesSnapshotWriter(),
+                    new DerivativesSnapshotWriter(DataSourceManager.getDataSource()),
                     Config.getMarketSymbol(),
-                    Config.getBinanceKlineInterval());
+                    Config.getBinanceKlineInterval(),
+                    Config.getMarketInterval(), Config.getDerivativesBasisPollSeconds(), Config.getDerivativesPollSeconds());
             if (derivativesPoller != null) {
                 // Before the warmup below, so the warmup candles get funding and basis too
                 derivativesPoller.seed(Config.getHistoryCandles());
@@ -203,11 +209,11 @@ public class Main {
             OrderBookHistory orderBookHistory = Config.isOrderBookEnabled()
                     ? new OrderBookHistory(java.time.Duration.ofHours(1)) : null;
             OrderBookPoller orderBookPoller = orderBookHistory == null ? null : new OrderBookPoller(
-                    new BinanceDepthClient(),
+                    new BinanceDepthClient(Config.getOrderBookRestUrl()),
                     orderBookHistory,
-                    new OrderBookSnapshotWriter(),
+                    new OrderBookSnapshotWriter(DataSourceManager.getDataSource()),
                     Config.getMarketSymbol(),
-                    Config.getOrderBookDepthLevels());
+                    Config.getOrderBookDepthLevels(), Config.getOrderBookPollSeconds());
 
             FeatureExtractor featureExtractor = new FeatureExtractor(
                     Config.indicatorPeriods(),
@@ -221,7 +227,7 @@ public class Main {
             );
 
             try {
-                var history = new BinanceKlineClient().loadClosedCandles(
+                var history = new BinanceKlineClient(Config.getMarketDataRestUrl(), Config.getKlineCacheMaxEntries(), Config.getKlineCacheMaxCandles()).loadClosedCandles(
                         Config.getMarketSymbol(),
                         Config.getBinanceKlineInterval(),
                         Config.getHistoryCandles());
@@ -233,7 +239,7 @@ public class Main {
             } catch (Exception e) {
                 logger.warn("Could not load Binance candle history; trying database fallback: {}", e.getMessage());
                 try {
-                    var history = new DatabaseCandleReader().loadRecentClosedCandles(
+                    var history = new DatabaseCandleReader(DataSourceManager.getDataSource()).loadRecentClosedCandles(
                             Config.getMarketSymbol(), Config.getHistoryCandles());
                     history.forEach(candle -> {
                         dashboardState.onCandle(candle);
@@ -249,7 +255,8 @@ public class Main {
             // Market data and execution are separate venues (issue #76): mainnet prices, testnet orders by default
             logger.info("Market data from {} / {}; execution on {}",
                     Config.getMarketDataWsUrl(), Config.getMarketDataRestUrl(), Config.getBinanceRestUrl());
-            BinanceAdapter source = new BinanceAdapter();
+            BinanceAdapter source = new BinanceAdapter(Config.getMarketDataWsUrl(), Config.getMarketSymbol(),
+                    Config.getBinanceMaxRetries(), Config.getBinanceInitialBackoffMs(), Config.getBinanceMaxBackoffMs());
             source.setStatusListener(status -> {
                 connectivityGuard.onMarketDataStatus(status);
                 if ("failed".equals(status)) {
@@ -264,9 +271,9 @@ public class Main {
                         dashboardState.onCandle(candle);
                         dbWriter.onEvent(candle);
                         featureExtractor.onEvent(candle);
-                    });
+                    }, Config.getLargeTradeNotional());
 
-            PriceEventBus priceEventBus = new PriceEventBus();
+            PriceEventBus priceEventBus = new PriceEventBus(Config.getPriceBusQueueCapacity(), Config.getPriceBusBlockTimeoutMs());
             // Aggregator, DB writer and trading path must not lose ticks: bounded queues that block the
             // reader briefly when full. The dashboard only needs the latest tick (issue #85).
             priceEventBus.subscribe(aggregator);
@@ -329,7 +336,8 @@ public class Main {
     private static BinanceUserDataStreamClient getBinanceUserDataStreamClient(
             OrderConfirmationManager confirmationManager, ConnectivityGuard connectivityGuard, AlertNotifier alertNotifier) {
         BinanceUserDataStreamClient userDataStream = new BinanceUserDataStreamClient(
-                Config.getBinanceApiKey(), Config.getBinanceApiSecret());
+                Config.getBinanceApiKey(), Config.getBinanceApiSecret(), Config.isBinanceTestnetEndpoint(),
+                Config.getBinanceMaxRetries(), Config.getBinanceInitialBackoffMs(), Config.getBinanceMaxBackoffMs());
         userDataStream.setExecutionReportListener(
             report -> {
                 logger.debug("Execution report received: orderId={} status={}", report.orderId(), report.orderStatus());
@@ -350,7 +358,7 @@ public class Main {
     private static void initializeDatabase() {
         logger.info("Initializing database...");
         try {
-            DatabaseInitializer.initializeSchema();
+            DatabaseInitializer.initializeSchema(DataSourceManager.getDataSource());
             logger.info("Database initialization complete");
         } catch (Exception e) {
             logger.error("Failed to initialize database", e);

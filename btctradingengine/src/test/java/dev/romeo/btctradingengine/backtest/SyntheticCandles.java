@@ -47,7 +47,7 @@ final class SyntheticCandles {
 
     /** Short periods and loose thresholds, so a few hundred candles are enough to trade. */
     static BacktestParams fastParams() {
-        return BacktestParams.fromConfig().withOverrides(Map.ofEntries(
+        return BacktestParams.defaults().withOverrides(Map.ofEntries(
                 Map.entry("smaPeriod", 10), Map.entry("emaPeriod", 10), Map.entry("rsiPeriod", 7),
                 Map.entry("atrPeriod", 7), Map.entry("macdFastPeriod", 6), Map.entry("macdSlowPeriod", 13),
                 Map.entry("macdSignalPeriod", 5), Map.entry("volatilityShortPeriods", 5),

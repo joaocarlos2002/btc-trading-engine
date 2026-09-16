@@ -1,6 +1,5 @@
 package dev.romeo.btctradingengine.adapter;
 
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.model.AggressorSide;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
@@ -56,10 +55,6 @@ public class CandleAggregator implements PriceEventListener {
      */
     private Instant lastEmittedBucket;
     private final AtomicLong lateTicksDropped = new AtomicLong();
-
-    public CandleAggregator(Duration interval, CandleEventListener listener) {
-        this(interval, listener, Config.getLargeTradeNotional());
-    }
 
     public CandleAggregator(Duration interval, CandleEventListener listener, BigDecimal largeTradeNotional) {
         this.interval = Objects.requireNonNull(interval, "intervalo");

@@ -1,6 +1,5 @@
 package dev.romeo.btctradingengine.backtest;
 
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.feature.DerivativesLookup;
 import dev.romeo.btctradingengine.feature.FeatureExtractor;
 import dev.romeo.btctradingengine.model.CandleEvent;
@@ -21,7 +20,7 @@ import java.util.Objects;
 
 public class BacktestRunner {
     public BacktestReport run(List<CandleEvent> candles, BigDecimal initialCapital) {
-        return run(candles, initialCapital, BacktestParams.fromConfig());
+        return run(candles, initialCapital, BacktestParams.defaults());
     }
 
     public BacktestReport run(List<CandleEvent> candles, BigDecimal initialCapital, BacktestParams params) {

@@ -66,7 +66,7 @@ public class BacktestEngineShortTest {
 
     @Test
     public void paramsDefaultToNoShorting() {
-        assertEquals(false, BacktestParams.fromConfig().allowShort(),
+        assertEquals(false, BacktestParams.defaults().allowShort(),
                 "trading.allow.short ships off, so /backtest must not count shorts unless asked");
     }
 

@@ -1,6 +1,5 @@
 package dev.romeo.btctradingengine.orderbook;
 
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.persistence.OrderBookSnapshotWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,6 +23,7 @@ public class OrderBookPoller {
     private final OrderBookSnapshotWriter writer;
     private final String symbol;
     private final int levels;
+    private final long pollSeconds;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "OrderBookPoller");
         t.setDaemon(true);
@@ -33,7 +33,8 @@ public class OrderBookPoller {
     private volatile boolean failing;
 
     public OrderBookPoller(BinanceDepthClient client, OrderBookHistory history, OrderBookSnapshotWriter writer,
-                           String symbol, int levels) {
+                           String symbol, int levels, long pollSeconds) {
+        this.pollSeconds = pollSeconds;
         this.client = client;
         this.history = history;
         this.writer = writer;
@@ -42,7 +43,7 @@ public class OrderBookPoller {
     }
 
     public void start() {
-        scheduler.scheduleWithFixedDelay(this::poll, 0, Config.getOrderBookPollSeconds(), TimeUnit.SECONDS);
+        scheduler.scheduleWithFixedDelay(this::poll, 0, pollSeconds, TimeUnit.SECONDS);
     }
 
     public void stop() {

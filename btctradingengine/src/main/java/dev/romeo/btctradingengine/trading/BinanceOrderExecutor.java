@@ -2,7 +2,6 @@ package dev.romeo.btctradingengine.trading;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.port.ExecutionPort;
 
 import java.math.BigDecimal;
@@ -45,13 +44,8 @@ public class BinanceOrderExecutor implements ExecutionPort {
     private volatile long clockOffsetMs = 0;
     private volatile long lastClockSyncMs = Long.MIN_VALUE;
 
-    public BinanceOrderExecutor(String apiKey, String apiSecret) {
-        this(apiKey, apiSecret, Config.getBinanceRestUrl(),
-                Config.getBinanceMaxRetries(), Config.getBinanceInitialBackoffMs(), Config.getBinanceMaxBackoffMs());
-    }
-
-    // Visible for testing: allows pointing at a local HTTP server with fast retry timings.
-    BinanceOrderExecutor(String apiKey, String apiSecret, String baseUrl,
+    /** baseUrl is binance.rest.url, the execution venue; the retry settings are binance.max.retries and the backoffs. */
+    public BinanceOrderExecutor(String apiKey, String apiSecret, String baseUrl,
                           int maxRetries, long initialBackoffMs, long maxBackoffMs) {
         this(apiKey, apiSecret, baseUrl, maxRetries, initialBackoffMs, maxBackoffMs, CONNECT_TIMEOUT, REQUEST_TIMEOUT);
     }

@@ -26,7 +26,7 @@ public class ManualBuyGuardsTest {
         private final boolean fail;
 
         RecordingExecutor(boolean fail) {
-            super("test-key", "test-secret");
+            super("test-key", "test-secret", "https://testnet.binance.vision", 10, 1000, 60000);
             this.fail = fail;
         }
 

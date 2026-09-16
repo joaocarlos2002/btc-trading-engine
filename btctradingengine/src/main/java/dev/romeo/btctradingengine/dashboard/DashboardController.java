@@ -94,7 +94,7 @@ public class DashboardController {
         overrides.keySet().retainAll(BacktestParams.parameterNames());
         BacktestParams params;
         try {
-            params = BacktestParams.fromConfig().withOverrides(overrides);
+            params = Config.backtestParams().withOverrides(overrides);
         } catch (IllegalArgumentException e) {
             return invalid(List.of(e.getMessage().split("; ")));
         }
@@ -210,7 +210,7 @@ public class DashboardController {
     }
 
     private static BacktestParams params(BacktestJobBody body, List<String> errors) {
-        BacktestParams defaults = BacktestParams.fromConfig();
+        BacktestParams defaults = Config.backtestParams();
         if (body.params() == null || body.params().isEmpty()) {
             return defaults;
         }

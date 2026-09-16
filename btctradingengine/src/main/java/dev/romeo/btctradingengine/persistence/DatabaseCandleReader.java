@@ -3,6 +3,7 @@ package dev.romeo.btctradingengine.persistence;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.model.TradeFlow;
 
+import javax.sql.DataSource;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -15,13 +16,19 @@ import java.util.List;
 import java.util.Objects;
 
 public class DatabaseCandleReader {
+    private final DataSource dataSource;
+
+    public DatabaseCandleReader(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+
     public List<CandleEvent> loadRecentClosedCandles(String symbol, int limit) throws Exception {
         String sql = "SELECT symbol, open_time_ms, close_time_ms, open, high, low, close, volume, tick_count, "
                 + "taker_buy_volume, large_buy_volume, large_sell_volume, flow_source "
                 + "FROM candles WHERE symbol = ? ORDER BY close_time_ms DESC LIMIT ?";
         List<CandleEvent> candles = new ArrayList<>();
 
-        try (Connection connection = DataSourceManager.getDataSource().getConnection();
+        try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, symbol);
             statement.setInt(2, Math.min(Math.max(limit, 1), 5000));

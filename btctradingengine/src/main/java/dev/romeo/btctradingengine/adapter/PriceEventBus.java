@@ -1,6 +1,5 @@
 package dev.romeo.btctradingengine.adapter;
 
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,10 +42,6 @@ public class PriceEventBus implements PriceEventListener, AutoCloseable {
     private final AtomicBoolean running = new AtomicBoolean(true);
     private final int criticalCapacity;
     private final long blockTimeoutMs;
-
-    public PriceEventBus() {
-        this(Config.getPriceBusQueueCapacity(), Config.getPriceBusBlockTimeoutMs());
-    }
 
     public PriceEventBus(int criticalCapacity, long blockTimeoutMs) {
         if (criticalCapacity < 1) {

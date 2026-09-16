@@ -22,7 +22,7 @@ public class PortfolioEquityTest {
         BigDecimal fillPrice = new BigDecimal("100000");
 
         AccountExecutor() {
-            super("test-key", "test-secret");
+            super("test-key", "test-secret", "https://testnet.binance.vision", 10, 1000, 60000);
         }
 
         @Override

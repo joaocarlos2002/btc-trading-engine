@@ -64,10 +64,6 @@ public class JdbcOrderCommandStore implements OrderCommandStore {
 
     private final Supplier<DataSource> dataSource;
 
-    public JdbcOrderCommandStore() {
-        this(DataSourceManager::getDataSource);
-    }
-
     public JdbcOrderCommandStore(Supplier<DataSource> dataSource) {
         this.dataSource = dataSource;
     }

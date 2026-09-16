@@ -1,6 +1,5 @@
 package dev.romeo.btctradingengine.derivatives;
 
-import dev.romeo.btctradingengine.config.Config;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -50,10 +49,6 @@ public class BinanceMetricsArchive {
     private final HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
     private final String baseUrl;
     private final Path cacheDir;
-
-    public BinanceMetricsArchive() {
-        this(Config.getBinanceDataUrl(), Config.getMetricsCacheDir());
-    }
 
     public BinanceMetricsArchive(String baseUrl, Path cacheDir) {
         this.baseUrl = baseUrl;

@@ -8,6 +8,7 @@ import dev.romeo.btctradingengine.model.TradeFlow;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -37,8 +38,10 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
     private final BlockingQueue<Object> queue = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
     private final AtomicBoolean running = new AtomicBoolean(false);
     private Thread writerThread;
+    private final DataSource dataSource;
 
-    public DatabaseWriter() {
+    public DatabaseWriter(DataSource dataSource) {
+        this.dataSource = dataSource;
     }
 
     public void start() {
@@ -173,7 +176,7 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
      *         event by event and one bad row does not drop the others
      */
     private boolean writeBatch(List<Object> batch) {
-        try (Connection conn = DataSourceManager.getDataSource().getConnection()) {
+        try (Connection conn = dataSource.getConnection()) {
             boolean previousAutoCommit = conn.getAutoCommit();
             conn.setAutoCommit(false);
             try (PreparedStatement candleStmt = conn.prepareStatement(INSERT_CANDLE_SQL);
@@ -243,7 +246,7 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
     }
 
     private void writeCandleToDatabase(CandleEvent event) {
-        try (Connection conn = DataSourceManager.getDataSource().getConnection();
+        try (Connection conn = dataSource.getConnection();
              PreparedStatement stmt = conn.prepareStatement(INSERT_CANDLE_SQL)) {
 
             bindCandle(stmt, event);
@@ -258,7 +261,7 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
     }
 
     private void writeTickToDatabase(NormalizedPriceEvent event) {
-        try (Connection conn = DataSourceManager.getDataSource().getConnection();
+        try (Connection conn = dataSource.getConnection();
              PreparedStatement stmt = conn.prepareStatement(INSERT_TICK_SQL)) {
 
             bindTick(stmt, event);

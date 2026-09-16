@@ -2,7 +2,6 @@ package dev.romeo.btctradingengine.orderbook;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.romeo.btctradingengine.config.Config;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -23,10 +22,6 @@ public class BinanceDepthClient {
 
     private final HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
     private final String baseUrl;
-
-    public BinanceDepthClient() {
-        this(Config.getOrderBookRestUrl());
-    }
 
     public BinanceDepthClient(String baseUrl) {
         this.baseUrl = baseUrl;

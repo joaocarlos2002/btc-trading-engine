@@ -2,7 +2,6 @@ package dev.romeo.btctradingengine.adapter;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.model.AggressorSide;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
 
@@ -21,9 +20,9 @@ public class BinanceAdapter implements MarketDataSource {
     private final HttpClient client = HttpClient.newHttpClient();
     // Market data URL, not the execution one: mainnet ticks even when orders go to the testnet (issue #76).
     private final String wsUrl;
-    private final int maxRetries = Config.getBinanceMaxRetries();
-    private final long initialBackoffMs = Config.getBinanceInitialBackoffMs();
-    private final long maxBackoffMs = Config.getBinanceMaxBackoffMs();
+    private final int maxRetries;
+    private final long initialBackoffMs;
+    private final long maxBackoffMs;
 
     private WebSocket webSocket;
     private PriceEventListener priceListener;
@@ -100,12 +99,15 @@ public class BinanceAdapter implements MarketDataSource {
         }
     };
 
-    public BinanceAdapter() {
-        this(Config.getMarketDataWsUrl());
-    }
-
-    BinanceAdapter(String baseWsUrl) {
-        this.wsUrl = baseWsUrl + Config.getMarketSymbol().toLowerCase() + "@aggTrade";
+    /**
+     * @param baseWsUrl market.data.ws.url - the market data venue, not the execution one (issue #76)
+     * @param symbol    market.symbol; the aggTrade stream of that symbol is opened
+     */
+    public BinanceAdapter(String baseWsUrl, String symbol, int maxRetries, long initialBackoffMs, long maxBackoffMs) {
+        this.wsUrl = baseWsUrl + symbol.toLowerCase() + "@aggTrade";
+        this.maxRetries = maxRetries;
+        this.initialBackoffMs = initialBackoffMs;
+        this.maxBackoffMs = maxBackoffMs;
     }
 
     String streamUrl() {

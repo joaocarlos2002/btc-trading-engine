@@ -1,6 +1,5 @@
 package dev.romeo.btctradingengine.derivatives;
 
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.feature.DerivFeatures;
 import dev.romeo.btctradingengine.feature.DerivativesLookup;
 import dev.romeo.btctradingengine.model.CandleEvent;
@@ -49,21 +48,17 @@ public class DerivativesHistory implements DerivativesLookup {
     }
 
     /** Retention covers the warmup candles plus the longest look-back (funding interval, OI window). */
-    public static DerivativesHistory forLive() {
-        Duration staleAfter = Duration.ofSeconds(Config.getDerivativesStaleSeconds());
-        Duration changeWindow = Duration.ofMinutes(Config.getOpenInterestChangeMinutes());
-        Duration retention = Config.getMarketInterval().multipliedBy(Config.getHistoryCandles())
+    public static DerivativesHistory forLive(Duration staleAfter, Duration changeWindow, Duration candleInterval,
+                                             int historyCandles) {
+        Duration retention = candleInterval.multipliedBy(historyCandles)
                 .plus(FUNDING_INTERVAL)
                 .plus(changeWindow)
                 .plus(staleAfter);
         return new DerivativesHistory(staleAfter, changeWindow, retention);
     }
 
-    public static DerivativesHistory forBacktest() {
-        return new DerivativesHistory(
-                Duration.ofSeconds(Config.getDerivativesStaleSeconds()),
-                Duration.ofMinutes(Config.getOpenInterestChangeMinutes()),
-                Duration.ZERO);
+    public static DerivativesHistory forBacktest(Duration staleAfter, Duration changeWindow) {
+        return new DerivativesHistory(staleAfter, changeWindow, Duration.ZERO);
     }
 
     /** Keyed by the settlement time: the rate is only known once it has been settled. */

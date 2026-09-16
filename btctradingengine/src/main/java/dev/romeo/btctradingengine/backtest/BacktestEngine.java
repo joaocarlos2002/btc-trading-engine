@@ -1,7 +1,6 @@
 package dev.romeo.btctradingengine.backtest;
 
 import dev.romeo.btctradingengine.model.CandleEvent;
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.prediction.PredictionVector;
 import dev.romeo.btctradingengine.prediction.Signal;
 import org.slf4j.Logger;
@@ -43,15 +42,6 @@ public class BacktestEngine {
         this.targetPercent = targetPercent;
         this.stopLossPercent = stopLossPercent;
         this.allowShort = allowShort;
-    }
-
-    public static BacktestEngine configured() {
-        Config.validate();
-        return new BacktestEngine(
-                Config.getBacktestCommissionRate(),
-                Config.getTradingTargetPercent(),
-                Config.getTradingStopLossPercent(),
-                Config.isShortSellingAllowed());
     }
 
     public void processPrediction(PredictionVector prediction, CandleEvent candle) {
