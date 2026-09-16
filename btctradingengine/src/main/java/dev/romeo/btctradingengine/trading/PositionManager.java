@@ -218,6 +218,10 @@ public class PositionManager {
     }
 
     public synchronized void processPriceEvent(NormalizedPriceEvent event) {
+        if (event.price() != null) {
+            // Keeps equity drawdown current between orders; in-memory only, no HTTP
+            portfolioManager.ifPresent(pm -> pm.updateMarketPrice(event.price()));
+        }
         if (openPosition.isEmpty() || event.price() == null) {
             return;
         }
@@ -427,7 +431,7 @@ public class PositionManager {
                 }
                 // Always: the quantity is what a restart needs to send the exit order (issue #64)
                 positionPersistence.accept(pos);
-                syncPortfolioBalance();
+                syncPortfolioBalance(pos.getEntryPrice());
                 logger.info("âœ“ Real order executed: orderId={} qty={} @ price={}",
                         result.orderId(), result.executedQuantity(), result.averagePrice());
                 pos.updatePrice(result.averagePrice(), pos.getEntryTime());
@@ -523,7 +527,7 @@ public class PositionManager {
         BinanceOrderExecutor executor = orderExecutor.get();
         BigDecimal quantity = pos.getQuantity();
 
-        String baseAsset = symbol.endsWith("USDT") ? symbol.substring(0, symbol.length() - 4) : symbol;
+        String baseAsset = baseAsset();
         BinanceOrderExecutor.BalanceResult balance = executor.getBalance(baseAsset);
         if (balance != null && balance.success()) {
             if (balance.free().compareTo(quantity) < 0) {
@@ -577,7 +581,7 @@ public class PositionManager {
                 if (sent.isPresent() && "FILLED".equals(sent.get().status())) {
                     BinanceOrderExecutor.QueriedOrder order = sent.get();
                     logger.warn("Exit order {} reported an error but is FILLED on Binance: {}", clientOrderId, result.error());
-                    syncPortfolioBalance();
+                    syncPortfolioBalance(order.averagePrice());
                     return Optional.of(new BinanceOrderExecutor.OrderResult(true, String.valueOf(order.orderId()),
                             order.executedQuantity(), order.averagePrice(), null));
                 }
@@ -587,7 +591,7 @@ public class PositionManager {
 
             logger.info("âœ“ Real exit order executed: orderId={} qty={} @ price={}",
                     result.orderId(), result.executedQuantity(), result.averagePrice());
-                syncPortfolioBalance();
+            syncPortfolioBalance(result.averagePrice());
             return Optional.of(result);
         } catch (Exception e) {
             logger.error("âœ— Error executing real exit order for {}: {}", pos.getPositionId(), e.getMessage(), e);
@@ -595,17 +599,31 @@ public class PositionManager {
         }
     }
 
-    private void syncPortfolioBalance() {
+    /** Refreshes USDT and base asset totals so the drawdown is measured on equity (issue #81). */
+    private void syncPortfolioBalance(BigDecimal lastFillPrice) {
         if (portfolioManager.isEmpty() || orderExecutor.isEmpty()) {
             return;
         }
+        PortfolioManager pm = portfolioManager.get();
+        pm.updateMarketPrice(lastFillPrice);
 
         BinanceOrderExecutor.BalanceResult balance = orderExecutor.get().getBalance("USDT");
-        if (balance.success()) {
-            portfolioManager.get().updateBalance(balance.total());
-        } else {
+        if (!balance.success()) {
             logger.warn("Could not refresh USDT balance after order: {}", balance.error());
+            return;
         }
+        BinanceOrderExecutor.BalanceResult base = orderExecutor.get().getBalance(baseAsset());
+        if (base.success()) {
+            pm.updateBalances(balance.total(), base.total());
+        } else {
+            // Without the base balance, keep the last known base quantity rather than dropping it
+            logger.warn("Could not refresh {} balance after order: {}", baseAsset(), base.error());
+            pm.updateBalances(balance.total(), pm.getBaseQuantity());
+        }
+    }
+
+    private String baseAsset() {
+        return symbol.endsWith("USDT") ? symbol.substring(0, symbol.length() - 4) : symbol;
     }
 
     public synchronized Optional<Position> getOpenPosition() {
