@@ -2,6 +2,7 @@ package dev.romeo.btctradingengine.trading;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import dev.romeo.btctradingengine.alerting.AlertNotifier;
 import dev.romeo.btctradingengine.prediction.Signal;
 
 import java.math.BigDecimal;
@@ -11,22 +12,36 @@ import java.util.Optional;
 
 public class BinanceReconciliationService {
     private static final String CLIENT_ORDER_PREFIX = "btce-";
+    private static final String QUOTE_ASSET = "USDT";
+    // A BUY pays its commission in the bought asset unless BNB is used, so the balance can be ~0.1% short
+    private static final BigDecimal BALANCE_TOLERANCE = new BigDecimal("0.99");
     private static final Logger logger = LoggerFactory.getLogger(BinanceReconciliationService.class);
 
     private final BinanceOrderExecutor orderExecutor;
     private final PositionManager positionManager;
     private final BigDecimal targetPercent;
     private final BigDecimal stopLossPercent;
+    private final AlertNotifier alertNotifier;
 
     public BinanceReconciliationService(
             BinanceOrderExecutor orderExecutor,
             PositionManager positionManager,
             BigDecimal targetPercent,
             BigDecimal stopLossPercent) {
+        this(orderExecutor, positionManager, targetPercent, stopLossPercent, null);
+    }
+
+    public BinanceReconciliationService(
+            BinanceOrderExecutor orderExecutor,
+            PositionManager positionManager,
+            BigDecimal targetPercent,
+            BigDecimal stopLossPercent,
+            AlertNotifier alertNotifier) {
         this.orderExecutor = orderExecutor;
         this.positionManager = positionManager;
         this.targetPercent = targetPercent;
         this.stopLossPercent = stopLossPercent;
+        this.alertNotifier = alertNotifier;
     }
 
     public ReconciliationResult reconcile(String symbol) {
@@ -46,6 +61,11 @@ public class BinanceReconciliationService {
 
         if (botOrders.isEmpty()) {
             logger.info("âœ“ No open orders found on Binance for {}", symbol);
+            // MARKET orders never stay open, so this is the usual path after a restart with a
+            // position: it must still recover the fill (issue #64)
+            if (positionManager.getOpenPosition().isPresent()) {
+                return reconcilePersistedPosition(symbol, positionManager.getOpenPosition().get(), 0);
+            }
             return new ReconciliationResult(true, "No open orders", 0, null);
         }
 
@@ -101,24 +121,59 @@ public class BinanceReconciliationService {
         }
 
         if (positionManager.getOpenPosition().isPresent()) {
-            Position localPosition = positionManager.getOpenPosition().get();
-            String clientOrderId = CLIENT_ORDER_PREFIX + symbol + "-"
-                    + localPosition.getPositionId() + "-entry";
-            orderExecutor.findOrderByClientOrderId(symbol, clientOrderId).ifPresent(result -> {
-                if (result.executedQuantity().compareTo(BigDecimal.ZERO) > 0) {
-                    localPosition.setQuantity(result.executedQuantity());
-                    if (result.averagePrice().compareTo(BigDecimal.ZERO) > 0) {
-                        localPosition.updatePrice(result.averagePrice(), Instant.now());
-                    }
-                    logger.warn("Recovered filled entry {} after restart: qty={} price={}",
-                            clientOrderId, result.executedQuantity(), result.averagePrice());
-                }
-            });
-            return new ReconciliationResult(true, "Persisted position reconciled", botOrders.size(), localPosition);
+            return reconcilePersistedPosition(symbol, positionManager.getOpenPosition().get(), botOrders.size());
         }
 
         logger.warn("âš  Found {} bot order(s) but none are active", botOrders.size());
         return new ReconciliationResult(true, "No active bot orders", botOrders.size(), null);
+    }
+
+    /**
+     * Binance is the authority on how much the persisted entry filled. When it cannot be asked, the
+     * quantity persisted in the journal is kept.
+     */
+    private ReconciliationResult reconcilePersistedPosition(String symbol, Position localPosition, int ordersFound) {
+        String clientOrderId = CLIENT_ORDER_PREFIX + symbol + "-" + localPosition.getPositionId() + "-entry";
+        orderExecutor.findOrderByClientOrderId(symbol, clientOrderId).ifPresentOrElse(result -> {
+            if (result.executedQuantity().compareTo(BigDecimal.ZERO) > 0) {
+                localPosition.setQuantity(result.executedQuantity());
+                if (result.averagePrice().compareTo(BigDecimal.ZERO) > 0) {
+                    localPosition.updatePrice(result.averagePrice(), Instant.now());
+                }
+                logger.warn("Recovered filled entry {} after restart: qty={} price={}",
+                        clientOrderId, result.executedQuantity(), result.averagePrice());
+            }
+        }, () -> logger.warn("Entry {} not found on Binance; keeping persisted qty={}",
+                clientOrderId, localPosition.getQuantity()));
+
+        checkBaseAssetBalance(symbol, localPosition);
+        return new ReconciliationResult(true, "Persisted position reconciled", ordersFound, localPosition);
+    }
+
+    /** A BUY position the account no longer holds cannot be exited: say so before trading starts. */
+    private void checkBaseAssetBalance(String symbol, Position position) {
+        if (position.getSignal() != Signal.BUY || position.getQuantity().signum() <= 0
+                || !symbol.endsWith(QUOTE_ASSET)) {
+            return;
+        }
+
+        String baseAsset = symbol.substring(0, symbol.length() - QUOTE_ASSET.length());
+        BinanceOrderExecutor.BalanceResult balance = orderExecutor.getBalance(baseAsset);
+        BigDecimal minimum = position.getQuantity().multiply(BALANCE_TOLERANCE);
+        if (!balance.success()) {
+            alert(String.format("Could not check %s balance for position %s (qty=%s): %s",
+                    baseAsset, position.getPositionId(), position.getQuantity(), balance.error()));
+        } else if (balance.total().compareTo(minimum) < 0) {
+            alert(String.format("%s balance %s is below position %s qty=%s: the exit order may fail, check it manually",
+                    baseAsset, balance.total(), position.getPositionId(), position.getQuantity()));
+        }
+    }
+
+    private void alert(String message) {
+        logger.error(message);
+        if (alertNotifier != null) {
+            alertNotifier.alert(message);
+        }
     }
 
     public record ReconciliationResult(
