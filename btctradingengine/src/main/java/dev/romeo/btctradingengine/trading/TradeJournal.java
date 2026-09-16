@@ -36,6 +36,8 @@ public class TradeJournal {
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
 
+                ALTER TABLE trades ADD COLUMN IF NOT EXISTS quantity NUMERIC(20, 8);
+
                 CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
                 CREATE INDEX IF NOT EXISTS idx_trades_entry_time ON trades(entry_time DESC);
                 CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(exit_time);
@@ -62,10 +64,11 @@ public class TradeJournal {
                 INSERT INTO trades
                 (position_id, symbol, signal, entry_price, entry_time,
                  exit_price, exit_time, exit_reason, pnl, pnl_percent,
-                 target_percent, stop_loss_percent)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 target_percent, stop_loss_percent, quantity)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (position_id) DO UPDATE SET
                     entry_price = EXCLUDED.entry_price,
+                    quantity = EXCLUDED.quantity,
                     exit_price = EXCLUDED.exit_price,
                     exit_time = EXCLUDED.exit_time,
                     exit_reason = EXCLUDED.exit_reason,
@@ -98,6 +101,7 @@ public class TradeJournal {
 
             stmt.setBigDecimal(11, position.getTargetPercent());
             stmt.setBigDecimal(12, position.getStopLossPercent());
+            stmt.setBigDecimal(13, position.getQuantity());
 
             stmt.executeUpdate();
             logger.debug("Trade recorded: {}", position.getPositionId());
@@ -109,7 +113,7 @@ public class TradeJournal {
 
     public Optional<Position> loadOpenPosition(String symbol, BigDecimal targetPercent,
                                                BigDecimal stopLossPercent) {
-        String sql = "SELECT position_id, signal, entry_price, entry_time "
+        String sql = "SELECT position_id, signal, entry_price, entry_time, quantity "
                 + "FROM trades WHERE symbol = ? AND exit_time IS NULL "
                 + "ORDER BY entry_time DESC LIMIT 1";
 
@@ -129,6 +133,11 @@ public class TradeJournal {
                         targetPercent,
                         stopLossPercent
                 );
+                // Null for rows written before the column existed
+                BigDecimal quantity = result.getBigDecimal("quantity");
+                if (quantity != null) {
+                    position.setQuantity(quantity);
+                }
                 return Optional.of(position);
             }
         } catch (SQLException | IllegalArgumentException e) {

@@ -375,8 +375,9 @@ public class PositionManager {
                 pos.applyFill(result.executedQuantity());
                 if (result.averagePrice().compareTo(BigDecimal.ZERO) > 0) {
                     pos.setEntryPrice(result.averagePrice());
-                    positionPersistence.accept(pos);
                 }
+                // Always: the quantity is what a restart needs to send the exit order (issue #64)
+                positionPersistence.accept(pos);
                 syncPortfolioBalance();
                 logger.info("âœ“ Real order executed: orderId={} qty={} @ price={}",
                         result.orderId(), result.executedQuantity(), result.averagePrice());
