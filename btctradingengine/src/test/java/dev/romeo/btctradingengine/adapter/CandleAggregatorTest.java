@@ -41,7 +41,7 @@ public class CandleAggregatorTest {
         CandleEvent candle = candles.get(0);
         assertEquals("BTC/USD", candle.instrument());
         assertEquals(Instant.parse("2026-09-08T10:00:00Z"), candle.openTime());
-        assertEquals(Instant.parse("2026-09-08T10:15:00Z"), candle.closeTime());
+        assertEquals(Instant.parse("2026-09-08T10:14:59.999Z"), candle.closeTime());
         assertEquals(new BigDecimal("100"), candle.open());
         assertEquals(new BigDecimal("110"), candle.high());
         assertEquals(new BigDecimal("90"), candle.low());
@@ -64,7 +64,7 @@ public class CandleAggregatorTest {
         CandleEvent candle = candles.get(1);
         assertEquals("BTC/USD", candle.instrument());
         assertEquals(Instant.parse("2026-09-08T10:15:00Z"), candle.openTime());
-        assertEquals(Instant.parse("2026-09-08T10:30:00Z"), candle.closeTime());
+        assertEquals(Instant.parse("2026-09-08T10:29:59.999Z"), candle.closeTime());
         assertEquals(new BigDecimal("95"), candle.open());
         assertEquals(new BigDecimal("105"), candle.high());
         assertEquals(new BigDecimal("95"), candle.low());
@@ -137,6 +137,24 @@ public class CandleAggregatorTest {
         assertEquals(Instant.parse("2026-09-08T10:02:00Z"), candles.get(1).openTime());
         assertEquals(new BigDecimal("102"), candles.get(1).open());
         assertEquals(1, aggregator.getLateTicksDropped());
+    }
+
+    @Test
+    public void liveCandleHasTheSameCloseTimeAsTheKlineOfThatMinute() {
+        // Binance kline row for the 1m candle opening at 2026-09-08T10:00:00Z: [openTime, ..., closeTime, ...]
+        long klineOpenTime = 1788861600000L;
+        long klineCloseTime = 1788861659999L;
+        List<CandleEvent> candles = new ArrayList<>();
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles::add);
+
+        aggregator.onEvent(event("100", "2026-09-08T10:00:30Z", "1"));
+        aggregator.closeExpiredCandle(Instant.parse("2026-09-08T10:01:00.250Z"));
+        aggregator.onEvent(event("100", "2026-09-08T10:01:30Z", "1"));
+        aggregator.onEvent(event("100", "2026-09-08T10:02:00Z", "1"));   // rollover path
+
+        assertEquals(Instant.ofEpochMilli(klineOpenTime), candles.get(0).openTime());
+        assertEquals(Instant.ofEpochMilli(klineCloseTime), candles.get(0).closeTime());
+        assertEquals(Instant.ofEpochMilli(klineCloseTime + 60_000), candles.get(1).closeTime());
     }
 
     @Test

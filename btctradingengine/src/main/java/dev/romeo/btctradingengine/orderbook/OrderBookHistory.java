@@ -15,8 +15,11 @@ import java.util.concurrent.ConcurrentSkipListMap;
  *
  * A single snapshot is too noisy to use on its own - the top levels of BTCUSDT span a few thousandths
  * of a percent and change every few milliseconds - so a candle gets the mean of the snapshots taken
- * while it was open, in [openTime, closeTime). Snapshots from after the close are never included, and
- * a candle without any snapshot (warmup, backtests, a polling outage) gets null.
+ * while it was open, in [openTime, closeTime]. Both ends are inclusive because closeTime is the last
+ * millisecond of the window, as in Binance klines (issue #75), so a snapshot at that millisecond still
+ * belongs to the candle and one at the next minute belongs to the next candle. Snapshots from after
+ * the close are never included, and a candle without any snapshot (warmup, backtests, a polling
+ * outage) gets null.
  */
 public class OrderBookHistory implements OrderBookLookup {
     private static final int SCALE = 8;
@@ -38,7 +41,7 @@ public class OrderBookHistory implements OrderBookLookup {
     @Override
     public BigDecimal imbalanceFor(CandleEvent candle) {
         Map<Long, BigDecimal> window = imbalances.subMap(
-                candle.openTime().toEpochMilli(), true, candle.closeTime().toEpochMilli(), false);
+                candle.openTime().toEpochMilli(), true, candle.closeTime().toEpochMilli(), true);
         if (window.isEmpty()) {
             return null;
         }

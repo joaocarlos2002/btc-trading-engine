@@ -197,8 +197,12 @@ public class CandleAggregator implements PriceEventListener {
         return new CandleEvent(instrument, bucketStart, closeTime, open, high, low, close, volume, tickCount, flow);
     }
 
+    /**
+     * closeTime is the last millisecond of the window, the same convention as Binance klines, so a live
+     * candle and the kline of the same minute agree (issue #75).
+     */
     private void emitCurrentCandle() {
-        listener.onEvent(buildCandle(bucketStart.plus(interval)));
+        listener.onEvent(buildCandle(bucketStart.plus(interval).minusMillis(1)));
         lastEmittedBucket = bucketStart;
     }
 

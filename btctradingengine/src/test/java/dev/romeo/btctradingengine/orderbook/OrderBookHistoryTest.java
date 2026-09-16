@@ -18,7 +18,8 @@ public class OrderBookHistoryTest {
         history.add(Instant.parse("2026-09-08T09:59:55Z"), new BigDecimal("0.9"));   // previous candle
         history.add(Instant.parse("2026-09-08T10:00:05Z"), new BigDecimal("0.4"));
         history.add(Instant.parse("2026-09-08T10:00:35Z"), new BigDecimal("0.6"));
-        history.add(Instant.parse("2026-09-08T10:01:00Z"), new BigDecimal("0.1"));   // taken at the close: next candle
+        history.add(Instant.parse("2026-09-08T10:00:59.999Z"), new BigDecimal("0.5")); // last millisecond: still this candle
+        history.add(Instant.parse("2026-09-08T10:01:00Z"), new BigDecimal("0.1"));   // next minute: next candle
 
         assertEquals(0, history.imbalanceFor(candle("2026-09-08T10:00:00Z")).compareTo(new BigDecimal("0.5")));
     }
@@ -40,10 +41,10 @@ public class OrderBookHistoryTest {
         assertNull(history.imbalanceFor(candle("2026-09-08T10:00:00Z")));
     }
 
-    /** A live-aggregated 1m candle: closeTime is exactly the next minute. */
+    /** A 1m candle: closeTime is the last millisecond of the minute, live or from klines (issue #75). */
     private static CandleEvent candle(String openTime) {
         Instant open = Instant.parse(openTime);
-        return new CandleEvent("BTCUSDT", open, open.plusSeconds(60),
+        return new CandleEvent("BTCUSDT", open, open.plusSeconds(60).minusMillis(1),
                 BigDecimal.ONE, BigDecimal.ONE, BigDecimal.ONE, BigDecimal.ONE, BigDecimal.ONE, 1);
     }
 }
