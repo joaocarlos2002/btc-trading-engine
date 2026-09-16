@@ -22,6 +22,7 @@ import dev.romeo.btctradingengine.persistence.DataSourceManager;
 import dev.romeo.btctradingengine.persistence.DatabaseCandleReader;
 import dev.romeo.btctradingengine.persistence.DatabaseInitializer;
 import dev.romeo.btctradingengine.persistence.DatabaseWriter;
+import dev.romeo.btctradingengine.persistence.JdbcOrderCommandStore;
 import dev.romeo.btctradingengine.prediction.RuleBasedPredictor;
 import dev.romeo.btctradingengine.prediction.rules.*;
 import dev.romeo.btctradingengine.trading.*;
@@ -49,6 +50,8 @@ public class Main {
             TradeJournal tradeJournal = new TradeJournal();
             tradeJournal.createTableIfNotExists();
             tradeJournal.createExecutionLogTableIfNotExists();
+            JdbcOrderCommandStore orderCommands = new JdbcOrderCommandStore();
+            orderCommands.createTableIfNotExists();
 
             PositionManager positionManager = new PositionManager(
                     Config.getTradingTargetPercent(),
@@ -110,6 +113,7 @@ public class Main {
                     Config.getMarketSymbol());
                 // Before reconciliation, which checks or re-places the OCO of a persisted position
                 positionManager.setOcoProtection(Config.isOcoProtectionEnabled(), Config.getOcoStopLimitOffsetPercent());
+                positionManager.setOrderCommandStore(orderCommands);
                 logger.warn("REAL TRADING ENABLED for {} with validated USDT balance={}",
                     Config.getMarketSymbol(), balance.total());
                 if (!Config.isBinanceTestnetEndpoint()) {
@@ -123,6 +127,7 @@ public class Main {
                     Config.getTradingTargetPercent(),
                     Config.getTradingStopLossPercent(),
                     alertNotifier);
+                reconciliation.setOrderCommandStore(orderCommands);
                 var reconcileResult = reconciliation.reconcile(Config.getMarketSymbol());
                 logger.info("Reconciliation result: {} | orders_found={} | position_restored={}",
                     reconcileResult.message(),
