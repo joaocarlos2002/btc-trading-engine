@@ -51,8 +51,17 @@ public class OrderConfirmationManager {
 
     /** Must be called BEFORE the order is sent. */
     public void registerOrder(String clientOrderId, String symbol, String side, BigDecimal quantity, BigDecimal price) {
-        pendingOrders.put(clientOrderId, new OrderTracker(clientOrderId, symbol, Instant.now()));
+        pendingOrders.put(clientOrderId, new OrderTracker(clientOrderId, symbol, Instant.now(), false));
         logger.info("Registered order: clientOrderId={} {} {} qty={} @ {}", clientOrderId, side, symbol, quantity, price);
+    }
+
+    /**
+     * A resting OCO leg (issue #99). It may wait hours for the price, so it is exempt from the
+     * report timeout: the position manager polls it by REST instead.
+     */
+    public void registerProtectiveOrder(String clientOrderId, String symbol) {
+        pendingOrders.put(clientOrderId, new OrderTracker(clientOrderId, symbol, Instant.now(), true));
+        logger.info("Registered protective order: clientOrderId={} {}", clientOrderId, symbol);
     }
 
     /** For an order that was never accepted by Binance. */
@@ -90,6 +99,9 @@ public class OrderConfirmationManager {
      */
     void checkTimeouts(Instant now) {
         for (OrderTracker tracker : pendingOrders.values()) {
+            if (tracker.protective) {
+                continue;
+            }
             Duration age = Duration.between(tracker.createdAt, now);
             if (age.compareTo(REPORT_TIMEOUT) < 0) {
                 continue;
@@ -175,16 +187,18 @@ public class OrderConfirmationManager {
         final String clientOrderId;
         final String symbol;
         final Instant createdAt;
+        final boolean protective;
 
         long orderId;
         BigDecimal cumulativeQty = BigDecimal.ZERO;
         BigDecimal lastFillPrice = BigDecimal.ZERO;
         boolean finished;
 
-        OrderTracker(String clientOrderId, String symbol, Instant createdAt) {
+        OrderTracker(String clientOrderId, String symbol, Instant createdAt, boolean protective) {
             this.clientOrderId = clientOrderId;
             this.symbol = symbol;
             this.createdAt = createdAt;
+            this.protective = protective;
         }
 
         synchronized Optional<OrderConfirmation> apply(long orderId, BigDecimal cumQty, BigDecimal price, OrderStatus status) {

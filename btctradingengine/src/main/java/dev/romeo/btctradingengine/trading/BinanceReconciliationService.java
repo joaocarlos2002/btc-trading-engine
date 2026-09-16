@@ -49,15 +49,21 @@ public class BinanceReconciliationService {
 
         List<BinanceOrderExecutor.OpenOrder> openOrders = orderExecutor.getOpenOrders(symbol);
 
-        List<BinanceOrderExecutor.OpenOrder> botOrders = openOrders.stream()
+        List<BinanceOrderExecutor.OpenOrder> allBotOrders = openOrders.stream()
             .filter(order -> order.clientOrderId() != null
                 && order.clientOrderId().startsWith(CLIENT_ORDER_PREFIX))
             .toList();
 
-        if (openOrders.size() > botOrders.size()) {
+        if (openOrders.size() > allBotOrders.size()) {
             logger.warn("Found {} Binance order(s) without the bot prefix; leaving them untouched",
-                openOrders.size() - botOrders.size());
+                openOrders.size() - allBotOrders.size());
         }
+
+        // OCO legs (issue #99) protect a position; they are not entries to restore
+        List<BinanceOrderExecutor.OpenOrder> botOrders = allBotOrders.stream()
+            .filter(order -> !OcoOrderIds.isLeg(order.clientOrderId()))
+            .toList();
+        cancelOrphanProtection(symbol, allBotOrders);
 
         if (botOrders.isEmpty()) {
             logger.info("âœ“ No open orders found on Binance for {}", symbol);
@@ -66,7 +72,7 @@ public class BinanceReconciliationService {
             if (positionManager.getOpenPosition().isPresent()) {
                 return reconcilePersistedPosition(symbol, positionManager.getOpenPosition().get(), 0);
             }
-            return new ReconciliationResult(true, "No open orders", 0, null);
+            return new ReconciliationResult(true, "No open orders", allBotOrders.size(), null);
         }
 
         Optional<BinanceOrderExecutor.OpenOrder> activeOrder = botOrders.stream()
@@ -106,6 +112,8 @@ public class BinanceReconciliationService {
                 }
                 logger.warn("Kept persisted local position while reconciling Binance order {}",
                         order.orderId());
+                logger.info("OCO protection of {}: {}", localPosition.getPositionId(),
+                        positionManager.reconcileProtection());
                 return new ReconciliationResult(true, "Existing position reconciled", botOrders.size(), localPosition);
             }
 
@@ -147,7 +155,34 @@ public class BinanceReconciliationService {
                 clientOrderId, localPosition.getQuantity()));
 
         checkBaseAssetBalance(symbol, localPosition);
+        PositionManager.ProtectionReconciliation protection = positionManager.reconcileProtection();
+        logger.info("OCO protection of {} after reconciliation: {}", localPosition.getPositionId(), protection);
+        if (protection == PositionManager.ProtectionReconciliation.CLOSED_BY_EXCHANGE) {
+            return new ReconciliationResult(true, "Persisted position closed by its OCO", ordersFound, null);
+        }
+        if (protection == PositionManager.ProtectionReconciliation.PLACEMENT_FAILED) {
+            alert(String.format("OCO protection could not be re-placed for position %s after restart",
+                    localPosition.getPositionId()));
+        }
         return new ReconciliationResult(true, "Persisted position reconciled", ordersFound, localPosition);
+    }
+
+    /**
+     * An OCO whose position is not open locally would sell the account's BTC later for a trade the
+     * bot no longer tracks: cancel it.
+     */
+    private void cancelOrphanProtection(String symbol, List<BinanceOrderExecutor.OpenOrder> botOrders) {
+        Optional<String> ownList = positionManager.getOpenPosition()
+                .map(position -> OcoOrderIds.list(symbol, position.getPositionId()));
+        botOrders.stream()
+                .map(order -> OcoOrderIds.listOfLeg(order.clientOrderId()))
+                .flatMap(Optional::stream)
+                .distinct()
+                .filter(listId -> ownList.map(own -> !own.equals(listId)).orElse(true))
+                .forEach(listId -> {
+                    var cancel = orderExecutor.cancelOrderList(symbol, listId);
+                    alert(String.format("Orphan OCO %s without an open position: cancel %s", listId, cancel.state()));
+                });
     }
 
     /** A BUY position the account no longer holds cannot be exited: say so before trading starts. */

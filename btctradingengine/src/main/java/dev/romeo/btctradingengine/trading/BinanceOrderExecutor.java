@@ -478,6 +478,7 @@ public class BinanceOrderExecutor {
                 BigDecimal minQty = BigDecimal.ZERO;
                 BigDecimal maxQty = BigDecimal.ZERO;
                 BigDecimal stepSize = BigDecimal.ONE;
+                BigDecimal tickSize = null;
 
                 for (JsonNode filter : filters) {
                     String filterType = filter.get("filterType").asText();
@@ -489,10 +490,12 @@ public class BinanceOrderExecutor {
                         minQty = new BigDecimal(filter.get("minQty").asText());
                         maxQty = new BigDecimal(filter.get("maxQty").asText());
                         stepSize = new BigDecimal(filter.get("stepSize").asText());
+                    } else if ("PRICE_FILTER".equals(filterType)) {
+                        tickSize = new BigDecimal(filter.get("tickSize").asText());
                     }
                 }
 
-                SymbolFilters result = new SymbolFilters(symbol, minNotional, minQty, maxQty, stepSize);
+                SymbolFilters result = new SymbolFilters(symbol, minNotional, minQty, maxQty, stepSize, tickSize);
                 logger.debug("Symbol filters for {}: minNotional={}, minQty={}, maxQty={}, stepSize={}",
                         symbol, minNotional, minQty, maxQty, stepSize);
                 return result;
@@ -511,7 +514,99 @@ public class BinanceOrderExecutor {
             BigDecimal minNotional,
             BigDecimal minQty,
             BigDecimal maxQty,
-            BigDecimal stepSize
-    ) {}
+            BigDecimal stepSize,
+            BigDecimal tickSize             // PRICE_FILTER; null when absent
+    ) {
+        public SymbolFilters(String symbol, BigDecimal minNotional, BigDecimal minQty, BigDecimal maxQty,
+                             BigDecimal stepSize) {
+            this(symbol, minNotional, minQty, maxQty, stepSize, null);
+        }
+    }
+
+    /**
+     * SELL OCO protecting a BUY (issue #99): LIMIT_MAKER target above the price and STOP_LOSS_LIMIT
+     * stop below it, sharing one quantity. Never retried on a network error, like any new order:
+     * the caller resolves an ambiguous result by querying the list's clientOrderId.
+     */
+    public OcoResult placeOcoSell(String symbol, BigDecimal quantity, BigDecimal targetPrice,
+                                  BigDecimal stopPrice, BigDecimal stopLimitPrice,
+                                  String listClientOrderId, String targetClientOrderId, String stopClientOrderId) {
+        if (apiKey == null || apiKey.isBlank() || apiSecret == null || apiSecret.isBlank()) {
+            return new OcoResult(false, -1, "", "Binance API credentials are not configured");
+        }
+        Map<String, String> params = new TreeMap<>();
+        params.put("symbol", symbol);
+        params.put("side", "SELL");
+        params.put("quantity", formatQuantity(quantity));
+        params.put("listClientOrderId", listClientOrderId);
+        params.put("aboveType", "LIMIT_MAKER");
+        params.put("abovePrice", formatPrice(targetPrice));
+        params.put("aboveClientOrderId", targetClientOrderId);
+        params.put("belowType", "STOP_LOSS_LIMIT");
+        params.put("belowStopPrice", formatPrice(stopPrice));
+        params.put("belowPrice", formatPrice(stopLimitPrice));
+        params.put("belowTimeInForce", "GTC");
+        params.put("belowClientOrderId", stopClientOrderId);
+        try {
+            HttpResponse<String> response = send(() -> signedRequest("POST", "/api/v3/orderList/oco", params), false);
+            if (response.statusCode() != 200) {
+                logger.error("OCO order failed: {} {}", response.statusCode(), response.body());
+                return new OcoResult(false, -1, "", response.body());
+            }
+            JsonNode json = mapper.readTree(response.body());
+            logger.info("OCO placed: {} qty={} target={} stop={}/{}", listClientOrderId,
+                    params.get("quantity"), params.get("abovePrice"), params.get("belowStopPrice"), params.get("belowPrice"));
+            return new OcoResult(true, json.path("orderListId").asLong(-1), json.path("listOrderStatus").asText(""), null);
+        } catch (Exception e) {
+            logger.error("OCO order error for {}: {}", listClientOrderId, e.getMessage(), e);
+            return new OcoResult(false, -1, "", e.getMessage());
+        }
+    }
+
+    /** GET /api/v3/orderList by listClientOrderId. */
+    public OrderListQuery queryOrderList(String listClientOrderId) {
+        return orderListRequest("GET", Map.of("origClientOrderId", listClientOrderId));
+    }
+
+    /** DELETE /api/v3/orderList: cancels both legs. NOT_FOUND when the list is no longer open. */
+    public OrderListQuery cancelOrderList(String symbol, String listClientOrderId) {
+        return orderListRequest("DELETE", Map.of("symbol", symbol, "listClientOrderId", listClientOrderId));
+    }
+
+    private OrderListQuery orderListRequest(String method, Map<String, String> params) {
+        try {
+            HttpResponse<String> response = send(() -> signedRequest(method, "/api/v3/orderList", params), true);
+            if (response.statusCode() == 200) {
+                return new OrderListQuery(OrderListQuery.State.FOUND,
+                        mapper.readTree(response.body()).path("listOrderStatus").asText(""), null);
+            }
+            String body = response.body();
+            // -2011 unknown order (cancel), -2013 order does not exist (query)
+            boolean notFound = response.statusCode() == 400 && body != null
+                    && (body.contains("-2011") || body.contains("-2013"));
+            if (!notFound) {
+                logger.error("Order list {} failed: {} {}", method, response.statusCode(), body);
+            }
+            return new OrderListQuery(notFound ? OrderListQuery.State.NOT_FOUND : OrderListQuery.State.ERROR, "", body);
+        } catch (Exception e) {
+            logger.error("Order list {} error: {}", method, e.getMessage(), e);
+            return new OrderListQuery(OrderListQuery.State.ERROR, "", e.getMessage());
+        }
+    }
+
+    private String formatPrice(BigDecimal price) {
+        return price.stripTrailingZeros().toPlainString();
+    }
+
+    public record OcoResult(boolean success, long orderListId, String listOrderStatus, String error) {}
+
+    public record OrderListQuery(State state, String listOrderStatus, String error) {
+        public enum State { FOUND, NOT_FOUND, ERROR }
+
+        /** EXECUTING while both legs are working; ALL_DONE once a leg filled or the list was cancelled. */
+        public boolean isExecuting() {
+            return state == State.FOUND && "EXECUTING".equals(listOrderStatus);
+        }
+    }
 }
 

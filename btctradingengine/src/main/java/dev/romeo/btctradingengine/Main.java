@@ -108,6 +108,8 @@ public class Main {
                     executor,
                     portfolio,
                     Config.getMarketSymbol());
+                // Before reconciliation, which checks or re-places the OCO of a persisted position
+                positionManager.setOcoProtection(Config.isOcoProtectionEnabled(), Config.getOcoStopLimitOffsetPercent());
                 logger.warn("REAL TRADING ENABLED for {} with validated USDT balance={}",
                     Config.getMarketSymbol(), balance.total());
                 if (!Config.isBinanceTestnetEndpoint()) {
