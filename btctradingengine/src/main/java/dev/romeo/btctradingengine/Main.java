@@ -314,7 +314,8 @@ public class Main {
 
     private static BinanceUserDataStreamClient getBinanceUserDataStreamClient(
             OrderConfirmationManager confirmationManager, ConnectivityGuard connectivityGuard, AlertNotifier alertNotifier) {
-        BinanceUserDataStreamClient userDataStream = new BinanceUserDataStreamClient(Config.getBinanceApiKey());
+        BinanceUserDataStreamClient userDataStream = new BinanceUserDataStreamClient(
+                Config.getBinanceApiKey(), Config.getBinanceApiSecret());
         userDataStream.setExecutionReportListener(
             report -> {
                 logger.debug("Execution report received: orderId={} status={}", report.orderId(), report.orderStatus());
