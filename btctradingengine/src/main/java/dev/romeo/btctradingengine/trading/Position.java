@@ -16,7 +16,7 @@ public class Position {
 
     private BigDecimal currentPrice;
     private Instant lastUpdateTime;
-    private PositionStatus status;
+    private PositionState state;
     private BigDecimal exitPrice;
     private Instant exitTime;
     private ExitReason exitReason;
@@ -27,8 +27,15 @@ public class Position {
         OPEN, CLOSED, STOPPED_OUT
     }
 
+    /** Starts OPEN: restored rows and tests hold an entry that already executed. */
     public Position(String positionId, Signal signal, BigDecimal entryPrice,
                    Instant entryTime, BigDecimal targetPercent, BigDecimal stopLossPercent) {
+        this(positionId, signal, entryPrice, entryTime, targetPercent, stopLossPercent, PositionState.OPEN);
+    }
+
+    public Position(String positionId, Signal signal, BigDecimal entryPrice,
+                   Instant entryTime, BigDecimal targetPercent, BigDecimal stopLossPercent,
+                   PositionState initialState) {
         this.positionId = positionId;
         this.signal = signal;
         this.entryPrice = entryPrice;
@@ -37,7 +44,18 @@ public class Position {
         this.stopLossPercent = stopLossPercent;
         this.currentPrice = entryPrice;
         this.lastUpdateTime = entryTime;
-        this.status = PositionStatus.OPEN;
+        this.state = java.util.Objects.requireNonNull(initialState, "initialState");
+    }
+
+    /**
+     * Moves to {@code target} or throws: an illegal transition means the caller's view of the
+     * position is wrong, and acting on it could send an order that should not exist.
+     */
+    public void transitionTo(PositionState target) {
+        if (!state.canTransitionTo(target)) {
+            throw new PositionState.IllegalTransitionException(positionId, state, target);
+        }
+        this.state = target;
     }
 
     public void updatePrice(BigDecimal price, Instant time) {
@@ -46,7 +64,7 @@ public class Position {
     }
 
     public boolean hasHitTarget() {
-        if (status != PositionStatus.OPEN) {
+        if (state.isTerminal()) {
             return false;
         }
 
@@ -65,7 +83,7 @@ public class Position {
     }
 
     public boolean hasHitStopLoss() {
-        if (status != PositionStatus.OPEN) {
+        if (state.isTerminal()) {
             return false;
         }
 
@@ -100,11 +118,12 @@ public class Position {
         close(exitPrice, exitTime, ExitReason.parse(reason));
     }
 
+    /** CLOSED, or FAILED for an entry that never executed; throws from a state that cannot close. */
     public void close(BigDecimal exitPrice, Instant exitTime, ExitReason reason) {
+        transitionTo(PositionState.terminalFor(reason));
         this.exitPrice = exitPrice;
         this.exitTime = exitTime;
         this.exitReason = reason;
-        this.status = PositionStatus.CLOSED;
     }
 
     public BigDecimal getPnL() {
@@ -138,8 +157,10 @@ public class Position {
     public BigDecimal getExitPrice() { return exitPrice; }
     public Instant getExitTime() { return exitTime; }
     public ExitReason getExitReason() { return exitReason; }
-    public PositionStatus getStatus() { return status; }
-    public boolean isOpen() { return status == PositionStatus.OPEN; }
+    public PositionStatus getStatus() { return state.isTerminal() ? PositionStatus.CLOSED : PositionStatus.OPEN; }
+    public PositionState getState() { return state; }
+    /** Not closed or failed yet: a pending entry or exit still counts as open. */
+    public boolean isOpen() { return !state.isTerminal(); }
     public BigDecimal getTargetPercent() { return targetPercent; }
     public BigDecimal getStopLossPercent() { return stopLossPercent; }
     public BigDecimal getQuantity() { return quantity; }

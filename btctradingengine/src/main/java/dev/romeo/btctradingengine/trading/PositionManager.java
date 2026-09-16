@@ -186,6 +186,13 @@ public class PositionManager {
             logger.error("âœ— Order {} failed: {}", confirmation.orderId(), confirmation.status());
             alertNotifier.ifPresent(a -> a.alert(String.format(
                     "Order %s for position %s failed: %s", confirmation.orderId(), pos.getPositionId(), confirmation.status())));
+            if (pos.getQuantity().signum() > 0) {
+                // The REST response reported a fill: selling on a contradicting report could sell coins
+                // the bot does not hold, so a human decides
+                logger.error("Position {} keeps qty={} despite the failed report; check it manually",
+                        pos.getPositionId(), pos.getQuantity());
+                return;
+            }
             closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), ExitReason.ORDER_FAILED);
         } else if (confirmation.isTimeout()) {
             // Never guess a fill: keep the quantity already known and ask for a manual check
@@ -435,8 +442,14 @@ public class PositionManager {
                 price,
                 time,
                 targetPercent,
-                stopLossPercent
+                stopLossPercent,
+                PositionState.PENDING_ENTRY
         );
+        boolean realOrder = !simulationMode && orderExecutor.isPresent();
+        if (!realOrder) {
+            // A simulated entry fills at the signal price
+            pos.transitionTo(PositionState.OPEN);
+        }
         openPosition = Optional.of(pos);
         resetExitBackoff();
         resetProtection();
@@ -462,7 +475,7 @@ public class PositionManager {
                 java.math.BigDecimal.valueOf(confidence).multiply(new java.math.BigDecimal("100"))
                         .setScale(0, java.math.RoundingMode.HALF_UP));
 
-        if (!simulationMode && orderExecutor.isPresent()) {
+        if (realOrder) {
             executeRealOrder(pos, signal);
         }
     }
@@ -513,6 +526,7 @@ public class PositionManager {
                 if (result.averagePrice().compareTo(BigDecimal.ZERO) > 0) {
                     pos.setEntryPrice(result.averagePrice());
                 }
+                pos.transitionTo(PositionState.OPEN);
                 // Always: the quantity is what a restart needs to send the exit order (issue #64)
                 positionPersistence.accept(pos);
                 syncPortfolioBalance(pos.getEntryPrice());
@@ -533,7 +547,9 @@ public class PositionManager {
             logger.error("âœ— Error executing real order: {}", e.getMessage(), e);
             alertNotifier.ifPresent(a -> a.alert(String.format(
                     "Exception executing real order for position %s: %s", pos.getPositionId(), e.getMessage())));
-            closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), ExitReason.ERROR);
+            if (pos.getState() == PositionState.PENDING_ENTRY) {
+                closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), ExitReason.ERROR);
+            }
         }
     }
 
@@ -543,11 +559,19 @@ public class PositionManager {
 
     private boolean closePosition(Position pos, BigDecimal exitPrice, java.time.Instant exitTime, ExitReason reason,
                                   boolean respectBackoff) {
+        PositionState required = reason.countsInPerformance() ? PositionState.OPEN : pos.getState();
+        if (pos.getState() != required || !pos.getState().canTransitionTo(PositionState.terminalFor(reason))) {
+            // A pending entry has nothing to sell yet, and a pending exit already has its order in flight
+            logger.debug("Close {} of {} ignored in state {}", reason, pos.getPositionId(), pos.getState());
+            return false;
+        }
         if (!simulationMode && pos.getQuantity().compareTo(BigDecimal.ZERO) > 0) {
             Instant now = clock.get();
             if (respectBackoff && nextExitAttemptAt != null && now.isBefore(nextExitAttemptAt)) {
                 return false;
             }
+            pos.transitionTo(PositionState.EXIT_PENDING);
+            positionPersistence.accept(pos);
             if (protectionActive) {
                 // The OCO locks the BTC: it must be cancelled before the market exit can sell it
                 ProtectionCheck cancel = cancelProtection(pos);
@@ -577,6 +601,10 @@ public class PositionManager {
     }
 
     private void recordExitFailure(Position pos, ExitReason reason, Instant now) {
+        if (pos.getState() == PositionState.EXIT_PENDING) {
+            pos.transitionTo(PositionState.OPEN);
+            positionPersistence.accept(pos);
+        }
         exitFailureCount++;
         Duration delay = exitRetryDelay(exitFailureCount);
         nextExitAttemptAt = now.plus(delay);
