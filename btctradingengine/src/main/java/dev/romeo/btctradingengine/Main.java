@@ -95,6 +95,15 @@ public class Main {
                 PortfolioManager portfolio = new PortfolioManager(
                     balance.total(),
                     Config.getTradingMaxDrawdownPercent());
+                // Equity counts the base asset too (issue #81); valued once the first price arrives
+                String baseAsset = Config.getMarketSymbol().replaceFirst("USDT$", "");
+                BinanceOrderExecutor.BalanceResult baseBalance = executor.getBalance(baseAsset);
+                if (baseBalance.success()) {
+                    portfolio.setInitialBaseQuantity(baseBalance.total());
+                } else {
+                    logger.warn("Could not read initial {} balance; initial equity counts USDT only: {}",
+                        baseAsset, baseBalance.error());
+                }
                 positionManager.setRealTradingMode(
                     executor,
                     portfolio,

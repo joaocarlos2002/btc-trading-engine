@@ -19,7 +19,8 @@ public class ExitQuantityTest {
     private static final class FakeExecutor extends BinanceOrderExecutor {
         final List<String> sells = new ArrayList<>();
         final List<String> sellClientIds = new ArrayList<>();
-        BalanceResult baseBalance;
+        BalanceResult baseBalance = new BalanceResult(true, new BigDecimal("0.0005"), BigDecimal.ZERO,
+                new BigDecimal("0.0005"), null);
         SymbolFilters filters = new SymbolFilters("BTCUSDT", new BigDecimal("5"), new BigDecimal("0.00001"),
                 new BigDecimal("1000"), new BigDecimal("0.00001"));
         BigDecimal buyFill = new BigDecimal("0.00050");
