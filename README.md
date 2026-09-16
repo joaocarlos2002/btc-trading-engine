@@ -93,7 +93,7 @@ Fluxo resumido:
     ├── pom.xml                   # packaging pom, ${revision}, BOM do Spring Boot
     ├── engine-core/              # Sem Spring, JDBC ou HTTP: model, indicator, feature, prediction (+ rules), port, marketstate
     ├── engine-data/              # adapter (WebSocket, klines, event bus, agregador), derivatives, orderbook,
-    │                             # persistence (writers, leitores, retenção de ticks), alerting; db-schema.sql
+    │                             # persistence (writers, leitores, retenção de ticks), alerting; db/migration (Flyway)
     ├── engine-trading/           # trading (posições, execução, reconciliação, guardas, TradeJournal),
     │                             # replay determinístico, JdbcOrderCommandStore
     ├── engine-backtest/          # BacktestEngine, BacktestRunner, BacktestParams, sweep, walk-forward, BacktestService
@@ -171,7 +171,7 @@ docker compose up -d postgres
 docker compose ps        # aguarde "healthy"
 ```
 
-As tabelas são criadas na partida (`db-schema.sql` + `TradeJournal`). Não há migrações versionadas.
+O schema é versionado com Flyway (issue #102): as migrações ficam em `engine-data/src/main/resources/db/migration` (`V1__baseline.sql`, depois `V2__...`) e são aplicadas na partida, antes dos beans do pipeline que escrevem no banco. Com `engine.pipeline.enabled=false` (só dashboard) e no `ReplayRunner` nada é migrado. Um banco criado antes do Flyway (pelo antigo `db-schema.sql` + DDL do `TradeJournal`) é registrado como versão 1 (*baseline*, sem rodar o V1) e recebe só V2 em diante — desde que tenha sido iniciado ao menos uma vez pela última versão sem Flyway. Nunca edite uma migração já publicada; crie a próxima versão.
 
 ## Execução
 
