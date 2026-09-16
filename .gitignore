@@ -10,6 +10,9 @@ target/
 ### Obsidian (config da ferramenta, nao e conhecimento) ###
 .obsidian/
 
+### Secrets (use .env.example as the template) ###
+.env
+
 ### OS ###
 .DS_Store
 Thumbs.db

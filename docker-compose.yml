@@ -1,28 +1,28 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: btc-trading-engine_postgres
+    container_name: btc_trading_engine_postgres
     environment:
-      POSTGRES_DB: btc-trading-engine_btc
-      POSTGRES_USER: btc-trading-engine
-      POSTGRES_PASSWORD: senha@123
+      POSTGRES_DB: btc_trading_engine
+      POSTGRES_USER: btc_engine
+      # Read from .env (see .env.example); compose refuses to start if it is not set.
+      POSTGRES_PASSWORD: ${BTC_ENGINE_DB_PASSWORD:?set BTC_ENGINE_DB_PASSWORD in .env}
     ports:
-      - "5432:5432"
+      # Loopback only: the database is not exposed to the network.
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U btc-trading-engine -d btc-trading-engine_btc"]
+      test: ["CMD-SHELL", "pg_isready -U btc_engine -d btc_trading_engine"]
       interval: 5s
       timeout: 5s
       retries: 5
     networks:
-      - btc-trading-engine_network
+      - btc_trading_engine_network
 
 volumes:
   postgres_data:
 
 networks:
-  btc-trading-engine_network:
+  btc_trading_engine_network:
     driver: bridge
