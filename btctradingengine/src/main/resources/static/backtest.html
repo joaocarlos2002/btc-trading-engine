@@ -466,35 +466,6 @@ $('resetBtn').addEventListener('click', () => {
     OVERRIDE_FIELDS.forEach(id => { $(id).value = ''; });
 });
 
-/* /api/backtest requires the X-Api-Token header (dashboard.api.token), same token the dashboard
-   uses for manual orders - see issue #66. */
-const TOKEN_KEY = 'btcEngineApiToken';
-function apiToken(reask) {
-    let t = null;
-    try { t = localStorage.getItem(TOKEN_KEY); } catch (e) {}
-    if (reask || !t) {
-        t = window.prompt('API token (dashboard.api.token in application.properties)', reask ? '' : (t || ''));
-        if (t === null) return null;
-        t = t.trim();
-        try { localStorage.setItem(TOKEN_KEY, t); } catch (e) {}
-    }
-    return t;
-}
-async function authFetch(url, opts) {
-    const send = token => fetch(url, Object.assign({}, opts, {
-        headers: Object.assign({}, opts && opts.headers, { 'X-Api-Token': token })
-    }));
-    let token = apiToken(false);
-    if (token === null) return null;
-    let res = await send(token);
-    if (res.status === 401) {
-        token = apiToken(true);
-        if (token === null) return res;
-        res = await send(token);
-    }
-    return res;
-}
-
 async function runBacktest() {
     const days = Math.max(1, Math.min(180, Number($('days').value) || 30));
     $('days').value = days;
@@ -513,9 +484,9 @@ async function runBacktest() {
     $('emptyPanel').style.display = 'none';
 
     try {
-        const res = await authFetch(`/api/backtest?${params.toString()}`);
-        if (res === null) {
-            $('status').textContent = 'Cancelado: token nao informado.';
+        const res = await fetch(`/api/backtest?${params.toString()}`, { credentials: 'same-origin' });
+        if (res.status === 401) {
+            location.href = '/login';
             return;
         }
         const body = await res.json();

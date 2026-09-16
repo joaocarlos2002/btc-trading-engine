@@ -161,6 +161,12 @@ label[data-tip]:hover{
 }
 .status .dot{width:6px;height:6px;background:var(--red);border-radius:50%;}
 .status .dot.live{background:var(--green);}
+.tb-logout{
+  background:none;border:1px solid var(--line);border-radius:3px;
+  color:var(--text-3);font-family:var(--sans);font-size:9.5px;font-weight:600;
+  letter-spacing:.14em;text-transform:uppercase;padding:3px 8px;cursor:pointer;
+}
+.tb-logout:hover{color:var(--text-1);border-color:var(--text-3);}
 
 /* ═══════════════════════════════════════
    ROW / PANEL
@@ -511,6 +517,7 @@ footer{
     <div class="tb-right">
       <span class="tb-clock" id="clock">--:--:--Z</span>
       <span class="status"><i class="dot" id="dot"></i><span id="connection">connecting</span></span>
+      <button id="logout" class="tb-logout" type="button" title="Encerrar a sessão">Sair</button>
     </div>
   </div>
 
@@ -1334,35 +1341,29 @@ function renderTick(t){
   tickSpark.update('none');
 }
 
-/* ═══════════ API TOKEN ═══════════ */
-/* /api/trades/manual/** requires the X-Api-Token header (dashboard.api.token). The custom header is
-   what makes the request non-simple, so no other site can POST an order from this browser. */
-const TOKEN_KEY = 'btcEngineApiToken';
-function apiToken(reask){
-  let t = null;
-  try{ t = localStorage.getItem(TOKEN_KEY); }catch(e){}
-  if(reask || !t){
-    t = window.prompt('API token (dashboard.api.token in application.properties)', reask ? '' : (t || ''));
-    if(t === null) return null;
-    t = t.trim();
-    try{ localStorage.setItem(TOKEN_KEY, t); }catch(e){}
-  }
-  return t;
+/* ═══════════ CSRF ═══════════ */
+/* Every POST carries the token Spring Security put in the XSRF-TOKEN cookie. Another site cannot
+   read that cookie, so it cannot forge the header - which is what stops the CSRF of issue #66. */
+function csrfToken(){
+  const m = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]*)/);
+  return m ? decodeURIComponent(m[1]) : '';
 }
-async function authFetch(url, opts){
-  const send = token => fetch(url, Object.assign({}, opts, {
-    headers: Object.assign({}, opts && opts.headers, { 'X-Api-Token': token })
-  }));
-  let token = apiToken(false);
-  if(token === null) return null;
-  let r = await send(token);
-  if(r.status === 401){
-    token = apiToken(true);
-    if(token === null) return r;
-    r = await send(token);
-  }
+async function postJson(url){
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'X-XSRF-TOKEN': csrfToken() },
+    credentials: 'same-origin'
+  });
+  if(r.status === 401){ location.href = '/login'; return null; }
   return r;
 }
+async function logout(){
+  /* A form post would have to carry the token in the _csrf field, which the server expects masked;
+     the header is the same path every other POST here uses. */
+  try{ await fetch('/logout', { method:'POST', headers:{ 'X-XSRF-TOKEN': csrfToken() }, credentials:'same-origin' }); }
+  finally{ location.href = '/login?logout'; }
+}
+$('logout').addEventListener('click', logout);
 
 /* ═══════════ MANUAL ═══════════ */
 async function manualBuy(){
@@ -1370,10 +1371,11 @@ async function manualBuy(){
   $('manualBuy').disabled = true;
   text('actionStatus', 'sending…');
   try{
-    const r = await authFetch('/api/trades/manual/buy', { method:'POST' });
-    if(r === null){ text('actionStatus', 'cancelled'); updateBuy(false); return; }
+    const r = await postJson('/api/trades/manual/buy');
+    if(r === null) return;
+    if(r.status === 403){ text('actionStatus', 'not allowed (needs the TRADER role)'); updateBuy(false); return; }
     const j = await r.json();
-    text('actionStatus', j.message || j.error || 'ok');
+    text('actionStatus', j.message || 'ok');
     if(!r.ok) updateBuy(false);
   }catch(e){
     text('actionStatus', 'request failed');
@@ -1385,10 +1387,11 @@ async function manualClose(){
   $('manualClose').disabled = true;
   text('actionStatus', 'closing…');
   try{
-    const r = await authFetch('/api/trades/manual/close', { method:'POST' });
-    if(r === null){ text('actionStatus', 'cancelled'); updateClose(true); return; }
+    const r = await postJson('/api/trades/manual/close');
+    if(r === null) return;
+    if(r.status === 403){ text('actionStatus', 'not allowed (needs the TRADER role)'); updateClose(true); return; }
     const j = await r.json();
-    text('actionStatus', j.message || j.error || 'ok');
+    text('actionStatus', j.message || 'ok');
     if(!r.ok) updateClose(true);
   }catch(e){
     text('actionStatus', 'request failed');
