@@ -23,56 +23,6 @@ public class TradeJournal {
         this.dataSource = dataSource;
     }
 
-    public void createTableIfNotExists() {
-        String sql = """
-                CREATE TABLE IF NOT EXISTS trades (
-                    id BIGSERIAL PRIMARY KEY,
-                    position_id VARCHAR(50) NOT NULL UNIQUE,
-                    symbol VARCHAR(20) NOT NULL,
-                    signal VARCHAR(10) NOT NULL,
-                    entry_price NUMERIC(20, 8) NOT NULL,
-                    entry_time TIMESTAMP WITH TIME ZONE NOT NULL,
-                    exit_price NUMERIC(20, 8),
-                    exit_time TIMESTAMP WITH TIME ZONE,
-                    exit_reason VARCHAR(50),
-                    pnl NUMERIC(20, 8),
-                    pnl_percent NUMERIC(10, 6),
-                    target_percent NUMERIC(10, 6) NOT NULL,
-                    stop_loss_percent NUMERIC(10, 6) NOT NULL,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                );
-
-                ALTER TABLE trades ADD COLUMN IF NOT EXISTS quantity NUMERIC(20, 8);
-
-                ALTER TABLE trades ADD COLUMN IF NOT EXISTS state VARCHAR(20);
-
-                UPDATE trades SET state = CASE
-                        WHEN exit_time IS NULL THEN 'OPEN'
-                        WHEN exit_reason IN ('ORDER_FAILED', 'VALIDATION_FAILED', 'ERROR') THEN 'FAILED'
-                        ELSE 'CLOSED' END
-                    WHERE state IS NULL;
-
-                CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
-                CREATE INDEX IF NOT EXISTS idx_trades_entry_time ON trades(entry_time DESC);
-                CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(exit_time);
-                """;
-
-        try (Connection conn = dataSource.getConnection();
-             var stmt = conn.createStatement()) {
-
-            String[] statements = sql.split(";");
-            for (String s : statements) {
-                if (!s.trim().isEmpty()) {
-                    stmt.execute(s.trim());
-                }
-            }
-            logger.info("Trade journal table ready");
-        } catch (SQLException e) {
-            logger.error("Error creating trade journal table", e);
-            throw new RuntimeException(e);
-        }
-    }
-
     public void recordTrade(Position position, String symbol) {
         String sql = """
                 INSERT INTO trades
@@ -228,39 +178,6 @@ public class TradeJournal {
 
         } catch (SQLException e) {
             logger.error("Error recording execution log", e);
-        }
-    }
-
-    public void createExecutionLogTableIfNotExists() {
-        String sql = """
-                CREATE TABLE IF NOT EXISTS execution_log (
-                    id BIGSERIAL PRIMARY KEY,
-                    position_id VARCHAR(50) NOT NULL,
-                    symbol VARCHAR(20) NOT NULL,
-                    action VARCHAR(20) NOT NULL,
-                    signal VARCHAR(10),
-                    price NUMERIC(20, 8) NOT NULL,
-                    event_time TIMESTAMP WITH TIME ZONE NOT NULL,
-                    value NUMERIC(20, 8),
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_exec_position ON execution_log(position_id);
-                CREATE INDEX IF NOT EXISTS idx_exec_time ON execution_log(event_time DESC);
-                """;
-
-        try (Connection conn = dataSource.getConnection();
-             var stmt = conn.createStatement()) {
-
-            String[] statements = sql.split(";");
-            for (String s : statements) {
-                if (!s.trim().isEmpty()) {
-                    stmt.execute(s.trim());
-                }
-            }
-            logger.info("Execution log table ready");
-        } catch (SQLException e) {
-            logger.error("Error creating execution log table", e);
         }
     }
 }

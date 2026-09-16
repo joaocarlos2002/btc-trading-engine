@@ -23,25 +23,6 @@ public class JdbcOrderCommandStore implements OrderCommandStore {
     private static final Logger logger = LoggerFactory.getLogger(JdbcOrderCommandStore.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    static final String CREATE_SQL = """
-            CREATE TABLE IF NOT EXISTS order_commands (
-                id BIGSERIAL PRIMARY KEY,
-                client_order_id VARCHAR(64) NOT NULL UNIQUE,
-                position_id VARCHAR(50) NOT NULL,
-                type VARCHAR(10) NOT NULL,
-                payload TEXT NOT NULL DEFAULT '{}',
-                status VARCHAR(10) NOT NULL,
-                attempts INTEGER NOT NULL DEFAULT 1,
-                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                last_error TEXT
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_order_commands_unresolved ON order_commands(status)
-                WHERE status IN ('PENDING', 'SENT');
-            CREATE INDEX IF NOT EXISTS idx_order_commands_position ON order_commands(position_id)
-            """;
-
     static final String RECORD_SQL = """
             INSERT INTO order_commands (client_order_id, position_id, type, payload, status)
             VALUES (?, ?, ?, ?, 'PENDING')
@@ -66,20 +47,6 @@ public class JdbcOrderCommandStore implements OrderCommandStore {
 
     public JdbcOrderCommandStore(Supplier<DataSource> dataSource) {
         this.dataSource = dataSource;
-    }
-
-    public void createTableIfNotExists() {
-        try (Connection conn = dataSource.get().getConnection(); var stmt = conn.createStatement()) {
-            for (String sql : CREATE_SQL.split(";")) {
-                if (!sql.isBlank()) {
-                    stmt.execute(sql.trim());
-                }
-            }
-            logger.info("Order command outbox table ready");
-        } catch (SQLException e) {
-            logger.error("Error creating order_commands table", e);
-            throw new RuntimeException(e);
-        }
     }
 
     @Override
