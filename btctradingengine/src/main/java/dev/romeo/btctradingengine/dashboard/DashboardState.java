@@ -130,7 +130,8 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
         }
 
         refreshPositions();
-        return new ManualBuyResult(true, "Position closed manually");
+        boolean exitPending = manager.getOpenPosition().isPresent();
+        return new ManualBuyResult(true, exitPending ? "Exit order sent" : "Position closed manually");
     }
 
     public void addSession(WebSocketSession session) {

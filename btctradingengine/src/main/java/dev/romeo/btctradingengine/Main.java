@@ -292,6 +292,9 @@ public class Main {
                     orderBookPoller.stop();
                 }
 
+                // Queued order I/O applies its results before the trades are saved
+                positionManager.shutdown();
+
                 String symbol = Config.getMarketSymbol();
                 positionManager.getClosedPositions().forEach(pos ->
                     tradeJournal.recordTrade(pos, symbol)
