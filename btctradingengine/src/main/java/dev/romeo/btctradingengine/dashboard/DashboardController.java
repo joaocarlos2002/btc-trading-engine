@@ -1,125 +1,37 @@
 package dev.romeo.btctradingengine.dashboard;
 
-import dev.romeo.btctradingengine.adapter.BinanceAggTradeArchive;
-import dev.romeo.btctradingengine.adapter.BinanceKlineClient;
 import dev.romeo.btctradingengine.backtest.BacktestParams;
-import dev.romeo.btctradingengine.backtest.BacktestReport;
-import dev.romeo.btctradingengine.backtest.BacktestRunner;
+import dev.romeo.btctradingengine.backtest.BacktestRequest;
+import dev.romeo.btctradingengine.backtest.BacktestService;
+import dev.romeo.btctradingengine.backtest.WalkForward;
 import dev.romeo.btctradingengine.config.Config;
-import dev.romeo.btctradingengine.derivatives.BinanceFuturesClient;
-import dev.romeo.btctradingengine.derivatives.BinanceMetricsArchive;
-import dev.romeo.btctradingengine.derivatives.DerivativesHistory;
-import dev.romeo.btctradingengine.indicator.VwapAnchor;
-import dev.romeo.btctradingengine.model.CandleEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.math.BigDecimal;
-import java.time.Duration;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.net.URI;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @RestController
 @RequestMapping("/api")
 public class DashboardController {
     private final DashboardState state;
-    private static final Logger logger = LoggerFactory.getLogger(DashboardController.class);
+    private final BacktestService backtests;
 
-    private final BinanceKlineClient klineClient = new BinanceKlineClient();
-    private final BinanceKlineClient futuresKlineClient = BinanceKlineClient.usdmFutures();
-    private final BinanceFuturesClient futuresClient = new BinanceFuturesClient();
-    private final BinanceMetricsArchive metricsArchive = new BinanceMetricsArchive();
-    private final BinanceAggTradeArchive aggTradeArchive = new BinanceAggTradeArchive();
-
-    public DashboardController(DashboardState state) {
+    public DashboardController(DashboardState state, BacktestService backtests) {
         this.state = state;
-    }
-
-    /**
-     * Replaces each candle's kline flow (taker split only) with flow rebuilt from the aggTrades dumps,
-     * so the size split exists in the backtest (issue #51). Minutes without a dump keep their kline
-     * flow, and a failure returns the candles unchanged instead of failing the request.
-     */
-    private List<CandleEvent> withTradeSizeSplit(List<CandleEvent> candles) {
-        try {
-            LocalDate from = candles.get(0).openTime().atZone(ZoneOffset.UTC).toLocalDate();
-            LocalDate to = candles.get(candles.size() - 1).closeTime().atZone(ZoneOffset.UTC).toLocalDate();
-            Map<java.time.Instant, BinanceAggTradeArchive.SizeBuckets> buckets =
-                    aggTradeArchive.load(Config.getMarketSymbol(), from, to);
-            BigDecimal largeTradeNotional = Config.getLargeTradeNotional();
-
-            List<CandleEvent> merged = new ArrayList<>(candles.size());
-            for (CandleEvent candle : candles) {
-                BinanceAggTradeArchive.SizeBuckets candleBuckets = buckets.get(candle.openTime());
-                merged.add(candleBuckets == null ? candle : new CandleEvent(
-                        candle.instrument(), candle.openTime(), candle.closeTime(),
-                        candle.open(), candle.high(), candle.low(), candle.close(),
-                        candle.volume(), candle.tickCount(), candleBuckets.toTradeFlow(largeTradeNotional)));
-            }
-            return merged;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            logger.warn("Interrupted loading aggTrades for the backtest size split");
-            return candles;
-        } catch (Exception e) {
-            logger.warn("Could not load aggTrades for the backtest size split, continuing with kline flow: {}", e.getMessage());
-            return candles;
-        }
-    }
-
-    /**
-     * Derivatives history for the backtest range: funding and basis from the futures REST API, open
-     * interest and long/short from the data.binance.vision metrics dumps (issue #54). Each source fails
-     * on its own - the backtest runs with whatever loaded instead of failing the request.
-     */
-    private DerivativesHistory loadBacktestDerivatives(List<CandleEvent> candles, int days) {
-        DerivativesHistory history = DerivativesHistory.forBacktest();
-        if (!Config.isDerivativesEnabled()) {
-            return history;
-        }
-        try {
-            futuresKlineClient.loadClosedCandlesRange(Config.getMarketSymbol(), Config.getBinanceKlineInterval(), days)
-                    .forEach(kline -> history.addPerpClose(kline.openTime(), kline.close()));
-            // One funding interval before the first candle, so it already has a settled rate
-            Instant from = candles.get(0).openTime().minus(DerivativesHistory.FUNDING_INTERVAL);
-            Instant to = candles.get(candles.size() - 1).closeTime();
-            futuresClient.fundingRates(Config.getMarketSymbol(), from, to)
-                    .forEach(rate -> history.addFundingRate(rate.time(), rate.value()));
-        } catch (Exception e) {
-            logger.warn("Could not load derivatives history for the backtest, continuing without it: {}", e.getMessage());
-        }
-        try {
-            // Start one change window early, so the first candles already have an open interest to compare against
-            LocalDate from = candles.get(0).openTime()
-                    .minus(Duration.ofMinutes(Config.getOpenInterestChangeMinutes()))
-                    .atZone(ZoneOffset.UTC).toLocalDate();
-            LocalDate to = candles.get(candles.size() - 1).closeTime().atZone(ZoneOffset.UTC).toLocalDate();
-            metricsArchive.load(Config.getMarketSymbol(), from, to).forEach(row -> {
-                if (row.openInterest() != null) {
-                    history.addOpenInterest(row.publishedAt(), row.openInterest());
-                }
-                if (row.longShortRatio() != null) {
-                    history.addLongShortRatio(row.publishedAt(), row.longShortRatio());
-                }
-            });
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            logger.warn("Interrupted loading the open interest / long-short history for the backtest");
-        } catch (Exception e) {
-            logger.warn("Could not load open interest / long-short history for the backtest, continuing without it: {}",
-                    e.getMessage());
-        }
-        return history;
+        this.backtests = backtests;
     }
 
     @GetMapping("/candles/latest")
@@ -160,158 +72,165 @@ public class DashboardController {
     public DashboardState.Stats stats() { return state.stats(); }
 
     /**
-     * Runs the current strategy config (indicator periods, thresholds, target/stop) against
-     * real Binance mainnet history and returns the resulting report - lets you re-validate
-     * the strategy's edge on demand, e.g. after tuning thresholds or periodically over time.
-     * Always uses mainnet data regardless of binance.rest.url, since testnet price/volume
-     * does not reflect the real market.
+     * Runs the current strategy config against real Binance mainnet history and returns the report,
+     * synchronously. Kept for the backtest page and scripts; every {@link BacktestParams} component
+     * can be overridden by a query parameter of the same name (unknown parameters are ignored, as
+     * before). Validated and limited like the jobs (issue #83): 400 with the error list, 429 while
+     * another backtest runs. Prefer POST /api/backtests for long ranges.
      */
     @GetMapping("/backtest")
-    public ResponseEntity<?> backtest(
-            @RequestParam(defaultValue = "30") int days,
-            @RequestParam(defaultValue = "false") boolean sizeSplit,
-            @RequestParam(required = false) Integer smaPeriod,
-            @RequestParam(required = false) Integer emaPeriod,
-            @RequestParam(required = false) Integer rsiPeriod,
-            @RequestParam(required = false) Integer atrPeriod,
-            @RequestParam(required = false) Integer macdFastPeriod,
-            @RequestParam(required = false) Integer macdSlowPeriod,
-            @RequestParam(required = false) Integer macdSignalPeriod,
-            @RequestParam(required = false) Integer volatilityShortPeriods,
-            @RequestParam(required = false) Integer volatilityLongPeriods,
-            @RequestParam(required = false) Integer volumeAveragePeriods,
-            @RequestParam(required = false) Integer adxPeriod,
-            @RequestParam(required = false) Integer bollingerPeriod,
-            @RequestParam(required = false) BigDecimal bollingerStdDev,
-            @RequestParam(required = false) Integer mfiPeriod,
-            @RequestParam(required = false) Integer donchianPeriod,
-            @RequestParam(required = false) VwapAnchor vwapAnchor,
-            @RequestParam(required = false) Integer vwapRollingPeriods,
-            @RequestParam(required = false) Integer priceActionLookback,
-            @RequestParam(required = false) Integer priceActionSwingStrength,
-            @RequestParam(required = false) Integer cvdPeriod,
-            @RequestParam(required = false) Integer emaSlopePeriods,
-            @RequestParam(required = false) Integer vpinBuckets,
-            @RequestParam(required = false) Integer vpinBucketCandles,
-            @RequestParam(required = false) BigDecimal absorptionDeltaMin,
-            @RequestParam(required = false) BigDecimal absorptionVolumeRatioMin,
-            @RequestParam(required = false) BigDecimal absorptionMaxMoveAtr,
-            @RequestParam(required = false) Integer absorptionWindow,
-            @RequestParam(required = false) BigDecimal rsiOversold,
-            @RequestParam(required = false) BigDecimal rsiNeutralLow,
-            @RequestParam(required = false) BigDecimal rsiNeutralHigh,
-            @RequestParam(required = false) BigDecimal rsiOverbought,
-            @RequestParam(required = false) BigDecimal smaDistanceExtreme,
-            @RequestParam(required = false) BigDecimal smaDistanceModerate,
-            @RequestParam(required = false) BigDecimal macdStrongHistogramAtrRatio,
-            @RequestParam(required = false) BigDecimal atrVolatilityLow,
-            @RequestParam(required = false) BigDecimal atrVolatilityNormal,
-            @RequestParam(required = false) BigDecimal atrVolatilityHigh,
-            @RequestParam(required = false) BigDecimal volatilityRatioHigh,
-            @RequestParam(required = false) BigDecimal mfiOversold,
-            @RequestParam(required = false) BigDecimal mfiNeutralLow,
-            @RequestParam(required = false) BigDecimal mfiNeutralHigh,
-            @RequestParam(required = false) BigDecimal mfiOverbought,
-            @RequestParam(required = false) BigDecimal adxTrendMin,
-            @RequestParam(required = false) BigDecimal bollingerSqueezeThreshold,
-            @RequestParam(required = false) BigDecimal adxTrendStrong,
-            @RequestParam(required = false) Boolean regimeGatingEnabled,
-            @RequestParam(required = false) Boolean vpinFilterEnabled,
-            @RequestParam(required = false) BigDecimal vpinHighThreshold,
-            @RequestParam(required = false) Double buyThreshold,
-            @RequestParam(required = false) Double sellThreshold,
-            @RequestParam(required = false) Integer confirmationSnapshots,
-            @RequestParam(required = false) Boolean allowShort,
-            @RequestParam(required = false) BigDecimal targetPercent,
-            @RequestParam(required = false) BigDecimal stopLossPercent,
-            @RequestParam(required = false) BigDecimal commissionRate) {
-        int clampedDays = Math.max(1, Math.min(days, 180));
+    public ResponseEntity<?> backtest(@RequestParam Map<String, String> query) {
+        int days;
         try {
-            List<CandleEvent> candles = klineClient.loadClosedCandlesRange(
-                    Config.getMarketSymbol(), Config.getBinanceKlineInterval(), clampedDays);
-            if (candles.isEmpty()) {
-                return ResponseEntity.badRequest().body(Map.of(
-                        "error", "No candles returned for " + Config.getMarketSymbol() + " over " + clampedDays + " days"));
-            }
-
-            BacktestParams defaults = BacktestParams.fromConfig();
-            BacktestParams params = new BacktestParams(
-                    smaPeriod != null ? smaPeriod : defaults.smaPeriod(),
-                    emaPeriod != null ? emaPeriod : defaults.emaPeriod(),
-                    rsiPeriod != null ? rsiPeriod : defaults.rsiPeriod(),
-                    atrPeriod != null ? atrPeriod : defaults.atrPeriod(),
-                    macdFastPeriod != null ? macdFastPeriod : defaults.macdFastPeriod(),
-                    macdSlowPeriod != null ? macdSlowPeriod : defaults.macdSlowPeriod(),
-                    macdSignalPeriod != null ? macdSignalPeriod : defaults.macdSignalPeriod(),
-                    volatilityShortPeriods != null ? volatilityShortPeriods : defaults.volatilityShortPeriods(),
-                    volatilityLongPeriods != null ? volatilityLongPeriods : defaults.volatilityLongPeriods(),
-                    volumeAveragePeriods != null ? volumeAveragePeriods : defaults.volumeAveragePeriods(),
-                    adxPeriod != null ? adxPeriod : defaults.adxPeriod(),
-                    bollingerPeriod != null ? bollingerPeriod : defaults.bollingerPeriod(),
-                    bollingerStdDev != null ? bollingerStdDev : defaults.bollingerStdDev(),
-                    mfiPeriod != null ? mfiPeriod : defaults.mfiPeriod(),
-                    donchianPeriod != null ? donchianPeriod : defaults.donchianPeriod(),
-                    vwapAnchor != null ? vwapAnchor : defaults.vwapAnchor(),
-                    vwapRollingPeriods != null ? vwapRollingPeriods : defaults.vwapRollingPeriods(),
-                    priceActionLookback != null ? priceActionLookback : defaults.priceActionLookback(),
-                    priceActionSwingStrength != null ? priceActionSwingStrength : defaults.priceActionSwingStrength(),
-                    cvdPeriod != null ? cvdPeriod : defaults.cvdPeriod(),
-                    emaSlopePeriods != null ? emaSlopePeriods : defaults.emaSlopePeriods(),
-                    vpinBuckets != null ? vpinBuckets : defaults.vpinBuckets(),
-                    vpinBucketCandles != null ? vpinBucketCandles : defaults.vpinBucketCandles(),
-                    absorptionDeltaMin != null ? absorptionDeltaMin : defaults.absorptionDeltaMin(),
-                    absorptionVolumeRatioMin != null ? absorptionVolumeRatioMin : defaults.absorptionVolumeRatioMin(),
-                    absorptionMaxMoveAtr != null ? absorptionMaxMoveAtr : defaults.absorptionMaxMoveAtr(),
-                    absorptionWindow != null ? absorptionWindow : defaults.absorptionWindow(),
-                    rsiOversold != null ? rsiOversold : defaults.rsiOversold(),
-                    rsiNeutralLow != null ? rsiNeutralLow : defaults.rsiNeutralLow(),
-                    rsiNeutralHigh != null ? rsiNeutralHigh : defaults.rsiNeutralHigh(),
-                    rsiOverbought != null ? rsiOverbought : defaults.rsiOverbought(),
-                    smaDistanceExtreme != null ? smaDistanceExtreme : defaults.smaDistanceExtreme(),
-                    smaDistanceModerate != null ? smaDistanceModerate : defaults.smaDistanceModerate(),
-                    macdStrongHistogramAtrRatio != null ? macdStrongHistogramAtrRatio : defaults.macdStrongHistogramAtrRatio(),
-                    atrVolatilityLow != null ? atrVolatilityLow : defaults.atrVolatilityLow(),
-                    atrVolatilityNormal != null ? atrVolatilityNormal : defaults.atrVolatilityNormal(),
-                    atrVolatilityHigh != null ? atrVolatilityHigh : defaults.atrVolatilityHigh(),
-                    volatilityRatioHigh != null ? volatilityRatioHigh : defaults.volatilityRatioHigh(),
-                    mfiOversold != null ? mfiOversold : defaults.mfiOversold(),
-                    mfiNeutralLow != null ? mfiNeutralLow : defaults.mfiNeutralLow(),
-                    mfiNeutralHigh != null ? mfiNeutralHigh : defaults.mfiNeutralHigh(),
-                    mfiOverbought != null ? mfiOverbought : defaults.mfiOverbought(),
-                    adxTrendMin != null ? adxTrendMin : defaults.adxTrendMin(),
-                    bollingerSqueezeThreshold != null ? bollingerSqueezeThreshold : defaults.bollingerSqueezeThreshold(),
-                    adxTrendStrong != null ? adxTrendStrong : defaults.adxTrendStrong(),
-                    regimeGatingEnabled != null ? regimeGatingEnabled : defaults.regimeGatingEnabled(),
-                    vpinFilterEnabled != null ? vpinFilterEnabled : defaults.vpinFilterEnabled(),
-                    vpinHighThreshold != null ? vpinHighThreshold : defaults.vpinHighThreshold(),
-                    buyThreshold != null ? buyThreshold : defaults.buyThreshold(),
-                    sellThreshold != null ? sellThreshold : defaults.sellThreshold(),
-                    confirmationSnapshots != null ? confirmationSnapshots : defaults.confirmationSnapshots(),
-                    allowShort != null ? allowShort : defaults.allowShort(),
-                    targetPercent != null ? targetPercent : defaults.targetPercent(),
-                    stopLossPercent != null ? stopLossPercent : defaults.stopLossPercent(),
-                    commissionRate != null ? commissionRate : defaults.commissionRate());
-
-            if (sizeSplit) {
-                candles = withTradeSizeSplit(candles);
-            }
-            DerivativesHistory derivatives = loadBacktestDerivatives(candles, clampedDays);
-            BacktestReport report = new BacktestRunner().run(candles, Config.getTradingInitialCapital(), params, derivatives);
-            return ResponseEntity.ok(Map.of(
-                    "symbol", Config.getMarketSymbol(),
-                    "interval", Config.getBinanceKlineInterval(),
-                    "requestedDays", clampedDays,
-                    "candleCount", candles.size(),
-                    "rangeStart", candles.get(0).openTime(),
-                    "rangeEnd", candles.get(candles.size() - 1).closeTime(),
-                    "params", params,
-                    "derivativesLoaded", !derivatives.isEmpty(),
-                    "sizeSplitCandles", BinanceAggTradeArchive.candlesWithSizeSplit(candles),
-                    "report", report
-            ));
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().body(Map.of(
-                    "error", "Backtest failed: " + e.getMessage()));
+            days = Integer.parseInt(query.getOrDefault("days", "30").trim());
+        } catch (NumberFormatException e) {
+            return invalid(List.of("days must be a whole number"));
         }
+        // The GET has always clamped the range instead of refusing it
+        int clampedDays = Math.max(1, Math.min(days, BacktestRequest.MAX_DAYS));
+        boolean sizeSplit = Boolean.parseBoolean(query.getOrDefault("sizeSplit", "false"));
+
+        Map<String, String> overrides = new LinkedHashMap<>(query);
+        overrides.keySet().retainAll(BacktestParams.parameterNames());
+        BacktestParams params;
+        try {
+            params = BacktestParams.fromConfig().withOverrides(overrides);
+        } catch (IllegalArgumentException e) {
+            return invalid(List.of(e.getMessage().split("; ")));
+        }
+        return ResponseEntity.ok(backtests.runNow(BacktestRequest.single(clampedDays, sizeSplit, params)));
+    }
+
+    /**
+     * Body of the POST /api/backtests* endpoints. {@code params} overrides the configured strategy by
+     * BacktestParams component name; {@code param}/{@code values} name the swept field; the rest only
+     * applies to walk-forward.
+     */
+    public record BacktestJobBody(
+            Integer days,
+            Boolean sizeSplit,
+            Map<String, Object> params,
+            String param,
+            List<Object> values,
+            Integer trainDays,
+            Integer testDays,
+            Integer holdOutDays,
+            String objective,
+            Integer minTrades,
+            Integer warmupCandles
+    ) { }
+
+    /** Starts a single backtest as a job: 202 with the job, then poll GET /api/backtests/{id}. */
+    @PostMapping("/backtests")
+    public ResponseEntity<?> submitBacktest(@RequestBody(required = false) BacktestJobBody body) {
+        BacktestJobBody b = body == null ? emptyBody() : body;
+        List<String> errors = new ArrayList<>();
+        BacktestParams params = params(b, errors);
+        if (!errors.isEmpty()) return invalid(errors);
+        return accepted(backtests.submit(BacktestRequest.single(days(b), bool(b.sizeSplit()), params)));
+    }
+
+    /** Runs one backtest per value of {@code param}, in parallel over candles downloaded once. */
+    @PostMapping("/backtests/sweep")
+    public ResponseEntity<?> submitSweep(@RequestBody BacktestJobBody body) {
+        List<String> errors = new ArrayList<>();
+        BacktestParams params = params(body, errors);
+        if (!errors.isEmpty()) return invalid(errors);
+        return accepted(backtests.submit(BacktestRequest.sweep(
+                days(body), bool(body.sizeSplit()), params, body.param(), values(body))));
+    }
+
+    /**
+     * Walk-forward over {@code param}: optimize on trainDays, validate on the next testDays, roll by
+     * testDays, then evaluate the last holdOutDays once. objective is profitFactor (default),
+     * returnPercent or sharpe; values with fewer than minTrades (default 5) trades are not eligible.
+     * warmupCandles defaults to the larger of market.history.candles and the widest indicator window.
+     */
+    @PostMapping("/backtests/walk-forward")
+    public ResponseEntity<?> submitWalkForward(@RequestBody BacktestJobBody body) {
+        List<String> errors = new ArrayList<>();
+        BacktestParams params = params(body, errors);
+        WalkForward.Objective objective = WalkForward.Objective.parse(body.objective()).orElse(null);
+        if (objective == null) {
+            errors.add("objective must be profitFactor, returnPercent or sharpe");
+        }
+        if (body.trainDays() == null || body.testDays() == null) {
+            errors.add("trainDays and testDays are required");
+        }
+        if (!errors.isEmpty()) return invalid(errors);
+
+        int warmup = body.warmupCandles() != null
+                ? body.warmupCandles()
+                : Math.max(Config.getHistoryCandles(), params.warmupCandles());
+        WalkForward.Settings settings = new WalkForward.Settings(body.trainDays(), body.testDays(),
+                Objects.requireNonNullElse(body.holdOutDays(), 0), objective,
+                Objects.requireNonNullElse(body.minTrades(), 5), warmup);
+        return accepted(backtests.submit(BacktestRequest.walkForward(
+                days(body), bool(body.sizeSplit()), params, body.param(), values(body), settings)));
+    }
+
+    @GetMapping("/backtests/{id}")
+    public ResponseEntity<?> backtestJob(@PathVariable String id) {
+        return backtests.job(id).<ResponseEntity<?>>map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("error", "No backtest job " + id)));
+    }
+
+    @ExceptionHandler(BacktestService.InvalidRequestException.class)
+    public ResponseEntity<?> onInvalidBacktest(BacktestService.InvalidRequestException e) {
+        return invalid(e.errors());
+    }
+
+    @ExceptionHandler(BacktestService.BusyException.class)
+    public ResponseEntity<?> onBusy(BacktestService.BusyException e) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", "30")
+                .body(Map.of("error", e.getMessage()));
+    }
+
+    /** The service already logged the cause; only its client-safe message goes out. */
+    @ExceptionHandler(BacktestService.BacktestFailure.class)
+    public ResponseEntity<?> onBacktestFailure(BacktestService.BacktestFailure e) {
+        HttpStatus status = e.clientError() ? HttpStatus.BAD_REQUEST : HttpStatus.INTERNAL_SERVER_ERROR;
+        return ResponseEntity.status(status).body(Map.of("error", e.getMessage()));
+    }
+
+    private static ResponseEntity<?> invalid(List<String> errors) {
+        return ResponseEntity.badRequest().body(Map.of(
+                "error", "Invalid backtest parameters: " + String.join("; ", errors),
+                "errors", errors));
+    }
+
+    private static ResponseEntity<?> accepted(BacktestService.JobView job) {
+        return ResponseEntity.accepted().location(URI.create("/api/backtests/" + job.id())).body(job);
+    }
+
+    private static BacktestJobBody emptyBody() {
+        return new BacktestJobBody(null, null, null, null, null, null, null, null, null, null, null);
+    }
+
+    private static BacktestParams params(BacktestJobBody body, List<String> errors) {
+        BacktestParams defaults = BacktestParams.fromConfig();
+        if (body.params() == null || body.params().isEmpty()) {
+            return defaults;
+        }
+        try {
+            return defaults.withOverrides(body.params());
+        } catch (IllegalArgumentException e) {
+            errors.addAll(List.of(e.getMessage().split("; ")));
+            return defaults;
+        }
+    }
+
+    private static int days(BacktestJobBody body) {
+        return Objects.requireNonNullElse(body.days(), 30);
+    }
+
+    private static boolean bool(Boolean value) {
+        return Boolean.TRUE.equals(value);
+    }
+
+    private static List<String> values(BacktestJobBody body) {
+        return body.values() == null ? List.of() : body.values().stream().map(String::valueOf).toList();
     }
 }

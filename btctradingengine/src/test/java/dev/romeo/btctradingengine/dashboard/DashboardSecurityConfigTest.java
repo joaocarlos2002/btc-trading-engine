@@ -8,7 +8,11 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
+import org.springframework.http.MediaType;
+
+import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -100,6 +104,46 @@ class DashboardSecurityConfigTest {
         // 400 is the controller answering "position manager is not ready": security let it through.
         mvc.perform(postWithCsrf("/api/trades/manual/buy", "VIEWER", "TRADER")).andExpect(status().isBadRequest());
         mvc.perform(postWithCsrf("/api/trades/manual/close", "VIEWER", "TRADER")).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void backtestJobEndpointsNeedLoginAndTheCsrfToken() throws Exception {
+        mvc.perform(get("/api/backtests/some-id")).andExpect(status().isUnauthorized());
+        for (String path : new String[]{"/api/backtests", "/api/backtests/sweep", "/api/backtests/walk-forward"}) {
+            mvc.perform(post(path).with(user("someone").roles("VIEWER"))
+                            .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    @Test
+    void backtestRequestsAreValidatedBeforeAnyDownload() throws Exception {
+        // 400 with the error list, answered before any Binance call (issue #83)
+        mvc.perform(get("/api/backtest?days=1&smaPeriod=0&confirmationSnapshots=0").with(user("someone").roles("VIEWER")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors", hasItem("indicator.sma.period must be positive")))
+                .andExpect(jsonPath("$.errors", hasItem("prediction.confirmation.snapshots must be positive")));
+        mvc.perform(get("/api/backtest?days=1&smaPeriod=abc").with(user("someone").roles("VIEWER")))
+                .andExpect(status().isBadRequest());
+
+        mvc.perform(postWithCsrf("/api/backtests", "VIEWER")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"days\": 0, \"params\": {\"macdFastPeriod\": 30, \"macdSlowPeriod\": 26}}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors", hasItem("days must be between 1 and 180")))
+                .andExpect(jsonPath("$.errors", hasItem("indicator.macd.fast.period must be lower than slow.period")));
+        mvc.perform(postWithCsrf("/api/backtests/sweep", "VIEWER")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"days\": 5, \"param\": \"buyThreshold\", \"values\": [0.3, 5]}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(postWithCsrf("/api/backtests/walk-forward", "VIEWER")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"days\": 10, \"param\": \"buyThreshold\", \"values\": [0.3], "
+                                + "\"trainDays\": 10, \"testDays\": 5, \"objective\": \"winRate\"}"))
+                .andExpect(status().isBadRequest());
+
+        mvc.perform(get("/api/backtests/unknown").with(user("someone").roles("VIEWER")))
+                .andExpect(status().isNotFound());
     }
 
     @Test
