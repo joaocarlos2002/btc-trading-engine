@@ -1,16 +1,29 @@
 package dev.romeo.btctradingengine.config;
 
 import dev.romeo.btctradingengine.indicator.VwapAnchor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 
 public class Config {
+    private static final Logger logger = LoggerFactory.getLogger(Config.class);
 
     private static final Properties props = new Properties();
+
+    /** Secrets from the .env next to docker-compose.yml, so the app and the database share one source. */
+    private static final Map<String, String> dotEnv = loadDotEnv(Path.of(".env"), Path.of("../.env"));
 
     static {
         try (InputStream is = Config.class.getClassLoader().getResourceAsStream("application.properties")) {
@@ -22,12 +35,55 @@ public class Config {
         }
     }
 
+    /**
+     * Reads the first of the given .env files that exists, so `docker compose up` and
+     * `mvn spring-boot:run` (whose working directory is the module, one level down) both find it.
+     * Missing or unreadable files are simply ignored - .env is optional.
+     */
+    static Map<String, String> loadDotEnv(Path... candidates) {
+        for (Path candidate : candidates) {
+            if (Files.isRegularFile(candidate)) {
+                try {
+                    return parseDotEnv(Files.readAllLines(candidate, StandardCharsets.UTF_8));
+                } catch (IOException e) {
+                    System.err.println("Could not read " + candidate + ": " + e.getMessage());
+                }
+            }
+        }
+        return Map.of();
+    }
+
+    /** KEY=VALUE per line; blanks and # comments are skipped, and an optional `export ` and surrounding quotes are dropped. */
+    static Map<String, String> parseDotEnv(Iterable<String> lines) {
+        Map<String, String> values = new HashMap<>();
+        for (String raw : lines) {
+            String line = raw.strip();
+            if (line.isEmpty() || line.startsWith("#") || !line.contains("=")) {
+                continue;
+            }
+            if (line.startsWith("export ")) {
+                line = line.substring("export ".length()).strip();
+            }
+            int separator = line.indexOf('=');
+            String key = line.substring(0, separator).strip();
+            String value = line.substring(separator + 1).strip();
+            if (value.length() >= 2 && (value.startsWith("\"") && value.endsWith("\"")
+                    || value.startsWith("'") && value.endsWith("'"))) {
+                value = value.substring(1, value.length() - 1);
+            }
+            if (!key.isEmpty()) {
+                values.put(key, value);
+            }
+        }
+        return values;
+    }
+
     public static String getMarketSymbol() {
         return getProperty("market.symbol", "BTCUSDT");
     }
 
     public static Duration getMarketInterval() {
-        long seconds = Long.parseLong(getProperty("market.interval.seconds", "5"));
+        long seconds = Long.parseLong(getProperty("market.interval.seconds", "60"));
         return Duration.ofSeconds(seconds);
     }
 
@@ -116,12 +172,13 @@ public class Config {
     public static boolean isRealTradingEnabled() { return Boolean.parseBoolean(getProperty("trading.real.enabled", "false")); }
     public static boolean isBinanceTestnetEndpoint() { return getBinanceRestUrl().toLowerCase().contains("testnet"); }
     public static boolean isMainnetTradingConfirmed() { return Boolean.parseBoolean(getProperty("trading.confirm.mainnet", "false")); }
-    public static BigDecimal getTradingInitialCapital() { return getDecimal("trading.initial.capital.usdt", "10"); }
+    public static BigDecimal getTradingInitialCapital() { return getDecimal("trading.initial.capital.usdt", "100"); }
     public static BigDecimal getTradingMaxDrawdownPercent() { return getDecimal("trading.max.drawdown.percent", "5"); }
+    public static boolean isShortSellingAllowed() { return Boolean.parseBoolean(getProperty("trading.allow.short", "false")); }
     public static long getMaxDataStalenessSeconds() { return Long.parseLong(getProperty("trading.max.data.staleness.seconds", "60")); }
     public static BigDecimal getBacktestCommissionRate() { return getDecimal("backtest.commission.rate", "0.001"); }
     public static String getAlertDiscordWebhookUrl() {
-        return getEnvironmentOrProperty("btc-trading-engine_ALERT_DISCORD_WEBHOOK_URL", "alert.discord.webhook.url", "");
+        return getEnvironmentOrProperty("BTC_ENGINE_DISCORD_WEBHOOK_URL", "alert.discord.webhook.url", "");
     }
 
     public static void validate() {
@@ -205,6 +262,11 @@ public class Config {
             throw new IllegalArgumentException("Trading capital and max drawdown must be positive");
         }
         requirePositive("trading.max.data.staleness.seconds", getMaxDataStalenessSeconds());
+        if (getDbPassword().isBlank()) {
+            logger.warn("db.password is blank: set BTC_ENGINE_DB_PASSWORD in .env (see .env.example), "
+                    + "the same variable docker-compose uses to create the database. "
+                    + "Connecting to {} as {} will fail until then.", getDbUrl(), getDbUser());
+        }
         if (isRealTradingEnabled()
                 && (getBinanceApiKey().isBlank() || getBinanceApiSecret().isBlank())) {
             throw new IllegalArgumentException("Real trading requires Binance API credentials");
@@ -228,11 +290,11 @@ public class Config {
     }
 
     public static String getBinanceWsUrl() {
-        return getProperty("binance.ws.url", "wss://stream.binance.com:9443/ws/");
+        return getProperty("binance.ws.url", "wss://stream.testnet.binance.vision:9443/ws/");
     }
 
     public static String getBinanceRestUrl() {
-        return getProperty("binance.rest.url", "https://api.binance.com");
+        return getProperty("binance.rest.url", "https://testnet.binance.vision");
     }
 
     public static int getBinanceMaxRetries() {
@@ -282,23 +344,32 @@ public class Config {
     public static BigDecimal getOrderBookSellMax() { return getDecimal("prediction.orderbook.sell.max", "0.65"); }
 
     public static String getDbUrl() {
-        return getProperty("db.url", "jdbc:postgresql://localhost:5432/btc-trading-engine_btc");
+        return getProperty("db.url", "jdbc:postgresql://localhost:5432/btc_trading_engine");
     }
 
     public static String getDbUser() {
-        return getProperty("db.user", "btc-trading-engine");
+        return getProperty("db.user", "btc_engine");
     }
 
     public static String getDbPassword() {
-        return getEnvironmentOrProperty("btc-trading-engine_DB_PASSWORD", "db.password", "");
+        return getEnvironmentOrProperty("BTC_ENGINE_DB_PASSWORD", "db.password", "");
     }
 
     public static String getBinanceApiKey() {
-        return getEnvironmentOrProperty("btc-trading-engine_BINANCE_API_KEY", "binance.api.key", "");
+        return getEnvironmentOrProperty("BTC_ENGINE_BINANCE_API_KEY", "binance.api.key", "");
     }
 
     public static String getBinanceApiSecret() {
-        return getEnvironmentOrProperty("btc-trading-engine_BINANCE_API_SECRET", "binance.api.secret", "");
+        return getEnvironmentOrProperty("BTC_ENGINE_BINANCE_API_SECRET", "binance.api.secret", "");
+    }
+
+    /** Origins allowed to open the /ws/live WebSocket. */
+    public static List<String> getDashboardAllowedOrigins() {
+        return Arrays.stream(getProperty("dashboard.allowed.origins",
+                        "http://localhost:8080,http://127.0.0.1:8080").split(","))
+                .map(String::trim)
+                .filter(origin -> !origin.isEmpty())
+                .toList();
     }
 
     public static int getDbPoolSize() {
@@ -317,8 +388,12 @@ public class Config {
         return props.getProperty(key, defaultValue);
     }
 
+    /** Precedence: real environment variable, then .env, then application.properties, then the default. */
     private static String getEnvironmentOrProperty(String environmentKey, String propertyKey, String defaultValue) {
         String environmentValue = System.getenv(environmentKey);
+        if (environmentValue == null || environmentValue.isBlank()) {
+            environmentValue = dotEnv.get(environmentKey);
+        }
         return environmentValue == null || environmentValue.isBlank()
                 ? getProperty(propertyKey, defaultValue)
                 : environmentValue;

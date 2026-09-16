@@ -484,7 +484,11 @@ async function runBacktest() {
     $('emptyPanel').style.display = 'none';
 
     try {
-        const res = await fetch(`/api/backtest?${params.toString()}`);
+        const res = await fetch(`/api/backtest?${params.toString()}`, { credentials: 'same-origin' });
+        if (res.status === 401) {
+            location.href = '/login';
+            return;
+        }
         const body = await res.json();
 
         if (!res.ok) {
