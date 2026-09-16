@@ -52,10 +52,10 @@ public class BacktestRunner {
                 new MarketRegimeClassifier(params.adxTrendMin(), params.adxTrendStrong(), params.bollingerSqueezeThreshold()),
                 params.regimeGatingEnabled(),
                 new VpinEntryGuard(params.vpinFilterEnabled(), params.vpinHighThreshold()));
-        predictor.addRule(new RsiRule(params.rsiOversold(), params.rsiNeutralLow(), params.rsiNeutralHigh(), params.rsiOverbought()));
-        predictor.addRule(new SmaMomentumRule(params.smaDistanceExtreme(), params.smaDistanceModerate()));
+        predictor.addRule(new RsiRule(params.rsiPeriod(), params.rsiOversold(), params.rsiNeutralLow(), params.rsiNeutralHigh(), params.rsiOverbought()));
+        predictor.addRule(new SmaMomentumRule(params.smaPeriod(), params.smaDistanceExtreme(), params.smaDistanceModerate()));
         predictor.addRule(new MacdRule(params.macdStrongHistogramAtrRatio()));
-        predictor.addRule(new MfiRule(params.mfiOversold(), params.mfiNeutralLow(), params.mfiNeutralHigh(), params.mfiOverbought()));
+        predictor.addRule(new MfiRule(params.mfiPeriod(), params.mfiOversold(), params.mfiNeutralLow(), params.mfiNeutralHigh(), params.mfiOverbought()));
         predictor.addFilterRule(new AtrRule(params.atrVolatilityLow(), params.atrVolatilityNormal(), params.atrVolatilityHigh()));
         predictor.addFilterRule(new VolatilityRule(params.volatilityRatioHigh()));
         predictor.addFilterRule(new AdxRegimeRule(params.adxTrendMin(), params.bollingerSqueezeThreshold(), params.regimeGatingEnabled()));

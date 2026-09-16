@@ -8,17 +8,24 @@ import dev.romeo.btctradingengine.prediction.SignalRule;
 import java.math.BigDecimal;
 
 public class RsiRule implements SignalRule {
+    private final int period;
     private final BigDecimal oversold;
     private final BigDecimal neutralLow;
     private final BigDecimal neutralHigh;
     private final BigDecimal overbought;
 
     public RsiRule() {
-        this(Config.getRsiOversold(), Config.getRsiNeutralLow(), Config.getRsiNeutralHigh(), Config.getRsiOverbought());
+        this(Config.getRsiPeriod(), Config.getRsiOversold(), Config.getRsiNeutralLow(), Config.getRsiNeutralHigh(),
+                Config.getRsiOverbought());
     }
 
-    /** Allows overriding thresholds without touching global Config - used by on-demand backtests. */
-    public RsiRule(BigDecimal oversold, BigDecimal neutralLow, BigDecimal neutralHigh, BigDecimal overbought) {
+    /**
+     * Allows overriding thresholds without touching global Config - used by on-demand backtests. The
+     * period only labels the rule: it used to be read from Config, so a backtest with another period
+     * reported the live one in its reason (issue #94).
+     */
+    public RsiRule(int period, BigDecimal oversold, BigDecimal neutralLow, BigDecimal neutralHigh, BigDecimal overbought) {
+        this.period = period;
         this.oversold = oversold;
         this.neutralLow = neutralLow;
         this.neutralHigh = neutralHigh;
@@ -54,7 +61,7 @@ public class RsiRule implements SignalRule {
 
     @Override
     public String getName() {
-        return "RSI(" + Config.getRsiPeriod() + ")";
+        return "RSI(" + period + ")";
     }
 }
 

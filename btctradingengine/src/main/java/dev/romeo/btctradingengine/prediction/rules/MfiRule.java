@@ -14,17 +14,20 @@ import java.math.BigDecimal;
  * This one goes through addRule (it enters the score average), unlike the regime filters.
  */
 public class MfiRule implements SignalRule {
+    private final int period;
     private final BigDecimal oversold;
     private final BigDecimal neutralLow;
     private final BigDecimal neutralHigh;
     private final BigDecimal overbought;
 
     public MfiRule() {
-        this(Config.getMfiOversold(), Config.getMfiNeutralLow(), Config.getMfiNeutralHigh(), Config.getMfiOverbought());
+        this(Config.getMfiPeriod(), Config.getMfiOversold(), Config.getMfiNeutralLow(), Config.getMfiNeutralHigh(),
+                Config.getMfiOverbought());
     }
 
-    /** Allows overriding thresholds without touching global Config - used by on-demand backtests. */
-    public MfiRule(BigDecimal oversold, BigDecimal neutralLow, BigDecimal neutralHigh, BigDecimal overbought) {
+    /** Allows overriding thresholds without touching global Config - used by on-demand backtests. The period only labels the rule. */
+    public MfiRule(int period, BigDecimal oversold, BigDecimal neutralLow, BigDecimal neutralHigh, BigDecimal overbought) {
+        this.period = period;
         this.oversold = oversold;
         this.neutralLow = neutralLow;
         this.neutralHigh = neutralHigh;
@@ -58,6 +61,6 @@ public class MfiRule implements SignalRule {
 
     @Override
     public String getName() {
-        return "MFI(" + Config.getMfiPeriod() + ")";
+        return "MFI(" + period + ")";
     }
 }

@@ -269,6 +269,69 @@ public class RuleBasedPredictorTest {
                 .build();
     }
 
+    @Test
+    public void singleSnapshotConfirmationEmitsOnTheFirstCandle() {
+        List<PredictionVector> predictions = new ArrayList<>();
+        RuleBasedPredictor predictor = new RuleBasedPredictor(predictions::add, 0.28, -0.28, 1);
+        predictor.addRule(new FixedScoreRule(0.9));
+
+        predictor.onEvent(createFeatures("100", "50"));
+
+        // Before issue #88 N=1 still returned HOLD on the first candle and acted like N=2
+        assertEquals(Signal.BUY, predictions.get(0).signal());
+    }
+
+    @Test
+    public void confirmationNeedsExactlyNConsecutiveCandles() {
+        List<PredictionVector> predictions = new ArrayList<>();
+        RuleBasedPredictor predictor = new RuleBasedPredictor(predictions::add, 0.28, -0.28, 3);
+        predictor.addRule(new FixedScoreRule(0.9));
+
+        predictor.onEvent(createFeatures("100", "50"));
+        predictor.onEvent(createFeatures("100", "50"));
+        predictor.onEvent(createFeatures("100", "50"));
+        predictor.onEvent(createFeatures("100", "50"));
+
+        assertEquals(List.of(Signal.HOLD, Signal.HOLD, Signal.BUY, Signal.BUY),
+                predictions.stream().map(PredictionVector::signal).toList());
+    }
+
+    @Test
+    public void aHoldInBetweenRestartsTheConfirmation() {
+        List<PredictionVector> predictions = new ArrayList<>();
+        double[] score = { 0.9 };
+        RuleBasedPredictor predictor = new RuleBasedPredictor(predictions::add, 0.28, -0.28, 2);
+        predictor.addRule(new SignalRule() {
+            @Override public double evaluate(FeatureVector features) { return score[0]; }
+            @Override public String getName() { return "Variable"; }
+        });
+
+        predictor.onEvent(createFeatures("100", "50"));
+        score[0] = 0.0;
+        predictor.onEvent(createFeatures("100", "50"));
+        score[0] = 0.9;
+        predictor.onEvent(createFeatures("100", "50"));
+        predictor.onEvent(createFeatures("100", "50"));
+
+        assertEquals(List.of(Signal.HOLD, Signal.HOLD, Signal.HOLD, Signal.BUY),
+                predictions.stream().map(PredictionVector::signal).toList());
+    }
+
+    @Test
+    public void rejectsNonPositiveConfirmationSnapshots() {
+        assertThrows(IllegalArgumentException.class, () -> new RuleBasedPredictor(p -> { }, 0.28, -0.28, 0));
+        assertThrows(IllegalArgumentException.class, () -> new RuleBasedPredictor(p -> { }, 0.28, -0.28, -1));
+    }
+
+    @Test
+    public void ruleNamesUseThePeriodTheyWereBuiltWith() {
+        assertEquals("RSI(100)", new RsiRule(100, new BigDecimal("30"), new BigDecimal("40"),
+                new BigDecimal("60"), new BigDecimal("70")).getName());
+        assertEquals("SMA42-Distance", new SmaMomentumRule(42, new BigDecimal("2"), new BigDecimal("1")).getName());
+        assertEquals("MFI(7)", new dev.romeo.btctradingengine.prediction.rules.MfiRule(7, new BigDecimal("20"),
+                new BigDecimal("40"), new BigDecimal("60"), new BigDecimal("80")).getName());
+    }
+
     private FeatureVector createFeatures(String price, String rsi) {
         return createFeatures(price, rsi, smaDistance("0.0"));
     }
