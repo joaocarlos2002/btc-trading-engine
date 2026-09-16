@@ -192,6 +192,7 @@ public class Config {
         }
         requirePositive("market.interval.seconds", getMarketInterval().getSeconds());
         requirePositive("market.history.candles", getHistoryCandles());
+        requirePositive("prediction.confirmation.snapshots", getConfirmationSnapshots());
         requirePositive("indicator.sma.period", getSmaPeriod());
         requirePositive("indicator.ema.period", getEmaPeriod());
         requirePositive("indicator.rsi.period", getRsiPeriod());
