@@ -78,6 +78,10 @@ public class PositionManager {
     private BigDecimal protectionStopLimitPrice = null;
     private Instant nextProtectionPollAt = null;
 
+    // Position sizing (issue #111): the default keeps the historical 50% of the quote balance
+    private volatile PositionSizingStrategy sizing = PositionSizingStrategy.fixedFraction(new BigDecimal("0.5"));
+    private volatile BigDecimal latestAtr = null;
+
     // Outbox (issue #111): every order is recorded before its request and updated after it
     private volatile OrderCommandStore orderCommands = OrderCommandStore.NONE;
 
@@ -123,6 +127,17 @@ public class PositionManager {
      */
     public synchronized void setOrderIoExecutor(Executor executor) {
         this.orderIo = Objects.requireNonNull(executor, "executor");
+    }
+
+    public void setPositionSizing(PositionSizingStrategy strategy) {
+        this.sizing = Objects.requireNonNull(strategy, "strategy");
+    }
+
+    /** Latest ATR from the feature pipeline, for ATR-based sizing. */
+    public void updateAtr(BigDecimal atr) {
+        if (atr != null && atr.signum() > 0) {
+            this.latestAtr = atr;
+        }
     }
 
     public void setOrderCommandStore(OrderCommandStore store) {
@@ -667,8 +682,9 @@ public class PositionManager {
         logger.info("Executing real order for position: {}", pos.getPositionId());
         String clientOrderId = entryClientOrderId(pos);
         BigDecimal entryPrice = pos.getEntryPrice();
+        PositionSizingStrategy.TradeStats history = PositionSizingStrategy.TradeStats.of(closedPositions);
         submitOrderIo("entry " + pos.getPositionId(), () -> {
-            EntryOutcome outcome = executeEntry(pos.getPositionId(), signal, entryPrice, clientOrderId);
+            EntryOutcome outcome = executeEntry(pos.getPositionId(), signal, entryPrice, clientOrderId, history);
             synchronized (this) {
                 applyEntryOutcome(pos, signal, outcome);
             }
@@ -677,13 +693,15 @@ public class PositionManager {
     }
 
     /** Runs on the order I/O thread without the lock. */
-    private EntryOutcome executeEntry(String positionId, Signal signal, BigDecimal entryPrice, String clientOrderId) {
+    private EntryOutcome executeEntry(String positionId, Signal signal, BigDecimal entryPrice, String clientOrderId,
+                                      PositionSizingStrategy.TradeStats history) {
         BigDecimal quantity = BigDecimal.ZERO;
         boolean sent = false;
         try {
             PortfolioManager pm = portfolioManager.get();
-            BigDecimal allocatedCapital = pm.getCurrentBalance()
-                    .multiply(new java.math.BigDecimal("0.5"))
+            BigDecimal allocatedCapital = sizing.allocate(new PositionSizingStrategy.SizingContext(
+                            pm.getCurrentBalance(), entryPrice, stopLossPercent, latestAtr, history))
+                    .max(BigDecimal.ZERO)
                     .setScale(2, java.math.RoundingMode.DOWN);
 
             quantity = allocatedCapital.divide(entryPrice, 8, java.math.RoundingMode.DOWN);
