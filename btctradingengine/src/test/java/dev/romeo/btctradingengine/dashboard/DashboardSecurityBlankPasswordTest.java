@@ -1,5 +1,7 @@
 package dev.romeo.btctradingengine.dashboard;
 
+import dev.romeo.btctradingengine.Main;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -11,7 +13,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** With no password configured (the shipped default) nobody can log in - the app fails closed. */
-@SpringBootTest(classes = DashboardApplication.class, properties = "dashboard.auth.password=")
+@SpringBootTest(classes = Main.class, properties = {"dashboard.auth.password=", "engine.pipeline.enabled=false"})
 @AutoConfigureMockMvc
 class DashboardSecurityBlankPasswordTest {
 

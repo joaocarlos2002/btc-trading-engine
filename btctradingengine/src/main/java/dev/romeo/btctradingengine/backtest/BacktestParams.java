@@ -153,7 +153,7 @@ public record BacktestParams(
 
     /**
      * Every problem with these params, empty when they can be run (issue #83). Mirrors the rules
-     * Config.validate() applies to the same settings, with the same property keys in the messages,
+     * the startup validation applies to the same settings, with the same property keys in the messages,
      * so a backtest never runs a combination the live bot would refuse to start with. Unlike Config
      * it collects every error instead of stopping at the first, so the HTTP 400 lists them all.
      */

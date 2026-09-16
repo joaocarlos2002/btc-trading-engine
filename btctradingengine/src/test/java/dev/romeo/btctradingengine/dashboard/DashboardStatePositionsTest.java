@@ -69,7 +69,7 @@ class DashboardStatePositionsTest {
     void tradesArePublishedOnlyWhenPositionsChange() {
         FakeManager manager = new FakeManager();
         manager.closed.add(closed(1));
-        try (DashboardState state = new DashboardState()) {
+        try (DashboardState state = new DashboardState(new BigDecimal("100"))) {
             state.attachPositionManager(manager);
 
             state.refreshPositions();
@@ -124,7 +124,7 @@ class DashboardStatePositionsTest {
         for (int i = 1; i <= 120; i++) {
             manager.closed.add(closed(i));
         }
-        try (DashboardState state = new DashboardState()) {
+        try (DashboardState state = new DashboardState(new BigDecimal("100"))) {
             state.attachPositionManager(manager);
             state.refreshPositions();
 

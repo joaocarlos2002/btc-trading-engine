@@ -1,5 +1,7 @@
 package dev.romeo.btctradingengine.dashboard;
 
+import dev.romeo.btctradingengine.Main;
+
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,7 +29,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * previous response, echoed back in the X-XSRF-TOKEN header - instead of using the {@code csrf()}
  * post-processor, which does not know about the SPA token handler configured here.
  */
-@SpringBootTest(classes = DashboardApplication.class, properties = {
+@SpringBootTest(classes = Main.class, properties = {
+        "engine.pipeline.enabled=false",
         "dashboard.auth.username=trader",
         "dashboard.auth.password=s3cret",
         "dashboard.auth.roles=VIEWER,TRADER"

@@ -1,6 +1,6 @@
 package dev.romeo.btctradingengine.dashboard;
 
-import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.config.DashboardProperties;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
@@ -11,9 +11,11 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 @EnableWebSocket
 public class DashboardWebSocketConfig implements WebSocketConfigurer {
     private final DashboardState state;
+    private final DashboardProperties dashboard;
 
-    public DashboardWebSocketConfig(DashboardState state) {
+    public DashboardWebSocketConfig(DashboardState state, DashboardProperties dashboard) {
         this.state = state;
+        this.dashboard = dashboard;
     }
 
     /**
@@ -34,6 +36,6 @@ public class DashboardWebSocketConfig implements WebSocketConfigurer {
                                               org.springframework.web.socket.CloseStatus status) {
                 state.removeSession(session);
             }
-        }, "/ws/live").setAllowedOrigins(Config.getDashboardAllowedOrigins().toArray(new String[0]));
+        }, "/ws/live").setAllowedOrigins(dashboard.allowedOrigins().toArray(new String[0]));
     }
 }

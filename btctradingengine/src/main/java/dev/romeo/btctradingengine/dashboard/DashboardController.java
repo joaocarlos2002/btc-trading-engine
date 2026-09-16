@@ -4,7 +4,7 @@ import dev.romeo.btctradingengine.backtest.BacktestParams;
 import dev.romeo.btctradingengine.backtest.BacktestRequest;
 import dev.romeo.btctradingengine.backtest.BacktestService;
 import dev.romeo.btctradingengine.backtest.WalkForward;
-import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.config.MarketProperties;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -28,10 +28,16 @@ import java.util.Objects;
 public class DashboardController {
     private final DashboardState state;
     private final BacktestService backtests;
+    /** The configured strategy; request parameters override its components. */
+    private final BacktestParams defaults;
+    private final int historyCandles;
 
-    public DashboardController(DashboardState state, BacktestService backtests) {
+    public DashboardController(DashboardState state, BacktestService backtests, BacktestParams liveBacktestParams,
+                               MarketProperties market) {
         this.state = state;
         this.backtests = backtests;
+        this.defaults = liveBacktestParams;
+        this.historyCandles = market.historyCandles();
     }
 
     @GetMapping("/candles/latest")
@@ -94,7 +100,7 @@ public class DashboardController {
         overrides.keySet().retainAll(BacktestParams.parameterNames());
         BacktestParams params;
         try {
-            params = Config.backtestParams().withOverrides(overrides);
+            params = defaults.withOverrides(overrides);
         } catch (IllegalArgumentException e) {
             return invalid(List.of(e.getMessage().split("; ")));
         }
@@ -161,7 +167,7 @@ public class DashboardController {
 
         int warmup = body.warmupCandles() != null
                 ? body.warmupCandles()
-                : Math.max(Config.getHistoryCandles(), params.warmupCandles());
+                : Math.max(historyCandles, params.warmupCandles());
         WalkForward.Settings settings = new WalkForward.Settings(body.trainDays(), body.testDays(),
                 Objects.requireNonNullElse(body.holdOutDays(), 0), objective,
                 Objects.requireNonNullElse(body.minTrades(), 5), warmup);
@@ -209,8 +215,7 @@ public class DashboardController {
         return new BacktestJobBody(null, null, null, null, null, null, null, null, null, null, null);
     }
 
-    private static BacktestParams params(BacktestJobBody body, List<String> errors) {
-        BacktestParams defaults = Config.backtestParams();
+    private BacktestParams params(BacktestJobBody body, List<String> errors) {
         if (body.params() == null || body.params().isEmpty()) {
             return defaults;
         }

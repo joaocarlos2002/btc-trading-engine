@@ -1,5 +1,8 @@
 package dev.romeo.btctradingengine.config;
 
+import java.io.InputStream;
+import java.util.Properties;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -22,7 +25,7 @@ class ConfigDotEnvTest {
 
     @Test
     void parsesKeyValueLines() {
-        Map<String, String> values = Config.parseDotEnv(List.of(
+        Map<String, String> values = DotEnv.parse(List.of(
                 "BTC_ENGINE_DB_PASSWORD=s3cret",
                 "BTC_ENGINE_BINANCE_API_KEY = spaced ",
                 "export BTC_ENGINE_BINANCE_API_SECRET=exported"));
@@ -34,7 +37,7 @@ class ConfigDotEnvTest {
 
     @Test
     void dropsSurroundingQuotesButKeepsInnerOnes() {
-        Map<String, String> values = Config.parseDotEnv(List.of(
+        Map<String, String> values = DotEnv.parse(List.of(
                 "DOUBLE=\"pass word\"",
                 "SINGLE='pass word'",
                 "INNER=pa\"ss",
@@ -48,7 +51,7 @@ class ConfigDotEnvTest {
 
     @Test
     void skipsBlanksCommentsAndGarbage() {
-        Map<String, String> values = Config.parseDotEnv(List.of(
+        Map<String, String> values = DotEnv.parse(List.of(
                 "", "   ", "# a comment", "  # indented comment", "NOTAPAIR", "=novalue"));
 
         assertTrue(values.isEmpty(), values.toString());
@@ -59,22 +62,27 @@ class ConfigDotEnvTest {
         Path second = dir.resolve("second.env");
         Files.writeString(second, "BTC_ENGINE_DB_PASSWORD=from-second\n", StandardCharsets.UTF_8);
 
-        Map<String, String> values = Config.loadDotEnv(dir.resolve("missing.env"), second);
+        Map<String, String> values = DotEnv.load(dir.resolve("missing.env"), second);
 
         assertEquals("from-second", values.get("BTC_ENGINE_DB_PASSWORD"));
     }
 
     @Test
     void aMissingFileIsNotAnError(@TempDir Path dir) {
-        assertTrue(Config.loadDotEnv(dir.resolve("nope.env")).isEmpty());
-        assertTrue(Config.loadDotEnv().isEmpty(), "no candidates at all is fine too");
+        assertTrue(DotEnv.load(dir.resolve("nope.env")).isEmpty());
+        assertTrue(DotEnv.load().isEmpty(), "no candidates at all is fine too");
     }
 
     @Test
-    void theShippedPropertiesCarryNoSecrets() {
-        assertTrue(Config.getDbPassword().isBlank() || System.getenv("BTC_ENGINE_DB_PASSWORD") != null,
-                "db.password must not be committed in application.properties");
-        assertFalse(Config.getDbUrl().contains("polymarket"), "db.url must point at the compose database");
-        assertEquals("btc_engine", Config.getDbUser());
+    void theShippedPropertiesCarryNoSecrets() throws IOException {
+        Properties shipped = new Properties();
+        try (InputStream in = getClass().getClassLoader().getResourceAsStream("application.properties")) {
+            shipped.load(in);
+        }
+        assertTrue(shipped.getProperty("db.password").isBlank(), "db.password must not be committed in application.properties");
+        assertTrue(shipped.getProperty("binance.api.key").isBlank() && shipped.getProperty("binance.api.secret").isBlank(),
+                "the Binance keys must not be committed in application.properties");
+        assertFalse(shipped.getProperty("db.url").contains("polymarket"), "db.url must point at the compose database");
+        assertEquals("btc_engine", shipped.getProperty("db.user"));
     }
 }

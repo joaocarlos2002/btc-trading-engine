@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
  * <p>Runs when the bean is created, so an invalid combination stops the application before the
  * pipeline or the dashboard starts.
  */
-@Component
+@Component("startupSettingsValidator")
 public class StartupSettingsValidator {
     private static final Logger logger = LoggerFactory.getLogger(StartupSettingsValidator.class);
 

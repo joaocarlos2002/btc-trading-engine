@@ -26,7 +26,7 @@ public class DashboardStateStatsTest {
     private static DashboardState.Stats statsFor(List<Position> positions) {
         PositionManager manager = new PositionManager(new BigDecimal("2.0"), new BigDecimal("1.5"));
         manager.restoreClosedPositions(positions);
-        try (DashboardState state = new DashboardState()) {
+        try (DashboardState state = new DashboardState(new BigDecimal("100"))) {
             state.attachPositionManager(manager);
             return state.stats(CAPITAL);
         }

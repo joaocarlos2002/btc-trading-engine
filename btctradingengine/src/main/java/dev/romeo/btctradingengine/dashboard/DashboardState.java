@@ -3,7 +3,8 @@ package dev.romeo.btctradingengine.dashboard;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.romeo.btctradingengine.adapter.PriceEventListener;
-import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.config.TradingProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import dev.romeo.btctradingengine.feature.FeatureVector;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
@@ -55,7 +56,16 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
     /** Placeholder queued for the "position" event: the open position is read when the event is flushed. */
     private static final Object LIVE_POSITION = new Object();
 
-    public DashboardState() {
+    private final BigDecimal initialCapital;
+
+    /** trading.initial.capital.usdt: the base of the equity curve and drawdown in {@link #stats()}. */
+    @Autowired
+    public DashboardState(TradingProperties trading) {
+        this(trading.initialCapitalUsdt());
+    }
+
+    public DashboardState(BigDecimal initialCapital) {
+        this.initialCapital = initialCapital;
         publisher.scheduleAtFixedRate(this::flushPendingEvents, 50, 50, TimeUnit.MILLISECONDS);
     }
 
@@ -187,7 +197,7 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
     }
 
     public Stats stats() {
-        return stats(Config.getTradingInitialCapital());
+        return stats(initialCapital);
     }
 
     /**
