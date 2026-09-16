@@ -49,7 +49,16 @@ public class PositionManager {
     private Supplier<Instant> clock = Instant::now;
     private int exitFailureCount = 0;
     private Instant nextExitAttemptAt = null;
-    private BigDecimal cachedStepSize = null;
+    private BinanceOrderExecutor.SymbolFilters cachedFilters = null;
+
+    // OCO protection (issue #99): target and stop rest on Binance, so they survive the bot going down
+    static final Duration PROTECTION_POLL_INTERVAL = Duration.ofSeconds(10);
+    static final BigDecimal DEFAULT_STOP_LIMIT_OFFSET_PERCENT = new BigDecimal("0.1");
+    private boolean ocoEnabled = false;
+    private BigDecimal stopLimitOffsetPercent = DEFAULT_STOP_LIMIT_OFFSET_PERCENT;
+    private boolean protectionActive = false;
+    private BigDecimal protectionStopLimitPrice = null;
+    private Instant nextProtectionPollAt = null;
 
     public PositionManager(BigDecimal targetPercent, BigDecimal stopLossPercent) {
         this(targetPercent, stopLossPercent, position -> {}, event -> {});
@@ -102,10 +111,29 @@ public class PositionManager {
         return simulationMode && allowShort;
     }
 
-    public void setOrderConfirmationManager(OrderConfirmationManager manager) {
+    public synchronized void setOrderConfirmationManager(OrderConfirmationManager manager) {
         this.confirmationManager = Optional.of(manager);
         manager.setConfirmationListener(this::onOrderConfirmed);
+        // Reconciliation runs before the manager exists: legs it found active start being tracked now
+        if (protectionActive && openPosition.isPresent()) {
+            registerProtectionLegs(openPosition.get());
+        }
         logger.info("Order confirmation manager attached");
+    }
+
+    /**
+     * Real mode only. {@code stopLimitOffsetPercent} puts the stop's limit price below its trigger:
+     * a STOP_LOSS_LIMIT whose limit equals the stop does not fill when the price gaps through it,
+     * leaving the position unprotected; a small offset trades a bit of slippage for a fill.
+     */
+    public synchronized void setOcoProtection(boolean enabled, BigDecimal stopLimitOffsetPercent) {
+        this.ocoEnabled = enabled;
+        this.stopLimitOffsetPercent = stopLimitOffsetPercent;
+        logger.info("OCO protection {} (stop-limit offset {}%)", enabled ? "enabled" : "disabled", stopLimitOffsetPercent);
+    }
+
+    public synchronized boolean isProtectionActive() {
+        return protectionActive;
     }
 
     public void setConnectivityGuard(ConnectivityGuard guard) {
@@ -125,6 +153,10 @@ public class PositionManager {
 
     // synchronized: confirmations come from the User Data Stream and timeout threads
     private synchronized void onOrderConfirmed(OrderConfirmationManager.OrderConfirmation confirmation) {
+        if (openPosition.isPresent() && isProtectionLeg(openPosition.get(), confirmation.clientOrderId())) {
+            onProtectionLegConfirmed(openPosition.get(), confirmation);
+            return;
+        }
         if (openPosition.isEmpty()
                 || !entryClientOrderId(openPosition.get()).equals(confirmation.clientOrderId())) {
             logger.warn("Received order confirmation that does not match the open position: {} ({})",
@@ -165,6 +197,43 @@ public class PositionManager {
         }
     }
 
+    private boolean isProtectionLeg(Position pos, String clientOrderId) {
+        return OcoOrderIds.target(symbol, pos.getPositionId()).equals(clientOrderId)
+                || OcoOrderIds.stop(symbol, pos.getPositionId()).equals(clientOrderId);
+    }
+
+    /** Binance executed (or dropped) a leg of the OCO: the position is closed without another order. */
+    private void onProtectionLegConfirmed(Position pos, OrderConfirmationManager.OrderConfirmation confirmation) {
+        if (!protectionActive) {
+            // Reports of our own cancel before a bot exit
+            logger.debug("Report for inactive protection leg {}: {}", confirmation.clientOrderId(), confirmation.status());
+            return;
+        }
+        if (confirmation.isPartial()) {
+            logger.info("Protection leg {} partially filled: {}", confirmation.clientOrderId(), confirmation.filledQuantity());
+            return;
+        }
+        if (confirmation.isFilled()) {
+            boolean target = OcoOrderIds.target(symbol, pos.getPositionId()).equals(confirmation.clientOrderId());
+            // The report carries the last execution price; the order's average is the real exit price
+            BigDecimal price = orderExecutor.get().queryOrder(symbol, confirmation.clientOrderId())
+                    .map(BinanceOrderExecutor.QueriedOrder::averagePrice)
+                    .filter(p -> p.signum() > 0)
+                    .orElse(confirmation.lastFillPrice());
+            closeByExchange(pos, target ? ExitReason.TARGET_HIT : ExitReason.STOP_LOSS,
+                    confirmation.filledQuantity(), price, confirmation.confirmedAt());
+            return;
+        }
+        // Cancelled, expired or unconfirmed: when a leg fills Binance expires the other one, and that
+        // report may come first - ask Binance before dropping the protection
+        ProtectionCheck check = checkProtection(pos);
+        switch (check.kind()) {
+            case FILLED -> closeByExchange(pos, check.reason(), check.quantity(), check.price(), clock.get());
+            case GONE -> dropProtection(pos, "leg " + confirmation.clientOrderId() + " ended " + confirmation.status());
+            default -> { }
+        }
+    }
+
     private String entryClientOrderId(Position pos) {
         return "btce-" + symbol + "-" + pos.getPositionId() + "-entry";
     }
@@ -174,14 +243,21 @@ public class PositionManager {
             Position pos = openPosition.get();
             pos.updatePrice(candle.close(), candle.closeTime());
 
-            if (pos.hasHitTarget()) {
+            // With the OCO on Binance, target and stop are the exchange's job
+            boolean tickExits = !protectionActive
+                    || ((pos.hasHitTarget() || pos.hasHitStopLoss()) && pollProtection(pos, candle.close()));
+            if (openPosition.isEmpty()) {
+                return; // the poll found the OCO executed
+            }
+
+            if (tickExits && pos.hasHitTarget()) {
                 closePosition(pos, candle.close(), candle.closeTime(), ExitReason.TARGET_HIT);
                 logger.info("âœ“ TARGET HIT: {} closed at {} (P&L: {}%)",
                         pos.getPositionId(), candle.close(), pos.getPnLPercent());
                 return;
             }
 
-            if (pos.hasHitStopLoss()) {
+            if (tickExits && pos.hasHitStopLoss()) {
                 closePosition(pos, candle.close(), candle.closeTime(), ExitReason.STOP_LOSS);
                 logger.warn("âœ— STOP LOSS: {} closed at {} (P&L: {}%)",
                         pos.getPositionId(), candle.close(), pos.getPnLPercent());
@@ -228,6 +304,12 @@ public class PositionManager {
 
         Position pos = openPosition.get();
         pos.updatePrice(event.price(), event.eventTimestamp());
+
+        if (protectionActive
+                && (!(pos.hasHitTarget() || pos.hasHitStopLoss()) || !pollProtection(pos, event.price()))) {
+            // The OCO on Binance exits the position; no market order from ticks
+            return;
+        }
 
         if (pos.hasHitTarget()) {
             if (!closePosition(pos, event.price(), event.eventTimestamp(), ExitReason.TARGET_HIT)) {
@@ -296,6 +378,7 @@ public class PositionManager {
 
         openPosition = Optional.of(position);
         resetExitBackoff();
+        resetProtection();
         String id = position.getPositionId();
         if (id.startsWith("POS_")) {
             try {
@@ -356,6 +439,7 @@ public class PositionManager {
         );
         openPosition = Optional.of(pos);
         resetExitBackoff();
+        resetProtection();
 
         ExecutionEvent event = new ExecutionEvent(
                 pos.getPositionId(),
@@ -435,6 +519,9 @@ public class PositionManager {
                 logger.info("âœ“ Real order executed: orderId={} qty={} @ price={}",
                         result.orderId(), result.executedQuantity(), result.averagePrice());
                 if (result.averagePrice().signum() > 0) pos.updatePrice(result.averagePrice(), pos.getEntryTime());
+                if (signal == Signal.BUY && pos.getQuantity().signum() > 0) {
+                    placeProtection(pos);
+                }
             } else {
                 confirmationManager.ifPresent(m -> m.unregisterOrder(clientOrderId));
                 logger.error("âœ— Real order failed: {}", result.error());
@@ -461,21 +548,23 @@ public class PositionManager {
             if (respectBackoff && nextExitAttemptAt != null && now.isBefore(nextExitAttemptAt)) {
                 return false;
             }
+            if (protectionActive) {
+                // The OCO locks the BTC: it must be cancelled before the market exit can sell it
+                ProtectionCheck cancel = cancelProtection(pos);
+                if (cancel.kind() == ProtectionKind.FILLED) {
+                    logger.warn("Exit {} for {} not sent: Binance already closed it via the OCO ({})",
+                            reason, pos.getPositionId(), cancel.reason());
+                    closeByExchange(pos, cancel.reason(), cancel.quantity(), cancel.price(), now);
+                    return true;
+                }
+                if (cancel.kind() != ProtectionKind.GONE) {
+                    recordExitFailure(pos, reason, now);
+                    return false;
+                }
+            }
             Optional<BinanceOrderExecutor.OrderResult> result = closeRealPosition(pos);
             if (result.isEmpty()) {
-                exitFailureCount++;
-                Duration delay = exitRetryDelay(exitFailureCount);
-                nextExitAttemptAt = now.plus(delay);
-                logger.error("âœ— Position {} remains open locally because the real exit order failed", pos.getPositionId());
-                logger.error("Exit attempt {} failed for {}; next attempt in {}s",
-                        exitFailureCount, pos.getPositionId(), delay.toSeconds());
-                // Alert on the first failure and every 10th, not on every retry
-                if (exitFailureCount == 1 || exitFailureCount % EXIT_FAILURE_ALERT_EVERY == 0) {
-                    int failures = exitFailureCount;
-                    alertNotifier.ifPresent(a -> a.alert(String.format(
-                            "CRITICAL: exit order failed for position %s (reason: %s, %d failed attempts) - position remains OPEN and unmanaged, manual intervention required",
-                            pos.getPositionId(), reason, failures)));
-                }
+                recordExitFailure(pos, reason, now);
                 return false;
             }
             if (result.get().averagePrice().compareTo(BigDecimal.ZERO) > 0) {
@@ -483,7 +572,29 @@ public class PositionManager {
             }
         }
 
+        finishClose(pos, exitPrice, exitTime, reason);
+        return true;
+    }
+
+    private void recordExitFailure(Position pos, ExitReason reason, Instant now) {
+        exitFailureCount++;
+        Duration delay = exitRetryDelay(exitFailureCount);
+        nextExitAttemptAt = now.plus(delay);
+        logger.error("âœ— Position {} remains open locally because the real exit order failed", pos.getPositionId());
+        logger.error("Exit attempt {} failed for {}; next attempt in {}s",
+                exitFailureCount, pos.getPositionId(), delay.toSeconds());
+        // Alert on the first failure and every 10th, not on every retry
+        if (exitFailureCount == 1 || exitFailureCount % EXIT_FAILURE_ALERT_EVERY == 0) {
+            int failures = exitFailureCount;
+            alertNotifier.ifPresent(a -> a.alert(String.format(
+                    "CRITICAL: exit order failed for position %s (reason: %s, %d failed attempts) - position remains OPEN and unmanaged, manual intervention required",
+                    pos.getPositionId(), reason, failures)));
+        }
+    }
+
+    private void finishClose(Position pos, BigDecimal exitPrice, Instant exitTime, ExitReason reason) {
         resetExitBackoff();
+        resetProtection();
         pos.close(exitPrice, exitTime, reason);
         closedPositions.add(pos);
         openPosition = Optional.empty();
@@ -499,7 +610,6 @@ public class PositionManager {
         executionLog.add(event);
         executionPersistence.accept(event);
         positionPersistence.accept(pos);
-        return true;
     }
 
     /** 1s, 2s, 4s ... capped at 60s. */
@@ -548,15 +658,290 @@ public class PositionManager {
         return quantity.divide(stepSize, 0, java.math.RoundingMode.DOWN).multiply(stepSize).stripTrailingZeros();
     }
 
-    // Cached on success: the step rarely changes and exits run inside this lock
     private BigDecimal exitStepSize() {
-        if (cachedStepSize == null) {
+        BinanceOrderExecutor.SymbolFilters filters = symbolFilters();
+        return filters == null ? null : filters.stepSize();
+    }
+
+    // Cached on success: filters rarely change and exits run inside this lock
+    private BinanceOrderExecutor.SymbolFilters symbolFilters() {
+        if (cachedFilters == null) {
             BinanceOrderExecutor.SymbolFilters filters = orderExecutor.get().getSymbolFilters(symbol);
             if (filters != null && filters.stepSize() != null && filters.stepSize().compareTo(BigDecimal.ZERO) > 0) {
-                cachedStepSize = filters.stepSize();
+                cachedFilters = filters;
             }
         }
-        return cachedStepSize;
+        return cachedFilters;
+    }
+
+    // ---- OCO protection (issue #99) ----
+
+    enum ProtectionKind { ACTIVE, FILLED, GONE, UNKNOWN }
+
+    /** FILLED carries the executed leg's reason, quantity and average price. */
+    record ProtectionCheck(ProtectionKind kind, ExitReason reason, BigDecimal quantity, BigDecimal price) {
+        static ProtectionCheck of(ProtectionKind kind) {
+            return new ProtectionCheck(kind, null, null, null);
+        }
+    }
+
+    /** Outcome of {@link #reconcileProtection()} after a restart. */
+    public enum ProtectionReconciliation { NOT_APPLICABLE, ACTIVE, CLOSED_BY_EXCHANGE, PLACED, PLACEMENT_FAILED, UNKNOWN }
+
+    record ProtectionPrices(BigDecimal target, BigDecimal stop, BigDecimal stopLimit) {}
+
+    /**
+     * Target rounded up and stop rounded down to the tick, so rounding never tightens either level.
+     * The limit sits {@code stopLimitOffsetPercent} below the stop and at least one tick under it.
+     */
+    ProtectionPrices protectionPrices(Position pos, BigDecimal tickSize) {
+        BigDecimal target = roundToTick(pos.getTargetPrice(), tickSize, java.math.RoundingMode.UP);
+        BigDecimal stop = roundToTick(pos.getStopLossPrice(), tickSize, java.math.RoundingMode.DOWN);
+        BigDecimal factor = BigDecimal.ONE.subtract(
+                stopLimitOffsetPercent.divide(BigDecimal.valueOf(100), 8, java.math.RoundingMode.HALF_UP));
+        BigDecimal stopLimit = roundToTick(stop.multiply(factor), tickSize, java.math.RoundingMode.DOWN);
+        if (stopLimit.compareTo(stop) >= 0) {
+            stopLimit = stop.subtract(tickSize);
+        }
+        return new ProtectionPrices(target, stop, stopLimit);
+    }
+
+    private static BigDecimal roundToTick(BigDecimal price, BigDecimal tickSize, java.math.RoundingMode mode) {
+        return price.divide(tickSize, 0, mode).multiply(tickSize).stripTrailingZeros();
+    }
+
+    /** Places the SELL OCO for an open BUY; on failure alerts and leaves the tick exits in charge. */
+    private boolean placeProtection(Position pos) {
+        resetProtection();
+        if (!ocoEnabled || simulationMode || orderExecutor.isEmpty()
+                || pos.getSignal() != Signal.BUY || pos.getQuantity().signum() <= 0) {
+            return false;
+        }
+        String listId = OcoOrderIds.list(symbol, pos.getPositionId());
+        try {
+            BinanceOrderExecutor.SymbolFilters filters = symbolFilters();
+            if (filters == null || filters.tickSize() == null || filters.tickSize().signum() <= 0) {
+                return protectionPlacementFailed(pos, "PRICE_FILTER tickSize unavailable");
+            }
+            ProtectionPrices prices = protectionPrices(pos, filters.tickSize());
+            BigDecimal market = pos.getCurrentPrice();
+            // Binance rejects a SELL OCO unless target > last price > stop
+            if (prices.target().compareTo(market) <= 0 || prices.stop().compareTo(market) >= 0) {
+                return protectionPlacementFailed(pos, String.format("price %s is already outside target %s / stop %s",
+                        market, prices.target(), prices.stop()));
+            }
+            BigDecimal quantity = sellableExitQuantity(pos);
+            if (quantity.signum() <= 0) {
+                return protectionPlacementFailed(pos, "no sellable quantity");
+            }
+            if (filters.minNotional() != null && filters.minNotional().signum() > 0
+                    && quantity.multiply(prices.stopLimit()).compareTo(filters.minNotional()) < 0) {
+                return protectionPlacementFailed(pos, String.format("qty %s at stop limit %s is below min notional %s",
+                        quantity, prices.stopLimit(), filters.minNotional()));
+            }
+
+            registerProtectionLegs(pos);
+            BinanceOrderExecutor executor = orderExecutor.get();
+            BinanceOrderExecutor.OcoResult result = executor.placeOcoSell(symbol, quantity, prices.target(),
+                    prices.stop(), prices.stopLimit(), listId,
+                    OcoOrderIds.target(symbol, pos.getPositionId()), OcoOrderIds.stop(symbol, pos.getPositionId()));
+            // An error can be ambiguous (timeout after Binance accepted it): the list id settles it
+            if (!result.success() && !executor.queryOrderList(listId).isExecuting()) {
+                unregisterProtectionLegs(pos);
+                return protectionPlacementFailed(pos, result.error());
+            }
+            activateProtection(prices.stopLimit());
+            logger.info("OCO protection {} active for {}: qty={} target={} stop={} limit={}",
+                    listId, pos.getPositionId(), quantity, prices.target(), prices.stop(), prices.stopLimit());
+            return true;
+        } catch (Exception e) {
+            unregisterProtectionLegs(pos);
+            return protectionPlacementFailed(pos, e.getMessage());
+        }
+    }
+
+    private boolean protectionPlacementFailed(Position pos, String error) {
+        logger.error("OCO protection not placed for {}: {}; exits stay on ticks", pos.getPositionId(), error);
+        alertNotifier.ifPresent(a -> a.alert(String.format(
+                "OCO protection could not be placed for position %s: %s - target/stop depend on the bot running",
+                pos.getPositionId(), error)));
+        return false;
+    }
+
+    /**
+     * Where the OCO stands on Binance. EXECUTING is ACTIVE; a finished list is FILLED when a leg
+     * filled and GONE when both legs ended unfilled (cancelled outside the bot); a list Binance does
+     * not know is GONE; anything unanswered is UNKNOWN.
+     */
+    private ProtectionCheck checkProtection(Position pos) {
+        BinanceOrderExecutor executor = orderExecutor.get();
+        BinanceOrderExecutor.OrderListQuery list = executor.queryOrderList(OcoOrderIds.list(symbol, pos.getPositionId()));
+        if (list.state() == BinanceOrderExecutor.OrderListQuery.State.ERROR) {
+            return ProtectionCheck.of(ProtectionKind.UNKNOWN);
+        }
+        if (list.state() == BinanceOrderExecutor.OrderListQuery.State.NOT_FOUND) {
+            return ProtectionCheck.of(ProtectionKind.GONE);
+        }
+        if (list.isExecuting()) {
+            return ProtectionCheck.of(ProtectionKind.ACTIVE);
+        }
+        Optional<BinanceOrderExecutor.QueriedOrder> target =
+                executor.queryOrder(symbol, OcoOrderIds.target(symbol, pos.getPositionId()));
+        Optional<BinanceOrderExecutor.QueriedOrder> stop =
+                executor.queryOrder(symbol, OcoOrderIds.stop(symbol, pos.getPositionId()));
+        if (target.isPresent() && "FILLED".equals(target.get().status())) {
+            return new ProtectionCheck(ProtectionKind.FILLED, ExitReason.TARGET_HIT,
+                    target.get().executedQuantity(), target.get().averagePrice());
+        }
+        if (stop.isPresent() && "FILLED".equals(stop.get().status())) {
+            return new ProtectionCheck(ProtectionKind.FILLED, ExitReason.STOP_LOSS,
+                    stop.get().executedQuantity(), stop.get().averagePrice());
+        }
+        return ProtectionCheck.of(target.isPresent() && stop.isPresent() ? ProtectionKind.GONE : ProtectionKind.UNKNOWN);
+    }
+
+    /**
+     * Cancels the OCO before a bot exit. GONE means the BTC is free to sell; FILLED means Binance
+     * already sold it, so no market order may follow.
+     */
+    private ProtectionCheck cancelProtection(Position pos) {
+        String listId = OcoOrderIds.list(symbol, pos.getPositionId());
+        BinanceOrderExecutor.OrderListQuery cancel = orderExecutor.get().cancelOrderList(symbol, listId);
+        ProtectionCheck check = switch (cancel.state()) {
+            case FOUND -> ProtectionCheck.of(ProtectionKind.GONE);
+            case ERROR -> ProtectionCheck.of(ProtectionKind.UNKNOWN);
+            // No longer open: executed, or cancelled outside the bot
+            case NOT_FOUND -> checkProtection(pos);
+        };
+        if (check.kind() == ProtectionKind.GONE) {
+            logger.info("OCO {} cancelled before exiting {}", listId, pos.getPositionId());
+            resetProtection();
+            unregisterProtectionLegs(pos);
+        } else if (check.kind() != ProtectionKind.FILLED) {
+            logger.error("Could not cancel OCO {} for {}: {}", listId, pos.getPositionId(), cancel.error());
+        }
+        return check;
+    }
+
+    /**
+     * Runs when a tick or candle crosses target or stop while the OCO is active, at most every
+     * {@link #PROTECTION_POLL_INTERVAL}: catches a fill whose report was lost. True means the tick
+     * logic must exit at market - the OCO is gone, or the price fell through the stop's limit
+     * without filling it (a STOP_LOSS_LIMIT does not chase the price).
+     */
+    private boolean pollProtection(Position pos, BigDecimal price) {
+        Instant now = clock.get();
+        if (nextProtectionPollAt != null && now.isBefore(nextProtectionPollAt)) {
+            return false;
+        }
+        nextProtectionPollAt = now.plus(PROTECTION_POLL_INTERVAL);
+        ProtectionCheck check = checkProtection(pos);
+        switch (check.kind()) {
+            case FILLED -> {
+                closeByExchange(pos, check.reason(), check.quantity(), check.price(), now);
+                return false;
+            }
+            case GONE -> {
+                dropProtection(pos, "OCO no longer open on Binance");
+                return true;
+            }
+            case ACTIVE -> {
+                if (pos.hasHitStopLoss() && protectionStopLimitPrice != null
+                        && price.compareTo(protectionStopLimitPrice) < 0) {
+                    logger.warn("Price {} fell below stop limit {} of {} without a fill; exiting at market",
+                            price, protectionStopLimitPrice, pos.getPositionId());
+                    return true;
+                }
+                return false;
+            }
+            default -> {
+                return false;
+            }
+        }
+    }
+
+    /** Binance closed the position through the OCO: recorded locally without sending an order. */
+    private void closeByExchange(Position pos, ExitReason reason, BigDecimal quantity, BigDecimal price, Instant time) {
+        BigDecimal exitPrice = price != null && price.signum() > 0 ? price : pos.getCurrentPrice();
+        logger.warn("Position {} closed by Binance OCO: {} qty={} @ {}", pos.getPositionId(), reason, quantity, exitPrice);
+        unregisterProtectionLegs(pos);
+        syncPortfolioBalance(exitPrice);
+        finishClose(pos, exitPrice, time, reason);
+    }
+
+    private void dropProtection(Position pos, String why) {
+        resetProtection();
+        unregisterProtectionLegs(pos);
+        logger.error("OCO protection lost for {}: {}; exits back on ticks", pos.getPositionId(), why);
+        alertNotifier.ifPresent(a -> a.alert(String.format(
+                "OCO protection lost for position %s (%s) - target/stop depend on the bot running",
+                pos.getPositionId(), why)));
+    }
+
+    /**
+     * After a restart: an executing OCO keeps protecting, an executed one closes the position, a
+     * missing one is placed again. An unanswered query assumes it active, so an exit still cancels
+     * first and the next poll settles it.
+     */
+    public synchronized ProtectionReconciliation reconcileProtection() {
+        if (!ocoEnabled || simulationMode || orderExecutor.isEmpty() || openPosition.isEmpty()) {
+            return ProtectionReconciliation.NOT_APPLICABLE;
+        }
+        Position pos = openPosition.get();
+        if (pos.getSignal() != Signal.BUY || pos.getQuantity().signum() <= 0) {
+            return ProtectionReconciliation.NOT_APPLICABLE;
+        }
+        ProtectionCheck check = checkProtection(pos);
+        switch (check.kind()) {
+            case ACTIVE -> {
+                BinanceOrderExecutor.SymbolFilters filters = symbolFilters();
+                boolean hasTick = filters != null && filters.tickSize() != null && filters.tickSize().signum() > 0;
+                activateProtection(hasTick ? protectionPrices(pos, filters.tickSize()).stopLimit() : null);
+                registerProtectionLegs(pos);
+                logger.info("OCO protection of {} is active on Binance", pos.getPositionId());
+                return ProtectionReconciliation.ACTIVE;
+            }
+            case FILLED -> {
+                closeByExchange(pos, check.reason(), check.quantity(), check.price(), clock.get());
+                return ProtectionReconciliation.CLOSED_BY_EXCHANGE;
+            }
+            case GONE -> {
+                return placeProtection(pos) ? ProtectionReconciliation.PLACED : ProtectionReconciliation.PLACEMENT_FAILED;
+            }
+            default -> {
+                activateProtection(null);
+                alertNotifier.ifPresent(a -> a.alert(String.format(
+                        "Could not check the OCO of position %s on Binance; assuming it is active", pos.getPositionId())));
+                return ProtectionReconciliation.UNKNOWN;
+            }
+        }
+    }
+
+    private void activateProtection(BigDecimal stopLimitPrice) {
+        protectionActive = true;
+        protectionStopLimitPrice = stopLimitPrice;
+        nextProtectionPollAt = null;
+    }
+
+    private void resetProtection() {
+        protectionActive = false;
+        protectionStopLimitPrice = null;
+        nextProtectionPollAt = null;
+    }
+
+    // Before sending: a leg can fill at once and its report must find the tracker
+    private void registerProtectionLegs(Position pos) {
+        confirmationManager.ifPresent(m -> {
+            m.registerProtectiveOrder(OcoOrderIds.target(symbol, pos.getPositionId()), symbol);
+            m.registerProtectiveOrder(OcoOrderIds.stop(symbol, pos.getPositionId()), symbol);
+        });
+    }
+
+    private void unregisterProtectionLegs(Position pos) {
+        confirmationManager.ifPresent(m -> {
+            m.unregisterOrder(OcoOrderIds.target(symbol, pos.getPositionId()));
+            m.unregisterOrder(OcoOrderIds.stop(symbol, pos.getPositionId()));
+        });
     }
 
     private Optional<BinanceOrderExecutor.OrderResult> closeRealPosition(Position pos) {
