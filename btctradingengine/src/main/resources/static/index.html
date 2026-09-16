@@ -1334,15 +1334,46 @@ function renderTick(t){
   tickSpark.update('none');
 }
 
+/* ═══════════ API TOKEN ═══════════ */
+/* /api/trades/manual/** requires the X-Api-Token header (dashboard.api.token). The custom header is
+   what makes the request non-simple, so no other site can POST an order from this browser. */
+const TOKEN_KEY = 'btcEngineApiToken';
+function apiToken(reask){
+  let t = null;
+  try{ t = localStorage.getItem(TOKEN_KEY); }catch(e){}
+  if(reask || !t){
+    t = window.prompt('API token (dashboard.api.token in application.properties)', reask ? '' : (t || ''));
+    if(t === null) return null;
+    t = t.trim();
+    try{ localStorage.setItem(TOKEN_KEY, t); }catch(e){}
+  }
+  return t;
+}
+async function authFetch(url, opts){
+  const send = token => fetch(url, Object.assign({}, opts, {
+    headers: Object.assign({}, opts && opts.headers, { 'X-Api-Token': token })
+  }));
+  let token = apiToken(false);
+  if(token === null) return null;
+  let r = await send(token);
+  if(r.status === 401){
+    token = apiToken(true);
+    if(token === null) return r;
+    r = await send(token);
+  }
+  return r;
+}
+
 /* ═══════════ MANUAL ═══════════ */
 async function manualBuy(){
   if(!window.confirm('Open manual BUY at market?')) return;
   $('manualBuy').disabled = true;
   text('actionStatus', 'sending…');
   try{
-    const r = await fetch('/api/trades/manual/buy', { method:'POST' });
+    const r = await authFetch('/api/trades/manual/buy', { method:'POST' });
+    if(r === null){ text('actionStatus', 'cancelled'); updateBuy(false); return; }
     const j = await r.json();
-    text('actionStatus', j.message || 'ok');
+    text('actionStatus', j.message || j.error || 'ok');
     if(!r.ok) updateBuy(false);
   }catch(e){
     text('actionStatus', 'request failed');
@@ -1354,9 +1385,10 @@ async function manualClose(){
   $('manualClose').disabled = true;
   text('actionStatus', 'closing…');
   try{
-    const r = await fetch('/api/trades/manual/close', { method:'POST' });
+    const r = await authFetch('/api/trades/manual/close', { method:'POST' });
+    if(r === null){ text('actionStatus', 'cancelled'); updateClose(true); return; }
     const j = await r.json();
-    text('actionStatus', j.message || 'ok');
+    text('actionStatus', j.message || j.error || 'ok');
     if(!r.ok) updateClose(true);
   }catch(e){
     text('actionStatus', 'request failed');
