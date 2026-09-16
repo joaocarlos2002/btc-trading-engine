@@ -454,6 +454,16 @@ public class Config {
         return Long.parseLong(getProperty("price.bus.block.timeout.ms", "1000"));
     }
 
+    /** Candle windows kept by BinanceKlineClient's backtest cache (issue #85). */
+    public static int getKlineCacheMaxEntries() {
+        return Integer.parseInt(getProperty("backtest.kline.cache.max.entries", "8"));
+    }
+
+    /** Total candles kept by BinanceKlineClient's backtest cache across all windows (issue #85). */
+    public static long getKlineCacheMaxCandles() {
+        return Long.parseLong(getProperty("backtest.kline.cache.max.candles", "600000"));
+    }
+
     private static String getProperty(String key, String defaultValue) {
         return props.getProperty(key, defaultValue);
     }
