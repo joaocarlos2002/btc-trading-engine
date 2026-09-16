@@ -16,7 +16,7 @@ public class RuleBasedPredictorTest {
 
     @Test
     public void rsiRuleSignalsBuyOnOversold() {
-        RsiRule rule = new RsiRule();
+        RsiRule rule = LiveRules.rsi();
 
         FeatureVector features = createFeatures("100", "25");  // RSI = 25 (oversold)
         double score = rule.evaluate(features);
@@ -27,7 +27,7 @@ public class RuleBasedPredictorTest {
 
     @Test
     public void rsiRuleSignalsSellOnOverbought() {
-        RsiRule rule = new RsiRule();
+        RsiRule rule = LiveRules.rsi();
 
         FeatureVector features = createFeatures("100", "75");  // RSI = 75 (overbought)
         double score = rule.evaluate(features);
@@ -38,7 +38,7 @@ public class RuleBasedPredictorTest {
 
     @Test
     public void rsiRuleNeutralInMiddle() {
-        RsiRule rule = new RsiRule();
+        RsiRule rule = LiveRules.rsi();
 
         FeatureVector features = createFeatures("100", "50");  // RSI = 50 (neutral)
         double score = rule.evaluate(features);
@@ -48,7 +48,7 @@ public class RuleBasedPredictorTest {
 
     @Test
     public void smaMomentumRuleBullishAboveSma() {
-        SmaMomentumRule rule = new SmaMomentumRule();
+        SmaMomentumRule rule = LiveRules.smaMomentum();
 
         FeatureVector features = createFeatures("100", "50", smaDistance("2.0")); // 2% acima SMA
         double score = rule.evaluate(features);
@@ -58,7 +58,7 @@ public class RuleBasedPredictorTest {
 
     @Test
     public void smaMomentumRuleBearishBelowSma() {
-        SmaMomentumRule rule = new SmaMomentumRule();
+        SmaMomentumRule rule = LiveRules.smaMomentum();
 
         FeatureVector features = createFeatures("100", "50", smaDistance("-2.0")); // 2% abaixo SMA
         double score = rule.evaluate(features);
@@ -69,9 +69,9 @@ public class RuleBasedPredictorTest {
     @Test
     public void predictorCombinesRules() {
         List<PredictionVector> predictions = new ArrayList<>();
-        RuleBasedPredictor predictor = new RuleBasedPredictor(predictions::add);
-        predictor.addRule(new RsiRule());
-        predictor.addRule(new SmaMomentumRule());
+        RuleBasedPredictor predictor = LiveRules.predictor(predictions::add);
+        predictor.addRule(LiveRules.rsi());
+        predictor.addRule(LiveRules.smaMomentum());
 
         // RSI oversold + SMA distance bullish
         FeatureVector features = createFeatures("100", "25", smaDistance("-3.0"));
@@ -89,9 +89,9 @@ public class RuleBasedPredictorTest {
     @Test
     public void filterRuleVetoesConfirmedSignal() {
         List<PredictionVector> predictions = new ArrayList<>();
-        RuleBasedPredictor predictor = new RuleBasedPredictor(predictions::add);
-        predictor.addRule(new RsiRule());
-        predictor.addRule(new SmaMomentumRule());
+        RuleBasedPredictor predictor = LiveRules.predictor(predictions::add);
+        predictor.addRule(LiveRules.rsi());
+        predictor.addRule(LiveRules.smaMomentum());
         predictor.addFilterRule(new FixedScoreRule(-0.5));
 
         FeatureVector features = createFeatures("100", "25", smaDistance("-3.0"));
@@ -109,9 +109,9 @@ public class RuleBasedPredictorTest {
     @Test
     public void filterRuleAllowsSignalWhenNonNegative() {
         List<PredictionVector> predictions = new ArrayList<>();
-        RuleBasedPredictor predictor = new RuleBasedPredictor(predictions::add);
-        predictor.addRule(new RsiRule());
-        predictor.addRule(new SmaMomentumRule());
+        RuleBasedPredictor predictor = LiveRules.predictor(predictions::add);
+        predictor.addRule(LiveRules.rsi());
+        predictor.addRule(LiveRules.smaMomentum());
         predictor.addFilterRule(new FixedScoreRule(0.1));
 
         FeatureVector features = createFeatures("100", "25", smaDistance("-3.0"));
@@ -127,9 +127,9 @@ public class RuleBasedPredictorTest {
     @Test
     public void predictorHoldOnConflictingSignals() {
         List<PredictionVector> predictions = new ArrayList<>();
-        RuleBasedPredictor predictor = new RuleBasedPredictor(predictions::add);
-        predictor.addRule(new RsiRule());
-        predictor.addRule(new SmaMomentumRule());
+        RuleBasedPredictor predictor = LiveRules.predictor(predictions::add);
+        predictor.addRule(LiveRules.rsi());
+        predictor.addRule(LiveRules.smaMomentum());
 
         // RSI overbought but SMA distance still bullish
         FeatureVector features = createFeatures("100", "75", smaDistance("1.0"));
@@ -146,8 +146,8 @@ public class RuleBasedPredictorTest {
     @Test
     public void predictorPreservesInstrumentAndTimestamp() {
         List<PredictionVector> predictions = new ArrayList<>();
-        RuleBasedPredictor predictor = new RuleBasedPredictor(predictions::add);
-        predictor.addRule(new RsiRule());
+        RuleBasedPredictor predictor = LiveRules.predictor(predictions::add);
+        predictor.addRule(LiveRules.rsi());
 
         Instant now = Instant.parse("2026-09-08T10:15:00Z");
         FeatureVector features = createFeatures("100", "50");
@@ -180,7 +180,7 @@ public class RuleBasedPredictorTest {
     public void regimeGatingDropsMeanReversionInATrend() {
         List<PredictionVector> predictions = new ArrayList<>();
         RuleBasedPredictor predictor = gatedPredictor(predictions::add, true);
-        predictor.addRule(new RsiRule());                                 // mean reversion: RSI 25 -> +0.8
+        predictor.addRule(LiveRules.rsi());                                 // mean reversion: RSI 25 -> +0.8
         predictor.addRule(new FixedScoreRule(0.5, RuleFamily.TREND));
 
         predictor.onEvent(trendUpFeatures());
@@ -196,7 +196,7 @@ public class RuleBasedPredictorTest {
     public void regimeGatingDropsTrendRulesInARange() {
         List<PredictionVector> predictions = new ArrayList<>();
         RuleBasedPredictor predictor = gatedPredictor(predictions::add, true);
-        predictor.addRule(new RsiRule());
+        predictor.addRule(LiveRules.rsi());
         predictor.addRule(new FixedScoreRule(-0.5, RuleFamily.TREND));
 
         FeatureVector range = FeatureVector.builder()
@@ -218,7 +218,7 @@ public class RuleBasedPredictorTest {
     public void withGatingOffTheRegimeIsReportedButEveryRuleVotes() {
         List<PredictionVector> predictions = new ArrayList<>();
         RuleBasedPredictor predictor = gatedPredictor(predictions::add, false);
-        predictor.addRule(new RsiRule());
+        predictor.addRule(LiveRules.rsi());
         predictor.addRule(new FixedScoreRule(0.5, RuleFamily.TREND));
 
         predictor.onEvent(trendUpFeatures());
@@ -235,7 +235,7 @@ public class RuleBasedPredictorTest {
         RuleBasedPredictor predictor = new RuleBasedPredictor(predictions::add, 0.28, -0.28, 2,
                 new MarketRegimeClassifier(new BigDecimal("20"), new BigDecimal("25"), new BigDecimal("0.5")),
                 false, new VpinEntryGuard(true, new BigDecimal("0.35")));
-        predictor.addRule(new RsiRule());
+        predictor.addRule(LiveRules.rsi());
 
         FeatureVector toxic = FeatureVector.builder()
                 .instrument("BTC/USD").timestamp(Instant.now())

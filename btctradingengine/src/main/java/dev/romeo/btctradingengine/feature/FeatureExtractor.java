@@ -58,7 +58,7 @@ public class FeatureExtractor implements CandleEventListener {
     private final int volumeAveragePeriods;
 
     public FeatureExtractor(int smaPeriod, int emaPeriod, int rsiPeriod, FeatureEventListener listener) {
-        this(IndicatorPeriods.fromConfig().withCorePeriods(smaPeriod, emaPeriod, rsiPeriod), listener);
+        this(IndicatorPeriods.defaults().withCorePeriods(smaPeriod, emaPeriod, rsiPeriod), listener);
     }
 
     /** Allows overriding every period without touching global Config - used by on-demand backtests. */

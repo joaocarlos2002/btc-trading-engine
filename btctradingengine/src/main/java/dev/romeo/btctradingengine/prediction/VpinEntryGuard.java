@@ -1,6 +1,5 @@
 package dev.romeo.btctradingengine.prediction;
 
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.feature.FeatureVector;
 
 import java.math.BigDecimal;
@@ -21,10 +20,6 @@ public class VpinEntryGuard implements EntryGuard {
     public VpinEntryGuard(boolean enabled, BigDecimal highThreshold) {
         this.enabled = enabled;
         this.highThreshold = highThreshold;
-    }
-
-    public static VpinEntryGuard fromConfig() {
-        return new VpinEntryGuard(Config.isVpinFilterEnabled(), Config.getVpinHighThreshold());
     }
 
     public static VpinEntryGuard disabled() {

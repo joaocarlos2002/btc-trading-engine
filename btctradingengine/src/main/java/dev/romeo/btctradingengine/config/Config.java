@@ -78,6 +78,39 @@ public class Config {
         return values;
     }
 
+    /** Transitional: the live periods for callers not wired through Spring yet (issue #101). */
+    public static dev.romeo.btctradingengine.feature.IndicatorPeriods indicatorPeriods() {
+        return new dev.romeo.btctradingengine.feature.IndicatorPeriods(
+                getSmaPeriod(), getEmaPeriod(), getRsiPeriod(), getAtrPeriod(),
+                getMacdFastPeriod(), getMacdSlowPeriod(), getMacdSignalPeriod(),
+                getVolatilityShortPeriods(), getVolatilityLongPeriods(), getVolumeAveragePeriods(),
+                getAdxPeriod(), getBollingerPeriod(), getBollingerStdDev(),
+                getMfiPeriod(), getDonchianPeriod(),
+                getVwapAnchor(), getVwapRollingPeriods(),
+                getPriceActionLookback(), getPriceActionSwingStrength(),
+                getCvdPeriod(), getEmaSlopePeriods(),
+                getVpinBuckets(), getVpinBucketCandles(),
+                getAbsorptionDeltaMin(), getAbsorptionVolumeRatioMin(),
+                getAbsorptionMaxMoveAtr(), getAbsorptionWindow());
+    }
+
+    /** Transitional: the live prediction settings for callers not wired through Spring yet (issue #101). */
+    public static dev.romeo.btctradingengine.prediction.PredictionSettings predictionSettings() {
+        return new dev.romeo.btctradingengine.prediction.PredictionSettings(
+                getRsiOversold(), getRsiNeutralLow(), getRsiNeutralHigh(), getRsiOverbought(),
+                getSmaDistanceExtreme(), getSmaDistanceModerate(),
+                getMacdStrongHistogramAtrRatio(),
+                getAtrVolatilityLow(), getAtrVolatilityNormal(), getAtrVolatilityHigh(),
+                getVolatilityRatioHigh(),
+                getAdxTrendMin(), getAdxTrendStrong(),
+                getMfiOversold(), getMfiNeutralLow(), getMfiNeutralHigh(), getMfiOverbought(),
+                getBollingerSqueezeThreshold(),
+                isRegimeGatingEnabled(),
+                isVpinFilterEnabled(), getVpinHighThreshold(),
+                isOrderBookFilterEnabled(), getOrderBookBuyMin(), getOrderBookSellMax(),
+                getBuyThreshold(), getSellThreshold(), getConfirmationSnapshots());
+    }
+
     public static String getMarketSymbol() {
         return getProperty("market.symbol", "BTCUSDT");
     }

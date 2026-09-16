@@ -1,7 +1,6 @@
 package dev.romeo.btctradingengine.prediction.rules;
 
 import dev.romeo.btctradingengine.feature.FeatureVector;
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.prediction.RuleFamily;
 import dev.romeo.btctradingengine.prediction.SignalRule;
 
@@ -19,11 +18,6 @@ public class MfiRule implements SignalRule {
     private final BigDecimal neutralLow;
     private final BigDecimal neutralHigh;
     private final BigDecimal overbought;
-
-    public MfiRule() {
-        this(Config.getMfiPeriod(), Config.getMfiOversold(), Config.getMfiNeutralLow(), Config.getMfiNeutralHigh(),
-                Config.getMfiOverbought());
-    }
 
     /** Allows overriding thresholds without touching global Config - used by on-demand backtests. The period only labels the rule. */
     public MfiRule(int period, BigDecimal oversold, BigDecimal neutralLow, BigDecimal neutralHigh, BigDecimal overbought) {

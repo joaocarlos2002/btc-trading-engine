@@ -1,5 +1,8 @@
 package dev.romeo.btctradingengine.replay;
 
+import dev.romeo.btctradingengine.feature.IndicatorPeriods;
+import dev.romeo.btctradingengine.prediction.PredictionSettings;
+
 import dev.romeo.btctradingengine.model.AggressorSide;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
 import dev.romeo.btctradingengine.prediction.PredictionVector;
@@ -42,9 +45,8 @@ public class DeterministicReplayTest {
     }
 
     private static DeterministicReplay replay() {
-        DeterministicReplay.Settings config = DeterministicReplay.Settings.fromConfig();
-        return new DeterministicReplay(new DeterministicReplay.Settings(Duration.ofMinutes(1), config.largeTradeNotional(),
-                config.periods(), new BigDecimal("2.0"), new BigDecimal("1.5"), false));
+        return new DeterministicReplay(new DeterministicReplay.Settings(Duration.ofMinutes(1), new BigDecimal("100000"),
+                IndicatorPeriods.defaults(), PredictionSettings.defaults(), new BigDecimal("2.0"), new BigDecimal("1.5"), false));
     }
 
     private static List<String> signals(List<PredictionVector> predictions) {

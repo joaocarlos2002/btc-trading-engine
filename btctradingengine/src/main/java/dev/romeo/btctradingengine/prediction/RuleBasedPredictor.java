@@ -2,14 +2,7 @@ package dev.romeo.btctradingengine.prediction;
 
 import dev.romeo.btctradingengine.feature.FeatureVector;
 import dev.romeo.btctradingengine.feature.FeatureEventListener;
-import dev.romeo.btctradingengine.config.Config;
-import dev.romeo.btctradingengine.prediction.rules.AdxRegimeRule;
-import dev.romeo.btctradingengine.prediction.rules.AtrRule;
-import dev.romeo.btctradingengine.prediction.rules.MacdRule;
-import dev.romeo.btctradingengine.prediction.rules.MfiRule;
-import dev.romeo.btctradingengine.prediction.rules.RsiRule;
-import dev.romeo.btctradingengine.prediction.rules.SmaMomentumRule;
-import dev.romeo.btctradingengine.prediction.rules.VolatilityRule;
+import dev.romeo.btctradingengine.feature.IndicatorPeriods;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,16 +36,19 @@ public class RuleBasedPredictor implements FeatureEventListener {
     private Signal lastSignal = Signal.HOLD;
     private int signalConfirmationCount = 0;
 
-    public RuleBasedPredictor(PredictionEventListener listener) {
-        this(listener, Config.getBuyThreshold(), Config.getSellThreshold(), Config.getConfirmationSnapshots(),
-                MarketRegimeClassifier.fromConfig(), Config.isRegimeGatingEnabled(),
-                EntryGuard.allOf(VpinEntryGuard.fromConfig(), OrderBookEntryGuard.fromConfig()));
+    /**
+     * Thresholds, regime classifier, gating and entry guards from {@code settings}, with no rules yet (issue
+     * #101): nothing here reads configuration.
+     */
+    public RuleBasedPredictor(PredictionEventListener listener, PredictionSettings settings) {
+        this(listener, settings.buyThreshold(), settings.sellThreshold(), settings.confirmationSnapshots(),
+                settings.regimeClassifier(), settings.regimeGatingEnabled(), settings.entryGuard());
     }
 
-    /** Allows overriding the entry threshold/confirmation without touching global Config - used by on-demand backtests. */
+    /** Only the entry threshold/confirmation; the regime is classified with the shipped thresholds and never gates. */
     public RuleBasedPredictor(PredictionEventListener listener, double buyThreshold, double sellThreshold, int confirmationSnapshots) {
-        this(listener, buyThreshold, sellThreshold, confirmationSnapshots, MarketRegimeClassifier.fromConfig(), false,
-                EntryGuard.NONE);
+        this(listener, buyThreshold, sellThreshold, confirmationSnapshots,
+                PredictionSettings.defaults().regimeClassifier(), false, EntryGuard.NONE);
     }
 
     /**
@@ -89,18 +85,19 @@ public class RuleBasedPredictor implements FeatureEventListener {
     }
 
     /**
-     * The predictor the live bot runs: default thresholds from Config and its rule set. Shared with the
-     * deterministic replay (issue #111) so both make decisions with exactly the same rules.
+     * The predictor the live bot runs: its thresholds and rule set, built from the given settings. Shared
+     * with the deterministic replay (issue #111) so both make decisions with exactly the same rules.
      */
-    public static RuleBasedPredictor withLiveRules(PredictionEventListener listener) {
-        RuleBasedPredictor predictor = new RuleBasedPredictor(listener);
-        predictor.addRule(new RsiRule());
-        predictor.addRule(new SmaMomentumRule());
-        predictor.addRule(new MacdRule());
-        predictor.addRule(new MfiRule());
-        predictor.addFilterRule(new AtrRule());
-        predictor.addFilterRule(new VolatilityRule());
-        predictor.addFilterRule(new AdxRegimeRule());
+    public static RuleBasedPredictor withLiveRules(PredictionEventListener listener, IndicatorPeriods periods,
+                                                   PredictionSettings settings) {
+        RuleBasedPredictor predictor = new RuleBasedPredictor(listener, settings);
+        predictor.addRule(settings.rsiRule(periods));
+        predictor.addRule(settings.smaMomentumRule(periods));
+        predictor.addRule(settings.macdRule());
+        predictor.addRule(settings.mfiRule(periods));
+        predictor.addFilterRule(settings.atrRule());
+        predictor.addFilterRule(settings.volatilityRule());
+        predictor.addFilterRule(settings.adxRegimeRule());
         return predictor;
     }
 
@@ -248,14 +245,9 @@ public class RuleBasedPredictor implements FeatureEventListener {
             return Signal.BUY;
         } else if (avgScore <= sellThreshold) {
             return Signal.SELL;
-        } else if (avgScore > Config.getHoldMax()) {
-            // Score positivo mas abaixo de BUY_THRESHOLD â†’ lean BUY (but hold)
-            return Signal.HOLD;
-        } else if (avgScore < Config.getHoldMin()) {
-            // Score negativo mas acima de SELL_THRESHOLD â†’ lean SELL (but hold)
-            return Signal.HOLD;
         } else {
-            // Score prÃ³ximo de 0 â†’ neutro
+            // Between the thresholds is always HOLD. prediction.hold.min/max used to name a "lean" band here,
+            // but every branch returned HOLD, so they only take part in the startup validation.
             return Signal.HOLD;
         }
     }

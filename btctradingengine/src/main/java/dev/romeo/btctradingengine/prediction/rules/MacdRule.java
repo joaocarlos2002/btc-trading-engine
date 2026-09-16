@@ -1,7 +1,6 @@
 package dev.romeo.btctradingengine.prediction.rules;
 
 import dev.romeo.btctradingengine.feature.FeatureVector;
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.prediction.RuleFamily;
 import dev.romeo.btctradingengine.prediction.SignalRule;
 
@@ -9,10 +8,6 @@ import java.math.BigDecimal;
 
 public class MacdRule implements SignalRule {
     private final BigDecimal strongHistogramAtrRatio;
-
-    public MacdRule() {
-        this(Config.getMacdStrongHistogramAtrRatio());
-    }
 
     /** Allows overriding the threshold without touching global Config - used by on-demand backtests. */
     public MacdRule(BigDecimal strongHistogramAtrRatio) {

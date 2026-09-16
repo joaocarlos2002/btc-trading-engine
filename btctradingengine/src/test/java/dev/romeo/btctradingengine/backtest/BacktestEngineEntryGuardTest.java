@@ -43,7 +43,8 @@ public class BacktestEngineEntryGuardTest {
         dev.romeo.btctradingengine.prediction.RuleBasedPredictor predictor =
                 new dev.romeo.btctradingengine.prediction.RuleBasedPredictor(
                         p -> engine.processPrediction(p, current[0]), 0.28, -0.28, 1);
-        predictor.addRule(new dev.romeo.btctradingengine.prediction.rules.RsiRule());
+        predictor.addRule(dev.romeo.btctradingengine.prediction.PredictionSettings.defaults().rsiRule(
+                dev.romeo.btctradingengine.feature.IndicatorPeriods.defaults()));
         double[] filterScore = {0.1};
         predictor.addFilterRule(new dev.romeo.btctradingengine.prediction.SignalRule() {
             @Override public double evaluate(dev.romeo.btctradingengine.feature.FeatureVector features) { return filterScore[0]; }

@@ -1,6 +1,5 @@
 package dev.romeo.btctradingengine.prediction;
 
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.feature.FeatureVector;
 import dev.romeo.btctradingengine.feature.RegimeFeatures;
 
@@ -23,11 +22,6 @@ public class MarketRegimeClassifier {
         this.trendMin = trendMin;
         this.trendStrong = trendStrong;
         this.squeezeThreshold = squeezeThreshold;
-    }
-
-    public static MarketRegimeClassifier fromConfig() {
-        return new MarketRegimeClassifier(
-                Config.getAdxTrendMin(), Config.getAdxTrendStrong(), Config.getBollingerSqueezeThreshold());
     }
 
     public MarketRegime classify(FeatureVector features) {

@@ -1,13 +1,13 @@
 package dev.romeo.btctradingengine.replay;
 
 import dev.romeo.btctradingengine.adapter.CandleAggregator;
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.feature.DerivativesLookup;
 import dev.romeo.btctradingengine.feature.FeatureExtractor;
 import dev.romeo.btctradingengine.feature.IndicatorPeriods;
 import dev.romeo.btctradingengine.feature.OrderBookLookup;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.port.MarketDataPort;
+import dev.romeo.btctradingengine.prediction.PredictionSettings;
 import dev.romeo.btctradingengine.prediction.PredictionVector;
 import dev.romeo.btctradingengine.prediction.RuleBasedPredictor;
 import dev.romeo.btctradingengine.trading.Position;
@@ -33,13 +33,10 @@ import java.util.Optional;
  */
 public class DeterministicReplay {
 
+    /** What the live bot is configured with; the application builds it from the same properties as the live pipeline. */
     public record Settings(Duration candleInterval, BigDecimal largeTradeNotional, IndicatorPeriods periods,
-                           BigDecimal targetPercent, BigDecimal stopLossPercent, boolean allowShort) {
-        public static Settings fromConfig() {
-            return new Settings(Config.getMarketInterval(), Config.getLargeTradeNotional(),
-                    IndicatorPeriods.fromConfig().withCorePeriods(Config.getSmaPeriod(), Config.getEmaPeriod(), Config.getRsiPeriod()),
-                    Config.getTradingTargetPercent(), Config.getTradingStopLossPercent(), Config.isShortSellingAllowed());
-        }
+                           PredictionSettings prediction, BigDecimal targetPercent, BigDecimal stopLossPercent,
+                           boolean allowShort) {
     }
 
     public record Result(List<PositionManager.ExecutionEvent> executionLog, List<Position> closedPositions,
@@ -69,7 +66,7 @@ public class DeterministicReplay {
             if (lastCandle[0] != null) {
                 positions.processPrediction(prediction, lastCandle[0]);
             }
-        });
+        }, settings.periods(), settings.prediction());
         FeatureExtractor features = new FeatureExtractor(settings.periods(), DerivativesLookup.NONE, OrderBookLookup.NONE,
                 vector -> {
                     positions.updateAtr(vector.atrValue());

@@ -1,7 +1,6 @@
 package dev.romeo.btctradingengine.prediction.rules;
 
 import dev.romeo.btctradingengine.feature.FeatureVector;
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.prediction.RuleFamily;
 import dev.romeo.btctradingengine.prediction.SignalRule;
 
@@ -13,11 +12,6 @@ public class RsiRule implements SignalRule {
     private final BigDecimal neutralLow;
     private final BigDecimal neutralHigh;
     private final BigDecimal overbought;
-
-    public RsiRule() {
-        this(Config.getRsiPeriod(), Config.getRsiOversold(), Config.getRsiNeutralLow(), Config.getRsiNeutralHigh(),
-                Config.getRsiOverbought());
-    }
 
     /**
      * Allows overriding thresholds without touching global Config - used by on-demand backtests. The

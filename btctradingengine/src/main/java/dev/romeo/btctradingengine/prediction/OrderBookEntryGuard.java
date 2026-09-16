@@ -1,6 +1,5 @@
 package dev.romeo.btctradingengine.prediction;
 
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.feature.FeatureVector;
 
 import java.math.BigDecimal;
@@ -23,11 +22,6 @@ public class OrderBookEntryGuard implements EntryGuard {
         this.enabled = enabled;
         this.buyMin = buyMin;
         this.sellMax = sellMax;
-    }
-
-    public static OrderBookEntryGuard fromConfig() {
-        return new OrderBookEntryGuard(
-                Config.isOrderBookFilterEnabled(), Config.getOrderBookBuyMin(), Config.getOrderBookSellMax());
     }
 
     @Override

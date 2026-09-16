@@ -1,7 +1,6 @@
 package dev.romeo.btctradingengine.prediction.rules;
 
 import dev.romeo.btctradingengine.feature.FeatureVector;
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.prediction.SignalRule;
 
 import java.math.BigDecimal;
@@ -33,10 +32,6 @@ public class AdxRegimeRule implements SignalRule {
     private final BigDecimal trendMin;
     private final BigDecimal squeezeThreshold;
     private final boolean regimeGatingEnabled;
-
-    public AdxRegimeRule() {
-        this(Config.getAdxTrendMin(), Config.getBollingerSqueezeThreshold(), Config.isRegimeGatingEnabled());
-    }
 
     /** Allows overriding thresholds without touching global Config - used by on-demand backtests. */
     public AdxRegimeRule(BigDecimal trendMin, BigDecimal squeezeThreshold) {

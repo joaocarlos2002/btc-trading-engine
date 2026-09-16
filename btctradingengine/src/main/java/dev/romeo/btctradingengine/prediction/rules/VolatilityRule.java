@@ -1,17 +1,12 @@
 package dev.romeo.btctradingengine.prediction.rules;
 
 import dev.romeo.btctradingengine.feature.FeatureVector;
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.prediction.SignalRule;
 
 import java.math.BigDecimal;
 
 public class VolatilityRule implements SignalRule {
     private final BigDecimal ratioHigh;
-
-    public VolatilityRule() {
-        this(Config.getVolatilityRatioHigh());
-    }
 
     /** Allows overriding the threshold without touching global Config - used by on-demand backtests. */
     public VolatilityRule(BigDecimal ratioHigh) {

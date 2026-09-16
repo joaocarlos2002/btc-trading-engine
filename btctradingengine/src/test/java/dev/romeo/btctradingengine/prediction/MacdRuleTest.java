@@ -13,7 +13,7 @@ public class MacdRuleTest {
 
     @Test
     public void macdAboveSignalBullish() {
-        MacdRule rule = new MacdRule();
+        MacdRule rule = LiveRules.macd();
 
         FeatureVector features = createFeatures("100", "0.5", "0.2");  // MACD > Signal
         double score = rule.evaluate(features);
@@ -24,7 +24,7 @@ public class MacdRuleTest {
 
     @Test
     public void macdBelowSignalBearish() {
-        MacdRule rule = new MacdRule();
+        MacdRule rule = LiveRules.macd();
 
         FeatureVector features = createFeatures("100", "0.1", "0.5");  // MACD < Signal
         double score = rule.evaluate(features);
@@ -35,7 +35,7 @@ public class MacdRuleTest {
 
     @Test
     public void macdWeaklyAboveSignal() {
-        MacdRule rule = new MacdRule();
+        MacdRule rule = LiveRules.macd();
 
         FeatureVector features = createFeatures("100", "0.05", "0.03");  // Pequena diferenÃ§a
         double score = rule.evaluate(features);
@@ -46,7 +46,7 @@ public class MacdRuleTest {
 
     @Test
     public void macdZeroReturnsNeutral() {
-        MacdRule rule = new MacdRule();
+        MacdRule rule = LiveRules.macd();
 
         FeatureVector features = createFeatures("100", "0.0", "0.0");
         double score = rule.evaluate(features);

@@ -182,7 +182,9 @@ public class Main {
                             positionManager.processPrediction(prediction, lastCandle.value);
                             dashboardState.refreshPositions();
                         }
-                    }
+                    },
+                    Config.indicatorPeriods(),
+                    Config.predictionSettings()
             );
 
             DerivativesHistory derivativesHistory = Config.isDerivativesEnabled() ? DerivativesHistory.forLive() : null;
@@ -208,8 +210,7 @@ public class Main {
                     Config.getOrderBookDepthLevels());
 
             FeatureExtractor featureExtractor = new FeatureExtractor(
-                    IndicatorPeriods.fromConfig().withCorePeriods(
-                            Config.getSmaPeriod(), Config.getEmaPeriod(), Config.getRsiPeriod()),
+                    Config.indicatorPeriods(),
                     derivativesHistory != null ? derivativesHistory : DerivativesLookup.NONE,
                     orderBookHistory != null ? orderBookHistory : OrderBookLookup.NONE,
                     features -> {

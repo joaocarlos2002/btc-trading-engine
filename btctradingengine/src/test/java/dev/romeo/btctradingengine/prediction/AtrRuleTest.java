@@ -18,7 +18,7 @@ public class AtrRuleTest {
 
     @Test
     public void lowAtrLowVolatility() {
-        AtrRule rule = new AtrRule();
+        AtrRule rule = LiveRules.atr();
 
         // ATR = 0.01, Price = 100 â†’ ATR% = 0.01%
         FeatureVector features = createFeatures("100", "0.01");
@@ -30,7 +30,7 @@ public class AtrRuleTest {
 
     @Test
     public void normalAtrNeutral() {
-        AtrRule rule = new AtrRule();
+        AtrRule rule = LiveRules.atr();
 
         // ATR = 0.04, Price = 100 â†’ ATR% = 0.04%
         FeatureVector features = createFeatures("100", "0.04");
@@ -41,7 +41,7 @@ public class AtrRuleTest {
 
     @Test
     public void moderateAtrPositive() {
-        AtrRule rule = new AtrRule();
+        AtrRule rule = LiveRules.atr();
 
         // ATR = 0.08, Price = 100 â†’ ATR% = 0.08%
         FeatureVector features = createFeatures("100", "0.08");
@@ -53,7 +53,7 @@ public class AtrRuleTest {
 
     @Test
     public void highAtrBreakout() {
-        AtrRule rule = new AtrRule();
+        AtrRule rule = LiveRules.atr();
 
         // ATR = 0.15, Price = 100 â†’ ATR% = 0.15%
         FeatureVector features = createFeatures("100", "0.15");

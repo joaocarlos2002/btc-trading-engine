@@ -24,7 +24,7 @@ public class FeatureExtractorPerfTest {
     @Test
     public void processesHalfAYearOfMinuteCandles() {
         List<CandleEvent> candles = syntheticCandles(CANDLES);
-        IndicatorPeriods periods = IndicatorPeriods.fromConfig();
+        IndicatorPeriods periods = IndicatorPeriods.defaults();
 
         for (int run = 0; run < 3; run++) {
             long[] count = {0};

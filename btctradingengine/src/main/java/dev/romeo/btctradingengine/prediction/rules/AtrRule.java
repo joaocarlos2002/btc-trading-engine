@@ -1,7 +1,6 @@
 package dev.romeo.btctradingengine.prediction.rules;
 
 import dev.romeo.btctradingengine.feature.FeatureVector;
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.prediction.SignalRule;
 
 import java.math.BigDecimal;
@@ -10,10 +9,6 @@ public class AtrRule implements SignalRule {
     private final BigDecimal volatilityLow;
     private final BigDecimal volatilityNormal;
     private final BigDecimal volatilityHigh;
-
-    public AtrRule() {
-        this(Config.getAtrVolatilityLow(), Config.getAtrVolatilityNormal(), Config.getAtrVolatilityHigh());
-    }
 
     /** Allows overriding thresholds without touching global Config - used by on-demand backtests. */
     public AtrRule(BigDecimal volatilityLow, BigDecimal volatilityNormal, BigDecimal volatilityHigh) {

@@ -237,7 +237,7 @@ public class FeatureExtractorTest {
     public void attachesTheDerivativesLookedUpForEachCandle() {
         List<FeatureVector> features = new ArrayList<>();
         FeatureExtractor extractor = new FeatureExtractor(
-                IndicatorPeriods.fromConfig(),
+                IndicatorPeriods.defaults(),
                 candle -> new DerivFeatures(null, new BigDecimal("0.0001"), candle.close().movePointLeft(3), null, null),
                 features::add);
 
@@ -255,7 +255,7 @@ public class FeatureExtractorTest {
     public void attachesTheOrderBookImbalanceLookedUpForEachCandle() {
         List<FeatureVector> features = new ArrayList<>();
         FeatureExtractor extractor = new FeatureExtractor(
-                IndicatorPeriods.fromConfig(), DerivativesLookup.NONE,
+                IndicatorPeriods.defaults(), DerivativesLookup.NONE,
                 candle -> new BigDecimal("0.42"),
                 features::add);
 
@@ -311,7 +311,7 @@ public class FeatureExtractorTest {
 
     @Test
     public void longVolatilityAndVolumeRatioLeaveWarmupOnceTheWindowIsFull() {
-        IndicatorPeriods periods = IndicatorPeriods.fromConfig();
+        IndicatorPeriods periods = IndicatorPeriods.defaults();
         assertEquals(300, periods.volatilityLong(), "test assumes the default 300-candle window");
         assertEquals(300, periods.volumeAverage(), "test assumes the default 300-candle window");
 

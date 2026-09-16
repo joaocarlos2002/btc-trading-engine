@@ -15,12 +15,12 @@ public class AdxRegimeRuleTest {
     @Test
     public void warmupValuesDoNotVeto() {
         // Zero means the indicator has no value yet - the filter must stay neutral, not block
-        assertEquals(0.0, new AdxRegimeRule().evaluate(features("0", "0")), 0.01);
+        assertEquals(0.0, LiveRules.adxRegime().evaluate(features("0", "0")), 0.01);
     }
 
     @Test
     public void weakTrendVetoes() {
-        double score = new AdxRegimeRule().evaluate(features("12", "2.0"));
+        double score = LiveRules.adxRegime().evaluate(features("12", "2.0"));
 
         assertTrue(score < 0, "ADX below trend.min should veto");
         assertEquals(-0.3, score, 0.01);
@@ -28,20 +28,20 @@ public class AdxRegimeRuleTest {
 
     @Test
     public void trendingMarketIsNeutral() {
-        assertEquals(0.0, new AdxRegimeRule().evaluate(features("35", "2.0")), 0.01);
+        assertEquals(0.0, LiveRules.adxRegime().evaluate(features("35", "2.0")), 0.01);
     }
 
     @Test
     public void squeezeVetoes() {
         // Trending, but the bands are compressed: the breakout has not happened yet
-        double score = new AdxRegimeRule().evaluate(features("35", "0.2"));
+        double score = LiveRules.adxRegime().evaluate(features("35", "0.2"));
 
         assertEquals(-0.2, score, 0.01);
     }
 
     @Test
     public void weakTrendAndSqueezeStayWithinTheFilterBand() {
-        double score = new AdxRegimeRule().evaluate(features("12", "0.2"));
+        double score = LiveRules.adxRegime().evaluate(features("12", "0.2"));
 
         // Penalties are not summed - the score must stay inside the [-0.3, 0] band the other
         // filter rules use, so no single filter can drown out the rest of the average

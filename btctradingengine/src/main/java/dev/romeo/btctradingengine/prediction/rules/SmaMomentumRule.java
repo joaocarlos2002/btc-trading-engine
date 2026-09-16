@@ -1,7 +1,6 @@
 package dev.romeo.btctradingengine.prediction.rules;
 
 import dev.romeo.btctradingengine.feature.FeatureVector;
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.prediction.RuleFamily;
 import dev.romeo.btctradingengine.prediction.SignalRule;
 
@@ -11,10 +10,6 @@ public class SmaMomentumRule implements SignalRule {
     private final int period;
     private final BigDecimal distanceExtreme;
     private final BigDecimal distanceModerate;
-
-    public SmaMomentumRule() {
-        this(Config.getSmaPeriod(), Config.getSmaDistanceExtreme(), Config.getSmaDistanceModerate());
-    }
 
     /** Allows overriding thresholds without touching global Config - used by on-demand backtests. The period only labels the rule. */
     public SmaMomentumRule(int period, BigDecimal distanceExtreme, BigDecimal distanceModerate) {

@@ -1,6 +1,5 @@
 package dev.romeo.btctradingengine.feature;
 
-import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.indicator.VwapAnchor;
 
 import java.math.BigDecimal;
@@ -29,19 +28,20 @@ public record IndicatorPeriods(
         BigDecimal absorptionMaxMoveAtr, int absorptionWindow
 ) {
 
-    public static IndicatorPeriods fromConfig() {
+    /** The periods application.properties ships (1m candles); for tests and tools that run without the application. */
+    public static IndicatorPeriods defaults() {
         return new IndicatorPeriods(
-                Config.getSmaPeriod(), Config.getEmaPeriod(), Config.getRsiPeriod(), Config.getAtrPeriod(),
-                Config.getMacdFastPeriod(), Config.getMacdSlowPeriod(), Config.getMacdSignalPeriod(),
-                Config.getVolatilityShortPeriods(), Config.getVolatilityLongPeriods(), Config.getVolumeAveragePeriods(),
-                Config.getAdxPeriod(), Config.getBollingerPeriod(), Config.getBollingerStdDev(),
-                Config.getMfiPeriod(), Config.getDonchianPeriod(),
-                Config.getVwapAnchor(), Config.getVwapRollingPeriods(),
-                Config.getPriceActionLookback(), Config.getPriceActionSwingStrength(),
-                Config.getCvdPeriod(), Config.getEmaSlopePeriods(),
-                Config.getVpinBuckets(), Config.getVpinBucketCandles(),
-                Config.getAbsorptionDeltaMin(), Config.getAbsorptionVolumeRatioMin(),
-                Config.getAbsorptionMaxMoveAtr(), Config.getAbsorptionWindow());
+                750, 390, 210, 210,
+                180, 390, 135,
+                75, 300, 300,
+                210, 300, new BigDecimal("2.0"),
+                210, 300,
+                VwapAnchor.DAILY, 300,
+                300, 30,
+                300, 15,
+                50, 20,
+                new BigDecimal("0.3"), new BigDecimal("1.5"),
+                new BigDecimal("0.25"), 15);
     }
 
     /** Overrides only the three periods the short FeatureExtractor constructor takes. */

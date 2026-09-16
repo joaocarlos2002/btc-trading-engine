@@ -17,41 +17,41 @@ public class MfiRuleTest {
 
     @Test
     public void oversoldGivesStrongBuy() {
-        double score = new MfiRule().evaluate(features("15"));
+        double score = LiveRules.mfi().evaluate(features("15"));
 
         assertEquals(0.8, score, 0.01);
     }
 
     @Test
     public void weakOversoldGivesMildBuy() {
-        double score = new MfiRule().evaluate(features("35"));
+        double score = LiveRules.mfi().evaluate(features("35"));
 
         assertEquals(0.3, score, 0.01);
     }
 
     @Test
     public void neutralBandGivesZero() {
-        assertEquals(0.0, new MfiRule().evaluate(features("50")), 0.01);
-        assertEquals(0.0, new MfiRule().evaluate(features("40")), 0.01);
-        assertEquals(0.0, new MfiRule().evaluate(features("60")), 0.01);
+        assertEquals(0.0, LiveRules.mfi().evaluate(features("50")), 0.01);
+        assertEquals(0.0, LiveRules.mfi().evaluate(features("40")), 0.01);
+        assertEquals(0.0, LiveRules.mfi().evaluate(features("60")), 0.01);
     }
 
     @Test
     public void warmupValueIsTreatedAsNeutral() {
         // MfiIndicator reports the neutral 50 while warming up, so the rule must not lean either way
-        assertEquals(0.0, new MfiRule().evaluate(features("50")), 0.01);
+        assertEquals(0.0, LiveRules.mfi().evaluate(features("50")), 0.01);
     }
 
     @Test
     public void weakOverboughtGivesMildSell() {
-        double score = new MfiRule().evaluate(features("70"));
+        double score = LiveRules.mfi().evaluate(features("70"));
 
         assertEquals(-0.3, score, 0.01);
     }
 
     @Test
     public void overboughtGivesStrongSell() {
-        double score = new MfiRule().evaluate(features("90"));
+        double score = LiveRules.mfi().evaluate(features("90"));
 
         assertEquals(-0.8, score, 0.01);
     }
