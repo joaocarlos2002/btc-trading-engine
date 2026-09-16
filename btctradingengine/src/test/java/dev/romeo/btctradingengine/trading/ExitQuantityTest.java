@@ -68,6 +68,7 @@ public class ExitQuantityTest {
 
     private static PositionManager openBuy(FakeExecutor executor) {
         PositionManager manager = new PositionManager(new BigDecimal("2.0"), new BigDecimal("1.5"));
+        manager.setOrderIoExecutor(Runnable::run);
         manager.setRealTradingMode(executor, new PortfolioManager(new BigDecimal("1000"), new BigDecimal("50")), "BTCUSDT");
         manager.markReconciliationComplete();
         assertTrue(manager.openManualBuy(new BigDecimal("100000"), NOW).opened());

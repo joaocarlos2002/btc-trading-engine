@@ -38,6 +38,14 @@ public class TradeJournal {
 
                 ALTER TABLE trades ADD COLUMN IF NOT EXISTS quantity NUMERIC(20, 8);
 
+                ALTER TABLE trades ADD COLUMN IF NOT EXISTS state VARCHAR(20);
+
+                UPDATE trades SET state = CASE
+                        WHEN exit_time IS NULL THEN 'OPEN'
+                        WHEN exit_reason IN ('ORDER_FAILED', 'VALIDATION_FAILED', 'ERROR') THEN 'FAILED'
+                        ELSE 'CLOSED' END
+                    WHERE state IS NULL;
+
                 CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
                 CREATE INDEX IF NOT EXISTS idx_trades_entry_time ON trades(entry_time DESC);
                 CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(exit_time);
@@ -64,11 +72,12 @@ public class TradeJournal {
                 INSERT INTO trades
                 (position_id, symbol, signal, entry_price, entry_time,
                  exit_price, exit_time, exit_reason, pnl, pnl_percent,
-                 target_percent, stop_loss_percent, quantity)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 target_percent, stop_loss_percent, quantity, state)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (position_id) DO UPDATE SET
                     entry_price = EXCLUDED.entry_price,
                     quantity = EXCLUDED.quantity,
+                    state = EXCLUDED.state,
                     exit_price = EXCLUDED.exit_price,
                     exit_time = EXCLUDED.exit_time,
                     exit_reason = EXCLUDED.exit_reason,
@@ -102,6 +111,7 @@ public class TradeJournal {
             stmt.setBigDecimal(11, position.getTargetPercent());
             stmt.setBigDecimal(12, position.getStopLossPercent());
             stmt.setBigDecimal(13, position.getQuantity());
+            stmt.setString(14, position.getState().name());
 
             stmt.executeUpdate();
             logger.debug("Trade recorded: {}", position.getPositionId());
@@ -113,7 +123,7 @@ public class TradeJournal {
 
     public Optional<Position> loadOpenPosition(String symbol, BigDecimal targetPercent,
                                                BigDecimal stopLossPercent) {
-        String sql = "SELECT position_id, signal, entry_price, entry_time, quantity "
+        String sql = "SELECT position_id, signal, entry_price, entry_time, quantity, state "
                 + "FROM trades WHERE symbol = ? AND exit_time IS NULL "
                 + "ORDER BY entry_time DESC LIMIT 1";
 
@@ -137,6 +147,13 @@ public class TradeJournal {
                 BigDecimal quantity = result.getBigDecimal("quantity");
                 if (quantity != null) {
                     position.setQuantity(quantity);
+                }
+                PositionState stored = PositionState.parse(result.getString("state"));
+                if (stored != null && stored != PositionState.OPEN) {
+                    // The bot stopped with an order in flight: restored as OPEN, Binance reconciliation
+                    // settles what the order actually did
+                    logger.warn("Open position {} was persisted as {}; restoring it as OPEN for reconciliation",
+                            position.getPositionId(), stored);
                 }
                 return Optional.of(position);
             }

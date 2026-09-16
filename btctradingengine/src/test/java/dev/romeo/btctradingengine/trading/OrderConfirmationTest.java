@@ -70,6 +70,7 @@ public class OrderConfirmationTest {
     private final PositionManager manager = new PositionManager(new BigDecimal("2.0"), new BigDecimal("1.5"));
 
     OrderConfirmationTest() {
+        manager.setOrderIoExecutor(Runnable::run);
         manager.setRealTradingMode(executor, new PortfolioManager(new BigDecimal("1000"), new BigDecimal("5")), "BTCUSDT");
         manager.markReconciliationComplete();
         manager.setOrderConfirmationManager(confirmations);
