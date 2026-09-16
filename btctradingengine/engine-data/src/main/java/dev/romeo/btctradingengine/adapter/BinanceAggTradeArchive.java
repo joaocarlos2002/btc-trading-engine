@@ -1,5 +1,9 @@
 package dev.romeo.btctradingengine.adapter;
 
+import dev.romeo.btctradingengine.resilience.BinanceCall;
+import dev.romeo.btctradingengine.resilience.BinanceEndpoint;
+import dev.romeo.btctradingengine.resilience.BinanceResilience;
+
 import dev.romeo.btctradingengine.model.AggressorSide;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.model.TradeFlow;
@@ -11,7 +15,6 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import java.math.BigDecimal;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -52,12 +55,15 @@ public class BinanceAggTradeArchive {
     private static final long MICROSECOND_EPOCH_MIN = 100_000_000_000_000L;
     private static final Duration TIMEOUT = Duration.ofSeconds(60);
 
-    private final HttpClient client = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
+    private static final BinanceEndpoint AGG_TRADES = BinanceEndpoint.archive("spot aggTrades", TIMEOUT);
+
+    private final BinanceResilience resilience;
     private final String baseUrl;
     private final Path cacheDir;
     private final long intervalMillis;
 
-    public BinanceAggTradeArchive(String baseUrl, Path cacheDir, Duration interval) {
+    public BinanceAggTradeArchive(BinanceResilience resilience, String baseUrl, Path cacheDir, Duration interval) {
+        this.resilience = resilience;
         this.baseUrl = baseUrl;
         this.cacheDir = cacheDir;
         this.intervalMillis = interval.toMillis();
@@ -80,12 +86,12 @@ public class BinanceAggTradeArchive {
         }
 
         String fileName = symbol + "-aggTrades-" + day + ".zip";
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/data/spot/daily/aggTrades/" + symbol + "/" + fileName))
-                .timeout(TIMEOUT)
-                .GET()
-                .build();
-        HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        HttpResponse<InputStream> response = resilience.send(AGG_TRADES, BinanceCall.HISTORY,
+                () -> HttpRequest.newBuilder()
+                        .uri(URI.create(baseUrl + "/data/spot/daily/aggTrades/" + symbol + "/" + fileName))
+                        .GET()
+                        .build(),
+                HttpResponse.BodyHandlers.ofInputStream());
         try (InputStream body = response.body()) {
             if (response.statusCode() == 404) {
                 return Map.of();

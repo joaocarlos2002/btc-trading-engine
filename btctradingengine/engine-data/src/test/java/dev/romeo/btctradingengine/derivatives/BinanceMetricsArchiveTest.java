@@ -1,5 +1,7 @@
 package dev.romeo.btctradingengine.derivatives;
 
+import dev.romeo.btctradingengine.resilience.BinanceResilience;
+import dev.romeo.btctradingengine.resilience.BinanceResilienceSettings;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -61,7 +63,7 @@ public class BinanceMetricsArchiveTest {
         String csv = HEADER + "\n2026-09-10 00:00:00,BTCUSDT,105043.987,1,1,1,1.27565999,1\n";
         Files.write(cacheDir.resolve("BTCUSDT-metrics-2026-09-10.zip"), zip("BTCUSDT-metrics-2026-09-10.csv", csv));
         // Unroutable base URL: a network call would fail the test
-        BinanceMetricsArchive archive = new BinanceMetricsArchive("http://127.0.0.1:9", cacheDir);
+        BinanceMetricsArchive archive = new BinanceMetricsArchive(new BinanceResilience(BinanceResilienceSettings.defaults()), "http://127.0.0.1:9", cacheDir);
 
         List<BinanceMetricsArchive.MetricsRow> rows =
                 archive.load("BTCUSDT", LocalDate.parse("2026-09-10"), LocalDate.parse("2026-09-10"));

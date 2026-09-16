@@ -1,5 +1,7 @@
 package dev.romeo.btctradingengine.adapter;
 
+import dev.romeo.btctradingengine.resilience.BinanceResilience;
+import dev.romeo.btctradingengine.resilience.BinanceResilienceSettings;
 import dev.romeo.btctradingengine.model.AggressorSide;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
@@ -99,7 +101,7 @@ public class BinanceAggTradeArchiveTest {
         Files.writeString(cacheDir.resolve("BTCUSDT-aggTrades-2026-09-10-60000ms.csv"),
                 BinanceAggTradeArchive.formatAggregate(aggregate));
         // Unroutable base URL: a network call would fail the test
-        BinanceAggTradeArchive archive = new BinanceAggTradeArchive("http://127.0.0.1:9", cacheDir, Duration.ofMinutes(1));
+        BinanceAggTradeArchive archive = new BinanceAggTradeArchive(new BinanceResilience(BinanceResilienceSettings.defaults()), "http://127.0.0.1:9", cacheDir, Duration.ofMinutes(1));
 
         Map<Instant, BinanceAggTradeArchive.SizeBuckets> loaded =
                 archive.load("BTCUSDT", LocalDate.parse("2026-09-10"), LocalDate.parse("2026-09-10"));

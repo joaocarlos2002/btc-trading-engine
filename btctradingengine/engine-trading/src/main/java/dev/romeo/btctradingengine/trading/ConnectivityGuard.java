@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -29,6 +30,7 @@ public class ConnectivityGuard {
     private volatile boolean marketDataConnected = true;
     private volatile boolean userDataStreamConnected = true;
     private volatile Supplier<Boolean> openPositionSupplier = () -> false;
+    private volatile Supplier<Optional<String>> exchangeHealth = Optional::empty;
 
     public ConnectivityGuard(Duration maxStaleness, boolean trackUserDataStream) {
         this.maxStaleness = maxStaleness;
@@ -58,15 +60,28 @@ public class ConnectivityGuard {
         this.openPositionSupplier = supplier;
     }
 
+    /**
+     * Exchange-side health, e.g. {@link BinanceOrderExecutor#circuitOpenReason()} (issue #100): a reason makes
+     * the guard unhealthy, which only blocks new entries - exits never consult the guard.
+     */
+    public void setExchangeHealth(Supplier<Optional<String>> exchangeHealth) {
+        this.exchangeHealth = exchangeHealth;
+    }
+
     public boolean isStale() {
         return Duration.between(lastPriceEventAt.get(), Instant.now()).compareTo(maxStaleness) > 0;
     }
 
     public boolean isHealthy() {
-        return !isStale() && marketDataConnected && (!trackUserDataStream || userDataStreamConnected);
+        return !isStale() && marketDataConnected && (!trackUserDataStream || userDataStreamConnected)
+                && exchangeHealth.get().isEmpty();
     }
 
     public String getUnhealthyReason() {
+        Optional<String> exchange = exchangeHealth.get();
+        if (exchange.isPresent()) {
+            return exchange.get();
+        }
         if (isStale()) {
             return "price feed stale (no data for > " + maxStaleness.toSeconds() + "s)";
         }

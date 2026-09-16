@@ -11,6 +11,7 @@ import dev.romeo.btctradingengine.derivatives.BinanceMetricsArchive;
 import dev.romeo.btctradingengine.feature.IndicatorPeriods;
 import dev.romeo.btctradingengine.indicator.VwapAnchor;
 import dev.romeo.btctradingengine.prediction.PredictionSettings;
+import dev.romeo.btctradingengine.resilience.BinanceResilience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -69,34 +70,48 @@ public class EngineConfiguration {
                 trading.stopLossPercent(), backtest.commissionRate());
     }
 
+    /**
+     * The one set of Binance REST policies of the process (issue #100): every client below, the live
+     * pipeline's order executor and the backtest loader share its circuit breakers and, above all, its
+     * request weight budget, so a backtest download cannot get the live bot's IP banned. Built from the
+     * resilience4j core libraries rather than resilience4j-spring-boot3, whose annotations and AOP proxies
+     * do not fit clients created by constructor in non-Spring modules.
+     */
+    @Bean
+    BinanceResilience binanceResilience(ResilienceProperties resilience) {
+        return new BinanceResilience(resilience.toSettings());
+    }
+
     /** Spot klines: live warmup from market.data.rest.url, backtest history from mainnet. */
     @Bean
-    BinanceKlineClient spotKlineClient(MarketProperties market, BacktestProperties backtest) {
-        return new BinanceKlineClient(market.dataRestUrl(), backtest.klineCacheMaxEntries(),
+    BinanceKlineClient spotKlineClient(BinanceResilience resilience, MarketProperties market, BacktestProperties backtest) {
+        return new BinanceKlineClient(resilience, market.dataRestUrl(), backtest.klineCacheMaxEntries(),
                 backtest.klineCacheMaxCandles());
     }
 
     @Bean
-    BinanceKlineClient futuresKlineClient(BinanceProperties binance, BacktestProperties backtest) {
-        return BinanceKlineClient.usdmFutures(binance.futuresRestUrl(), backtest.klineCacheMaxEntries(),
+    BinanceKlineClient futuresKlineClient(BinanceResilience resilience, BinanceProperties binance,
+                                          BacktestProperties backtest) {
+        return BinanceKlineClient.usdmFutures(resilience, binance.futuresRestUrl(), backtest.klineCacheMaxEntries(),
                 backtest.klineCacheMaxCandles());
     }
 
     @Bean
-    BinanceFuturesClient binanceFuturesClient(BinanceProperties binance) {
-        return new BinanceFuturesClient(binance.futuresRestUrl());
+    BinanceFuturesClient binanceFuturesClient(BinanceResilience resilience, BinanceProperties binance) {
+        return new BinanceFuturesClient(resilience, binance.futuresRestUrl());
     }
 
     @Bean
     BinanceBacktestDataLoader backtestDataLoader(@Qualifier("spotKlineClient") BinanceKlineClient spotKlineClient,
                                                  @Qualifier("futuresKlineClient") BinanceKlineClient futuresKlineClient,
                                                  BinanceFuturesClient binanceFuturesClient,
+                                                 BinanceResilience resilience,
                                                  MarketProperties market, FeatureProperties feature,
                                                  BinanceProperties binance, DerivativesProperties derivatives,
                                                  BacktestProperties backtest) {
         return new BinanceBacktestDataLoader(spotKlineClient, futuresKlineClient, binanceFuturesClient,
-                new BinanceMetricsArchive(binance.dataUrl(), derivatives.metricsCachePath()),
-                new BinanceAggTradeArchive(binance.dataUrl(), backtest.aggTradesCachePath(), market.interval()),
+                new BinanceMetricsArchive(resilience, binance.dataUrl(), derivatives.metricsCachePath()),
+                new BinanceAggTradeArchive(resilience, binance.dataUrl(), backtest.aggTradesCachePath(), market.interval()),
                 new BinanceBacktestDataLoader.Settings(market.symbol(), market.binanceInterval(),
                         feature.largeTradeNotional(), derivatives.enabled(),
                         derivatives.staleAfter(), derivatives.openInterestChangeWindow()));
