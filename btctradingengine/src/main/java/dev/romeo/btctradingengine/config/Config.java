@@ -444,6 +444,16 @@ public class Config {
         return Long.parseLong(getProperty("db.pool.max.lifetime.ms", "1800000"));
     }
 
+    /** Queue capacity per critical PriceEventBus subscriber (aggregator, trading path) (issue #85). */
+    public static int getPriceBusQueueCapacity() {
+        return Integer.parseInt(getProperty("price.bus.queue.capacity", "50000"));
+    }
+
+    /** How long the market data reader waits on a full critical queue before dropping the event (issue #85). */
+    public static long getPriceBusBlockTimeoutMs() {
+        return Long.parseLong(getProperty("price.bus.block.timeout.ms", "1000"));
+    }
+
     private static String getProperty(String key, String defaultValue) {
         return props.getProperty(key, defaultValue);
     }

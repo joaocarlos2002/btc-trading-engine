@@ -263,6 +263,8 @@ public class Main {
                     });
 
             PriceEventBus priceEventBus = new PriceEventBus();
+            // Aggregator, DB writer and trading path must not lose ticks: bounded queues that block the
+            // reader briefly when full. The dashboard only needs the latest tick (issue #85).
             priceEventBus.subscribe(aggregator);
             priceEventBus.subscribe(dbWriter);
             priceEventBus.subscribe(event -> {
