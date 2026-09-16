@@ -110,7 +110,8 @@ public class Main {
                     executor,
                     positionManager,
                     Config.getTradingTargetPercent(),
-                    Config.getTradingStopLossPercent());
+                    Config.getTradingStopLossPercent(),
+                    alertNotifier);
                 var reconcileResult = reconciliation.reconcile(Config.getMarketSymbol());
                 logger.info("Reconciliation result: {} | orders_found={} | position_restored={}",
                     reconcileResult.message(),
