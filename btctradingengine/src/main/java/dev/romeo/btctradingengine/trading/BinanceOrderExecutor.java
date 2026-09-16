@@ -10,6 +10,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Map;
 import java.util.TreeMap;
 import javax.crypto.Mac;
@@ -19,20 +20,29 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 public class BinanceOrderExecutor {
     private static final Logger logger = LoggerFactory.getLogger(BinanceOrderExecutor.class);
     private static final int HTTP_TOO_MANY_REQUESTS = 429;
     private static final int HTTP_IP_BANNED = 418;
+    static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
+    static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
+    private static final long CLOCK_SYNC_INTERVAL_MS = Duration.ofMinutes(30).toMillis();
 
     private final String apiKey;
     private final String apiSecret;
     private final String baseUrl;
-    private final HttpClient client = HttpClient.newHttpClient();
+    private final HttpClient client;
+    private final Duration requestTimeout;
     private final ObjectMapper mapper = new ObjectMapper();
     private final int maxRetries;
     private final long initialBackoffMs;
     private final long maxBackoffMs;
+    // serverTime - localTime, applied to signed timestamps so a drifting local clock
+    // does not push requests outside recvWindow (-1021)
+    private volatile long clockOffsetMs = 0;
+    private volatile long lastClockSyncMs = Long.MIN_VALUE;
 
     public BinanceOrderExecutor(String apiKey, String apiSecret) {
         this(apiKey, apiSecret, Config.getBinanceRestUrl(),
@@ -42,6 +52,15 @@ public class BinanceOrderExecutor {
     // Visible for testing: allows pointing at a local HTTP server with fast retry timings.
     BinanceOrderExecutor(String apiKey, String apiSecret, String baseUrl,
                           int maxRetries, long initialBackoffMs, long maxBackoffMs) {
+        this(apiKey, apiSecret, baseUrl, maxRetries, initialBackoffMs, maxBackoffMs, CONNECT_TIMEOUT, REQUEST_TIMEOUT);
+    }
+
+    // Visible for testing: short timeouts keep the "server never answers" test fast.
+    BinanceOrderExecutor(String apiKey, String apiSecret, String baseUrl,
+                          int maxRetries, long initialBackoffMs, long maxBackoffMs,
+                          Duration connectTimeout, Duration requestTimeout) {
+        this.client = HttpClient.newBuilder().connectTimeout(connectTimeout).build();
+        this.requestTimeout = requestTimeout;
         this.apiKey = apiKey;
         this.apiSecret = apiSecret;
         this.baseUrl = baseUrl;
@@ -51,17 +70,27 @@ public class BinanceOrderExecutor {
     }
 
     /**
-     * Envia a requisicao com retry/backoff. Rate-limit (429/418) e sempre retentado,
+     * Envia a requisicao com retry/backoff. O request e reconstruido a cada tentativa para que
+     * requests assinados levem um timestamp novo. 418 (IP banido) nunca e retentado, pois
+     * insistir prolonga o banimento. Rate-limit (429) e sempre retentado,
      * respeitando o header Retry-After quando presente. Falhas de rede (timeout,
      * conexao) so sao retentadas quando {@code retryOnIOException} e true - chamadas
      * nao-idempotentes (como o POST de ordem) mantem o comportamento original nesse
      * caso, para nao arriscar reenviar uma ordem cujo resultado ficou ambiguo.
      */
-    private HttpResponse<String> send(HttpRequest request, boolean retryOnIOException) throws Exception {
+    private HttpResponse<String> send(Supplier<HttpRequest> request, boolean retryOnIOException) throws Exception {
         for (int attempt = 0; ; attempt++) {
             try {
-                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-                if (!isRateLimited(response) || attempt >= maxRetries) {
+                HttpResponse<String> response = client.send(request.get(), HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() == HTTP_IP_BANNED) {
+                    logger.error("Binance returned 418 (IP banned); not retrying: {}", response.body());
+                    return response;
+                }
+                if (isTimestampRejected(response)) {
+                    // Re-sync so the next signed request uses a corrected offset
+                    lastClockSyncMs = Long.MIN_VALUE;
+                }
+                if (response.statusCode() != HTTP_TOO_MANY_REQUESTS || attempt >= maxRetries) {
                     return response;
                 }
                 long backoffMs = retryAfterMs(response).orElse(calculateBackoff(attempt + 1));
@@ -80,8 +109,57 @@ public class BinanceOrderExecutor {
         }
     }
 
-    private boolean isRateLimited(HttpResponse<String> response) {
-        return response.statusCode() == HTTP_TOO_MANY_REQUESTS || response.statusCode() == HTTP_IP_BANNED;
+    private boolean isTimestampRejected(HttpResponse<String> response) {
+        return response.statusCode() == 400 && response.body() != null && response.body().contains("-1021");
+    }
+
+    /** Builds a signed request with a fresh timestamp; called once per attempt by send. */
+    private HttpRequest signedRequest(String method, String path, Map<String, String> params) {
+        Map<String, String> signed = new TreeMap<>(params);
+        signed.put("timestamp", String.valueOf(serverTimeMillis()));
+        signed.put("recvWindow", "5000");
+        String queryString = buildQueryString(signed);
+        return HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + path + "?" + queryString + "&signature=" + generateSignature(queryString)))
+                .header("X-MBX-APIKEY", apiKey)
+                .timeout(requestTimeout)
+                .method(method, HttpRequest.BodyPublishers.noBody())
+                .build();
+    }
+
+    private long serverTimeMillis() {
+        long now = System.currentTimeMillis();
+        if (lastClockSyncMs == Long.MIN_VALUE || now - lastClockSyncMs > CLOCK_SYNC_INTERVAL_MS) {
+            syncClock();
+        }
+        return System.currentTimeMillis() + clockOffsetMs;
+    }
+
+    /** GET /api/v3/time without retries; on failure keeps the previous offset until the next interval. */
+    private synchronized void syncClock() {
+        lastClockSyncMs = System.currentTimeMillis();
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "/api/v3/time"))
+                    .timeout(requestTimeout)
+                    .GET().build();
+            long before = System.currentTimeMillis();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            long after = System.currentTimeMillis();
+            if (response.statusCode() != 200) {
+                logger.warn("Binance server time sync failed: HTTP {}", response.statusCode());
+                return;
+            }
+            long serverTime = mapper.readTree(response.body()).path("serverTime").asLong(0);
+            if (serverTime > 0) {
+                // Midpoint compensates for the round trip
+                clockOffsetMs = serverTime - (before + after) / 2;
+                logger.debug("Binance clock offset: {}ms", clockOffsetMs);
+            }
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            logger.warn("Binance server time sync error: {}", e.getMessage());
+        }
     }
 
     private Optional<Long> retryAfterMs(HttpResponse<String> response) {
@@ -143,24 +221,11 @@ public class BinanceOrderExecutor {
             params.put("side", side);
             params.put("type", "MARKET");
             params.put("quantity", formatQuantity(quantity));
-            params.put("timestamp", String.valueOf(System.currentTimeMillis()));
-            params.put("recvWindow", "5000");
             if (clientOrderId != null && !clientOrderId.isBlank()) {
                 params.put("newClientOrderId", clientOrderId);
             }
 
-            String queryString = buildQueryString(params);
-            String signature = generateSignature(queryString);
-
-            String url = baseUrl + "/api/v3/order?" + queryString + "&signature=" + signature;
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("X-MBX-APIKEY", apiKey)
-                    .POST(HttpRequest.BodyPublishers.noBody())
-                    .build();
-
-            HttpResponse<String> response = send(request, false);
+            HttpResponse<String> response = send(() -> signedRequest("POST", "/api/v3/order", params), false);
 
             if (response.statusCode() == 200) {
                 OrderResult result = parseOrderResult(mapper.readTree(response.body()));
@@ -209,22 +274,7 @@ public class BinanceOrderExecutor {
 
     public BalanceResult getBalance(String asset) {
         try {
-            Map<String, String> params = new TreeMap<>();
-            params.put("timestamp", String.valueOf(System.currentTimeMillis()));
-            params.put("recvWindow", "5000");
-
-            String queryString = buildQueryString(params);
-            String signature = generateSignature(queryString);
-
-            String url = baseUrl + "/api/v3/account?" + queryString + "&signature=" + signature;
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("X-MBX-APIKEY", apiKey)
-                    .GET()
-                    .build();
-
-            HttpResponse<String> response = send(request, true);
+            HttpResponse<String> response = send(() -> signedRequest("GET", "/api/v3/account", Map.of()), true);
 
             if (response.statusCode() == 200) {
                 JsonNode json = mapper.readTree(response.body());
@@ -254,12 +304,17 @@ public class BinanceOrderExecutor {
         }
     }
 
-    private String generateSignature(String data) throws Exception {
-        Mac sha256 = Mac.getInstance("HmacSHA256");
-        SecretKeySpec key = new SecretKeySpec(apiSecret.getBytes(StandardCharsets.UTF_8), 0, apiSecret.getBytes(StandardCharsets.UTF_8).length, "HmacSHA256");
-        sha256.init(key);
-        byte[] hash = sha256.doFinal(data.getBytes(StandardCharsets.UTF_8));
-        return bytesToHex(hash);
+    private String generateSignature(String data) {
+        try {
+            Mac sha256 = Mac.getInstance("HmacSHA256");
+            SecretKeySpec key = new SecretKeySpec(apiSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+            sha256.init(key);
+            byte[] hash = sha256.doFinal(data.getBytes(StandardCharsets.UTF_8));
+            return bytesToHex(hash);
+        } catch (java.security.GeneralSecurityException e) {
+            // Unchecked so signing can run inside the per-attempt Supplier
+            throw new IllegalStateException("Cannot sign Binance request", e);
+        }
     }
 
     private String buildQueryString(Map<String, String> params) {
@@ -306,23 +361,8 @@ public class BinanceOrderExecutor {
     public List<OpenOrder> getOpenOrders(String symbol) {
         List<OpenOrder> orders = new ArrayList<>();
         try {
-            Map<String, String> params = new TreeMap<>();
-            params.put("symbol", symbol);
-            params.put("timestamp", String.valueOf(System.currentTimeMillis()));
-            params.put("recvWindow", "5000");
-
-            String queryString = buildQueryString(params);
-            String signature = generateSignature(queryString);
-
-            String url = baseUrl + "/api/v3/openOrders?" + queryString + "&signature=" + signature;
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("X-MBX-APIKEY", apiKey)
-                    .GET()
-                    .build();
-
-            HttpResponse<String> response = send(request, true);
+            HttpResponse<String> response = send(
+                    () -> signedRequest("GET", "/api/v3/openOrders", Map.of("symbol", symbol)), true);
 
             if (response.statusCode() == 200) {
                 JsonNode jsonArray = mapper.readTree(response.body());
@@ -374,19 +414,8 @@ public class BinanceOrderExecutor {
 
     public boolean cancelOrder(String symbol, String orderId) {
         try {
-            Map<String, String> params = new TreeMap<>();
-            params.put("symbol", symbol);
-            params.put("orderId", orderId);
-            params.put("timestamp", String.valueOf(System.currentTimeMillis()));
-            params.put("recvWindow", "5000");
-            String queryString = buildQueryString(params);
-            String signature = generateSignature(queryString);
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/api/v3/order?" + queryString + "&signature=" + signature))
-                    .header("X-MBX-APIKEY", apiKey)
-                    .method("DELETE", HttpRequest.BodyPublishers.noBody())
-                    .build();
-            HttpResponse<String> response = send(request, true);
+            HttpResponse<String> response = send(() -> signedRequest("DELETE", "/api/v3/order",
+                    Map.of("symbol", symbol, "orderId", orderId)), true);
             boolean success = response.statusCode() == 200;
             if (!success) {
                 logger.error("Failed to cancel order {}: {}", orderId, response.body());
@@ -409,18 +438,8 @@ public class BinanceOrderExecutor {
      */
     public Optional<QueriedOrder> queryOrder(String symbol, String clientOrderId) {
         try {
-            Map<String, String> params = new TreeMap<>();
-            params.put("symbol", symbol);
-            params.put("origClientOrderId", clientOrderId);
-            params.put("timestamp", String.valueOf(System.currentTimeMillis()));
-            params.put("recvWindow", "5000");
-            String queryString = buildQueryString(params);
-            String signature = generateSignature(queryString);
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/api/v3/order?" + queryString + "&signature=" + signature))
-                    .header("X-MBX-APIKEY", apiKey)
-                    .GET().build();
-            HttpResponse<String> response = send(request, true);
+            HttpResponse<String> response = send(() -> signedRequest("GET", "/api/v3/order",
+                    Map.of("symbol", symbol, "origClientOrderId", clientOrderId)), true);
             if (response.statusCode() != 200) return Optional.empty();
             JsonNode json = mapper.readTree(response.body());
             OrderResult parsed = parseOrderResult(json);
@@ -441,14 +460,13 @@ public class BinanceOrderExecutor {
 
     public SymbolFilters getSymbolFilters(String symbol) {
         try {
-            String url = baseUrl + "/api/v3/exchangeInfo?symbol=" + symbol;
-
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
+                    .uri(URI.create(baseUrl + "/api/v3/exchangeInfo?symbol=" + symbol))
+                    .timeout(requestTimeout)
                     .GET()
                     .build();
 
-            HttpResponse<String> response = send(request, true);
+            HttpResponse<String> response = send(() -> request, true);
 
             if (response.statusCode() == 200) {
                 JsonNode json = mapper.readTree(response.body());
