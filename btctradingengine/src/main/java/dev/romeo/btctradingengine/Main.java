@@ -24,7 +24,6 @@ import dev.romeo.btctradingengine.persistence.DatabaseInitializer;
 import dev.romeo.btctradingengine.persistence.DatabaseWriter;
 import dev.romeo.btctradingengine.persistence.JdbcOrderCommandStore;
 import dev.romeo.btctradingengine.prediction.RuleBasedPredictor;
-import dev.romeo.btctradingengine.prediction.rules.*;
 import dev.romeo.btctradingengine.trading.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -167,7 +166,7 @@ public class Main {
 
             var lastCandle = new Object() { dev.romeo.btctradingengine.model.CandleEvent value = null; };
 
-            RuleBasedPredictor predictor = new RuleBasedPredictor(
+            RuleBasedPredictor predictor = RuleBasedPredictor.withLiveRules(
                     prediction -> {
                         logger.info("SIGNAL: {} | prob_up={} | confidence={} | price={} | scores={}",
                                 prediction.signal(),
@@ -182,13 +181,6 @@ public class Main {
                         }
                     }
             );
-            predictor.addRule(new RsiRule());
-            predictor.addRule(new SmaMomentumRule());
-            predictor.addRule(new MacdRule());
-            predictor.addRule(new MfiRule());
-            predictor.addFilterRule(new AtrRule());
-            predictor.addFilterRule(new VolatilityRule());
-            predictor.addFilterRule(new AdxRegimeRule());
 
             DerivativesHistory derivativesHistory = Config.isDerivativesEnabled() ? DerivativesHistory.forLive() : null;
             DerivativesPoller derivativesPoller = derivativesHistory == null ? null : new DerivativesPoller(
