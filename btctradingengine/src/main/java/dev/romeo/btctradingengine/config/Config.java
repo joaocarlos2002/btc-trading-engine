@@ -6,6 +6,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Properties;
 
 public class Config {
@@ -299,6 +301,23 @@ public class Config {
 
     public static String getBinanceApiSecret() {
         return getEnvironmentOrProperty("btc-trading-engine_BINANCE_API_SECRET", "binance.api.secret", "");
+    }
+
+    /**
+     * Shared secret required in the X-Api-Token header on the manual-order and backtest endpoints
+     * (issue #66). Blank = those endpoints are refused for everyone.
+     */
+    public static String getDashboardApiToken() {
+        return getEnvironmentOrProperty("BTC_TRADING_ENGINE_DASHBOARD_API_TOKEN", "dashboard.api.token", "");
+    }
+
+    /** Origins allowed to open the /ws/live WebSocket. */
+    public static List<String> getDashboardAllowedOrigins() {
+        return Arrays.stream(getProperty("dashboard.allowed.origins",
+                        "http://localhost:8080,http://127.0.0.1:8080").split(","))
+                .map(String::trim)
+                .filter(origin -> !origin.isEmpty())
+                .toList();
     }
 
     public static int getDbPoolSize() {
