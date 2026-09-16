@@ -9,17 +9,20 @@ import java.util.stream.Collectors;
 
 public class TestnetValidationReport {
     private final List<Position> closedPositions;
+    // Positions whose entry never executed (ORDER_FAILED etc.) are not trades
+    private final List<Position> trades;
 
     public TestnetValidationReport(List<Position> closedPositions) {
         this.closedPositions = closedPositions;
+        this.trades = closedPositions.stream().filter(ExitReason::isPerformanceTrade).toList();
     }
 
     public int getTotalTrades() {
-        return closedPositions.size();
+        return trades.size();
     }
 
     public int getWinTrades() {
-        return (int) closedPositions.stream()
+        return (int) trades.stream()
                 .filter(p -> p.getPnL().compareTo(BigDecimal.ZERO) > 0)
                 .count();
     }
@@ -36,13 +39,13 @@ public class TestnetValidationReport {
     }
     
     public BigDecimal getTotalPnL() {
-        return closedPositions.stream()
+        return trades.stream()
                 .map(Position::getPnL)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     public BigDecimal getTotalNotionalPnL() {
-        return closedPositions.stream()
+        return trades.stream()
                 .map(p -> p.getPnL().multiply(p.getQuantity()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
@@ -53,7 +56,7 @@ public class TestnetValidationReport {
     }
 
     public long getIncompleteFillCount() {
-        return closedPositions.stream()
+        return trades.stream()
                 .filter(p -> p.getTargetQuantity().compareTo(BigDecimal.ZERO) > 0)
                 .filter(p -> !p.isFullyFilled())
                 .count();
@@ -62,12 +65,12 @@ public class TestnetValidationReport {
     public Map<String, Long> getExitReasonBreakdown() {
         return closedPositions.stream()
                 .collect(Collectors.groupingBy(
-                        p -> p.getExitReason() == null ? "UNKNOWN" : p.getExitReason(),
+                        p -> p.getExitReason() == null ? "UNKNOWN" : p.getExitReason().name(),
                         Collectors.counting()));
     }
 
     public Duration getAverageHoldingDuration() {
-        List<Position> withTimes = closedPositions.stream()
+        List<Position> withTimes = trades.stream()
                 .filter(p -> p.getEntryTime() != null && p.getExitTime() != null)
                 .toList();
         if (withTimes.isEmpty()) return Duration.ZERO;

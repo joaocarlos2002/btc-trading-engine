@@ -88,7 +88,7 @@ public class TradeJournal {
             if (position.getExitPrice() != null) {
                 stmt.setBigDecimal(6, position.getExitPrice());
                 stmt.setTimestamp(7, java.sql.Timestamp.from(position.getExitTime()));
-                stmt.setString(8, position.getExitReason());
+                stmt.setString(8, position.getExitReason() == null ? null : position.getExitReason().name());
                 stmt.setBigDecimal(9, position.getPnL());
                 stmt.setBigDecimal(10, position.getPnLPercent());
             } else {

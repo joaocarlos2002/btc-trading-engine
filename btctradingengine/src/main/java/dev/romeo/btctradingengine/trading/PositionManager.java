@@ -137,7 +137,7 @@ public class PositionManager {
             logger.error("âœ— Order {} failed: {}", confirmation.orderId(), confirmation.status());
             alertNotifier.ifPresent(a -> a.alert(String.format(
                     "Order %s for position %s failed: %s", confirmation.orderId(), pos.getPositionId(), confirmation.status())));
-            closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), "ORDER_FAILED");
+            closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), ExitReason.ORDER_FAILED);
         } else if (confirmation.isTimeout()) {
             // Never guess a fill: keep the quantity already known and ask for a manual check
             logger.error("Order {} for position {} could not be confirmed; keeping qty={}",
@@ -158,21 +158,21 @@ public class PositionManager {
             pos.updatePrice(candle.close(), candle.closeTime());
 
             if (pos.hasHitTarget()) {
-                closePosition(pos, candle.close(), candle.closeTime(), "TARGET_HIT");
+                closePosition(pos, candle.close(), candle.closeTime(), ExitReason.TARGET_HIT);
                 logger.info("âœ“ TARGET HIT: {} closed at {} (P&L: {}%)",
                         pos.getPositionId(), candle.close(), pos.getPnLPercent());
                 return;
             }
 
             if (pos.hasHitStopLoss()) {
-                closePosition(pos, candle.close(), candle.closeTime(), "STOP_LOSS");
+                closePosition(pos, candle.close(), candle.closeTime(), ExitReason.STOP_LOSS);
                 logger.warn("âœ— STOP LOSS: {} closed at {} (P&L: {}%)",
                         pos.getPositionId(), candle.close(), pos.getPnLPercent());
                 return;
             }
 
             if (shouldReversePosition(pos, prediction)) {
-                closePosition(pos, candle.close(), candle.closeTime(), "SIGNAL_REVERSAL");
+                closePosition(pos, candle.close(), candle.closeTime(), ExitReason.SIGNAL_REVERSAL);
                 logger.info("â†’ REVERSAL: {} closed at {} for new signal",
                         pos.getPositionId(), candle.close());
             }
@@ -217,11 +217,11 @@ public class PositionManager {
         pos.updatePrice(event.price(), event.eventTimestamp());
 
         if (pos.hasHitTarget()) {
-            closePosition(pos, event.price(), event.eventTimestamp(), "TARGET_HIT");
+            closePosition(pos, event.price(), event.eventTimestamp(), ExitReason.TARGET_HIT);
             logger.info("âœ“ TARGET HIT on tick: {} closed at {} (P&L: {}%)",
                     pos.getPositionId(), event.price(), pos.getPnLPercent());
         } else if (pos.hasHitStopLoss()) {
-            closePosition(pos, event.price(), event.eventTimestamp(), "STOP_LOSS");
+            closePosition(pos, event.price(), event.eventTimestamp(), ExitReason.STOP_LOSS);
             logger.warn("âœ— STOP LOSS on tick: {} closed at {} (P&L: {}%)",
                     pos.getPositionId(), event.price(), pos.getPnLPercent());
         }
@@ -276,7 +276,7 @@ public class PositionManager {
             return false;
         }
 
-        return closePosition(openPosition.get(), price, time, "MANUAL_CLOSE");
+        return closePosition(openPosition.get(), price, time, ExitReason.MANUAL_CLOSE);
     }
 
     private boolean shouldReversePosition(Position pos, PredictionVector pred) {
@@ -348,7 +348,7 @@ public class PositionManager {
                     logger.error("âœ— Order rejected: quantity validation failed for {}", symbol);
                     alertNotifier.ifPresent(a -> a.alert(String.format(
                             "Order rejected for position %s: quantity validation failed for %s", pos.getPositionId(), symbol)));
-                    closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), "VALIDATION_FAILED");
+                    closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), ExitReason.VALIDATION_FAILED);
                     return;
                 }
                 quantity = validatedQty.get();
@@ -387,17 +387,17 @@ public class PositionManager {
                 logger.error("âœ— Real order failed: {}", result.error());
                 alertNotifier.ifPresent(a -> a.alert(String.format(
                         "Real order failed for position %s: %s", pos.getPositionId(), result.error())));
-                closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), "ORDER_FAILED");
+                closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), ExitReason.ORDER_FAILED);
             }
         } catch (Exception e) {
             logger.error("âœ— Error executing real order: {}", e.getMessage(), e);
             alertNotifier.ifPresent(a -> a.alert(String.format(
                     "Exception executing real order for position %s: %s", pos.getPositionId(), e.getMessage())));
-            closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), "ERROR");
+            closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), ExitReason.ERROR);
         }
     }
 
-    private boolean closePosition(Position pos, BigDecimal exitPrice, java.time.Instant exitTime, String reason) {
+    private boolean closePosition(Position pos, BigDecimal exitPrice, java.time.Instant exitTime, ExitReason reason) {
         if (!simulationMode && pos.getQuantity().compareTo(BigDecimal.ZERO) > 0) {
             Optional<BinanceOrderExecutor.OrderResult> result = closeRealPosition(pos);
             if (result.isEmpty()) {
@@ -412,11 +412,7 @@ public class PositionManager {
             }
         }
 
-        switch (reason) {
-            case "TARGET_HIT" -> pos.closeAtTarget(exitPrice, exitTime);
-            case "STOP_LOSS" -> pos.closeAtStopLoss(exitPrice, exitTime);
-            default -> pos.closeManual(exitPrice, exitTime);
-        }
+        pos.close(exitPrice, exitTime, reason);
         closedPositions.add(pos);
         openPosition = Optional.empty();
 
@@ -487,17 +483,19 @@ public class PositionManager {
     }
 
     public synchronized int getTotalTrades() {
-        return closedPositions.size();
+        return (int) closedPositions.stream().filter(ExitReason::isPerformanceTrade).count();
     }
 
     public synchronized int getWinTrades() {
         return (int) closedPositions.stream()
+                .filter(ExitReason::isPerformanceTrade)
                 .filter(p -> p.getPnL().compareTo(java.math.BigDecimal.ZERO) > 0)
                 .count();
     }
 
     public synchronized BigDecimal getTotalPnL() {
         return closedPositions.stream()
+                .filter(ExitReason::isPerformanceTrade)
                 .map(Position::getPnL)
                 .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
     }
