@@ -3,6 +3,7 @@ package dev.romeo.btctradingengine.dashboard;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.romeo.btctradingengine.adapter.PriceEventListener;
+import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.feature.FeatureVector;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
@@ -166,21 +167,34 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
     }
 
     public Stats stats() {
+        return stats(Config.getTradingInitialCapital());
+    }
+
+    /**
+     * Position.getPnL() is per unit (price points), not USDT, so the equity curve compounds each trade's
+     * return fraction (pnl / entry) on the initial capital, like BacktestReport. The peak starts at the
+     * capital, so a run of only losses still reports a drawdown.
+     */
+    Stats stats(BigDecimal initialCapital) {
         if (positionManager == null) return new Stats(0, 0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
         // Same filter as PositionManager's counters: failed entries are not trades
         List<Position> positions = positionManager.getClosedPositions().stream()
                 .filter(ExitReason::isPerformanceTrade)
                 .toList();
         BigDecimal pnl = positionManager.getTotalPnL();
-        BigDecimal peak = BigDecimal.ZERO;
-        BigDecimal equity = BigDecimal.ZERO;
-        BigDecimal maxDrawdown = BigDecimal.ZERO;
+        double equity = initialCapital.doubleValue();
+        double peak = equity;
+        double maxDrawdown = 0;
         List<Double> returns = new ArrayList<>();
         for (Position position : positions) {
             BigDecimal tradePnl = position.getPnL();
-            equity = equity.add(tradePnl);
-            peak = peak.max(equity);
-            maxDrawdown = maxDrawdown.max(peak.subtract(equity));
+            if (position.getEntryPrice() != null && position.getEntryPrice().signum() > 0) {
+                equity *= 1 + tradePnl.doubleValue() / position.getEntryPrice().doubleValue();
+            }
+            peak = Math.max(peak, equity);
+            if (peak > 0) {
+                maxDrawdown = Math.max(maxDrawdown, (peak - equity) / peak);
+            }
             returns.add(tradePnl.doubleValue());
         }
         double mean = returns.stream().mapToDouble(Double::doubleValue).average().orElse(0);
@@ -188,9 +202,7 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
         BigDecimal sharpe = positions.size() < 2 || variance == 0
             ? BigDecimal.ZERO
             : BigDecimal.valueOf(mean / Math.sqrt(variance)).setScale(4, RoundingMode.HALF_UP);
-        BigDecimal drawdownPercent = peak.compareTo(BigDecimal.ZERO) == 0
-            ? BigDecimal.ZERO
-            : maxDrawdown.divide(peak, 6, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100));
+        BigDecimal drawdownPercent = BigDecimal.valueOf(maxDrawdown * 100).setScale(6, RoundingMode.HALF_UP);
         return new Stats(positions.size(), positionManager.getWinTrades(), pnl, sharpe, drawdownPercent);
     }
 
