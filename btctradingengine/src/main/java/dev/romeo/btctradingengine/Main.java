@@ -60,6 +60,7 @@ public class Main {
                     event -> tradeJournal.recordExecutionLog(event, Config.getMarketSymbol())
             );
             positionManager.setAllowShort(Config.isShortSellingAllowed());
+            positionManager.setPositionSizing(Config.getPositionSizingStrategy());
             dashboardState.attachPositionManager(positionManager);
 
             ConnectivityGuard connectivityGuard = new ConnectivityGuard(
@@ -218,6 +219,7 @@ public class Main {
                     orderBookHistory != null ? orderBookHistory : OrderBookLookup.NONE,
                     features -> {
                         dashboardState.onFeatures(features);
+                        positionManager.updateAtr(features.atrValue());
                         predictor.onEvent(features);
                     }
             );
