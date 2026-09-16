@@ -1,5 +1,6 @@
 package dev.romeo.btctradingengine.trading;
 
+import dev.romeo.btctradingengine.http.HttpMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -75,7 +76,7 @@ public class BinanceOrderExecutor implements ExecutionPort {
     private HttpResponse<String> send(Supplier<HttpRequest> request, boolean retryOnIOException) throws Exception {
         for (int attempt = 0; ; attempt++) {
             try {
-                HttpResponse<String> response = client.send(request.get(), HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response = HttpMetrics.send(client, request.get(), HttpResponse.BodyHandlers.ofString());
                 if (response.statusCode() == HTTP_IP_BANNED) {
                     logger.error("Binance returned 418 (IP banned); not retrying: {}", response.body());
                     return response;
@@ -138,7 +139,7 @@ public class BinanceOrderExecutor implements ExecutionPort {
                     .timeout(requestTimeout)
                     .GET().build();
             long before = System.currentTimeMillis();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = HttpMetrics.send(client, request, HttpResponse.BodyHandlers.ofString());
             long after = System.currentTimeMillis();
             if (response.statusCode() != 200) {
                 logger.warn("Binance server time sync failed: HTTP {}", response.statusCode());

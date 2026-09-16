@@ -13,6 +13,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -22,6 +23,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 /**
@@ -65,6 +67,9 @@ public class PositionManager {
     static final int EXIT_FAILURE_ALERT_EVERY = 10;
     private volatile ClockPort clock = ClockPort.system();
     private int exitFailureCount = 0;
+    // Metrics (issue #104): cumulative, never reset, read without the lock
+    private final AtomicLong exitFailuresTotal = new AtomicLong();
+    private final EnumMap<EntryBlock, AtomicLong> entriesBlocked = newEntryBlockCounters();
     private Instant nextExitAttemptAt = null;
     private volatile BinanceOrderExecutor.SymbolFilters cachedFilters = null;
 
@@ -413,17 +418,20 @@ public class PositionManager {
 
         if (!openPosition.isPresent() && prediction.signal() != Signal.HOLD) {
             if (prediction.signal() == Signal.SELL && !shortEntryAllowed()) {
+                countEntryBlocked(EntryBlock.SHORT_DISABLED);
                 logger.info(simulationMode
                         ? "SELL signal does not open a short (trading.allow.short=false)"
                         : "SELL signal does not open a position: the spot market has no short selling");
                 return;
             }
-            Optional<String> blocked = entryBlockReason();
-            if (blocked.isPresent()) {
-                logger.warn("Blocking new {} entry: {}", prediction.signal(), blocked.get());
+            EntryBlock guard = entryBlock();
+            if (guard != null) {
+                countEntryBlocked(guard);
+                logger.warn("Blocking new {} entry: {}", prediction.signal(), describe(guard));
                 return;
             }
             if (!prediction.entryAllowed()) {
+                countEntryBlocked(EntryBlock.FILTER);
                 // Only new entries: the reversal close above has already run for this prediction
                 logger.info("Entry blocked (filter rules / VPIN / order book) - not opening new {} position",
                         prediction.signal());
@@ -479,16 +487,78 @@ public class PositionManager {
      * Binance reconciliation, so a manual BUY must not bypass them.
      */
     private Optional<String> entryBlockReason() {
+        EntryBlock block = entryBlock();
+        return block == null ? Optional.empty() : Optional.of(describe(block));
+    }
+
+    /** The guard blocking a new entry, or null when none does. */
+    private EntryBlock entryBlock() {
         if (!simulationMode && !reconciliationComplete) {
-            return Optional.of("Binance reconciliation is not complete");
+            return EntryBlock.RECONCILIATION;
         }
         if (portfolioManager.isPresent() && !portfolioManager.get().canTrade()) {
-            return Optional.of("Portfolio stop-loss is active (max drawdown reached)");
+            return EntryBlock.DRAWDOWN;
         }
         if (connectivityGuard.isPresent() && !connectivityGuard.get().isHealthy()) {
-            return Optional.of("Connectivity guard is unhealthy: " + connectivityGuard.get().getUnhealthyReason());
+            return EntryBlock.CONNECTIVITY;
         }
-        return Optional.empty();
+        return null;
+    }
+
+    private String describe(EntryBlock block) {
+        return switch (block) {
+            case RECONCILIATION -> "Binance reconciliation is not complete";
+            case DRAWDOWN -> "Portfolio stop-loss is active (max drawdown reached)";
+            case CONNECTIVITY -> "Connectivity guard is unhealthy: "
+                    + connectivityGuard.map(ConnectivityGuard::getUnhealthyReason).orElse("unknown");
+            case SHORT_DISABLED -> "short entries are not allowed";
+            case FILTER -> "filter rules / VPIN / order book";
+        };
+    }
+
+    /** Why an automatic entry signal did not open a position; the metric tag is {@link #tag()} (issue #104). */
+    public enum EntryBlock {
+        /** A SELL with no position while shorts are off (always, in real mode). */
+        SHORT_DISABLED,
+        /** Real mode before the Binance reconciliation finished. */
+        RECONCILIATION,
+        /** Portfolio max drawdown reached. */
+        DRAWDOWN,
+        /** ConnectivityGuard unhealthy: stale feed or a stream down. */
+        CONNECTIVITY,
+        /** The prediction itself disallowed entries: filter rules, VPIN or order book guard. */
+        FILTER;
+
+        public String tag() {
+            return name().toLowerCase(java.util.Locale.ROOT);
+        }
+    }
+
+    private static EnumMap<EntryBlock, AtomicLong> newEntryBlockCounters() {
+        EnumMap<EntryBlock, AtomicLong> counters = new EnumMap<>(EntryBlock.class);
+        for (EntryBlock block : EntryBlock.values()) {
+            counters.put(block, new AtomicLong());
+        }
+        return counters;
+    }
+
+    private void countEntryBlocked(EntryBlock block) {
+        entriesBlocked.get(block).incrementAndGet();
+    }
+
+    /** Automatic entry signals blocked for this reason since startup. */
+    public long entriesBlocked(EntryBlock block) {
+        return entriesBlocked.get(block).get();
+    }
+
+    /** Real exit orders that failed since startup; unlike the retry backoff, never reset. */
+    public long exitFailuresTotal() {
+        return exitFailuresTotal.get();
+    }
+
+    /** The real-mode portfolio, empty in simulation. */
+    public Optional<PortfolioManager> getPortfolioManager() {
+        return portfolioManager;
     }
 
     public synchronized ManualBuyResult openManualBuy(BigDecimal price, java.time.Instant time) {
@@ -918,6 +988,7 @@ public class PositionManager {
             positionPersistence.accept(pos);
         }
         exitFailureCount++;
+        exitFailuresTotal.incrementAndGet();
         Duration delay = exitRetryDelay(exitFailureCount);
         nextExitAttemptAt = now.plus(delay);
         logger.error("âœ— Position {} remains open locally because the real exit order failed", pos.getPositionId());
