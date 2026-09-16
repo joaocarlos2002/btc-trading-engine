@@ -120,6 +120,7 @@ public class Config {
     public static boolean isMainnetTradingConfirmed() { return Boolean.parseBoolean(getProperty("trading.confirm.mainnet", "false")); }
     public static BigDecimal getTradingInitialCapital() { return getDecimal("trading.initial.capital.usdt", "10"); }
     public static BigDecimal getTradingMaxDrawdownPercent() { return getDecimal("trading.max.drawdown.percent", "5"); }
+    public static boolean isShortSellingAllowed() { return Boolean.parseBoolean(getProperty("trading.allow.short", "false")); }
     public static long getMaxDataStalenessSeconds() { return Long.parseLong(getProperty("trading.max.data.staleness.seconds", "60")); }
     public static BigDecimal getBacktestCommissionRate() { return getDecimal("backtest.commission.rate", "0.001"); }
     public static String getAlertDiscordWebhookUrl() {

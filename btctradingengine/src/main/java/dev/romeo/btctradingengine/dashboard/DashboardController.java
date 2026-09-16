@@ -221,6 +221,7 @@ public class DashboardController {
             @RequestParam(required = false) Double buyThreshold,
             @RequestParam(required = false) Double sellThreshold,
             @RequestParam(required = false) Integer confirmationSnapshots,
+            @RequestParam(required = false) Boolean allowShort,
             @RequestParam(required = false) BigDecimal targetPercent,
             @RequestParam(required = false) BigDecimal stopLossPercent,
             @RequestParam(required = false) BigDecimal commissionRate) {
@@ -286,6 +287,7 @@ public class DashboardController {
                     buyThreshold != null ? buyThreshold : defaults.buyThreshold(),
                     sellThreshold != null ? sellThreshold : defaults.sellThreshold(),
                     confirmationSnapshots != null ? confirmationSnapshots : defaults.confirmationSnapshots(),
+                    allowShort != null ? allowShort : defaults.allowShort(),
                     targetPercent != null ? targetPercent : defaults.targetPercent(),
                     stopLossPercent != null ? stopLossPercent : defaults.stopLossPercent(),
                     commissionRate != null ? commissionRate : defaults.commissionRate());

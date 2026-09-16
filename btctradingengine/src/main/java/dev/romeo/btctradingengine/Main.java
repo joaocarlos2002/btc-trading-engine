@@ -56,6 +56,7 @@ public class Main {
                     position -> tradeJournal.recordTrade(position, Config.getMarketSymbol()),
                     event -> tradeJournal.recordExecutionLog(event, Config.getMarketSymbol())
             );
+            positionManager.setAllowShort(Config.isShortSellingAllowed());
             dashboardState.attachPositionManager(positionManager);
 
             ConnectivityGuard connectivityGuard = new ConnectivityGuard(
