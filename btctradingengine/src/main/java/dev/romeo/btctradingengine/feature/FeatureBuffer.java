@@ -1,80 +1,92 @@
 package dev.romeo.btctradingengine.feature;
 
 import dev.romeo.btctradingengine.model.CandleEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Iterator;
 import java.util.Optional;
 
+/**
+ * Rolling window of the last candles, sized to the largest window a feature reads (issue #71).
+ * It used to be a fixed 100 candles while volatility and volume average asked for 300, so both
+ * were always "not enough history" and VolatilityRule and absorption never fired.
+ */
 public class FeatureBuffer {
-    private static final Logger logger = LoggerFactory.getLogger(FeatureBuffer.class);
-    private static final int BUFFER_SIZE = 100;
 
-    private final Deque<CandleEvent> buffer = new ArrayDeque<>(BUFFER_SIZE);
+    private final int capacity;
+    private final Deque<CandleEvent> buffer;
+    /** Close-to-close returns aligned with the candles: returns.get(i) is the return INTO candle i+1. */
+    private final Deque<Double> returns;
+
+    public FeatureBuffer(int capacity) {
+        if (capacity < 1) {
+            throw new IllegalArgumentException("capacity must be positive: " + capacity);
+        }
+        this.capacity = capacity;
+        this.buffer = new ArrayDeque<>(capacity + 1);
+        this.returns = new ArrayDeque<>(capacity);
+    }
 
     public void add(CandleEvent candle) {
+        CandleEvent previous = buffer.peekLast();
+        if (previous != null) {
+            returns.addLast(simpleReturn(previous.close(), candle.close()));
+        }
         buffer.addLast(candle);
-        if (buffer.size() > BUFFER_SIZE) {
+        if (buffer.size() > capacity) {
             buffer.removeFirst();
+            returns.removeFirst();
         }
     }
 
+    /**
+     * Population standard deviation of the last periods-1 close-to-close returns, in %. Computed in
+     * double over the cached returns (issue #95): the old version rebuilt two lists and ran BigDecimal
+     * pow/sqrt per candle, and the extra precision is noise next to a 1-minute return.
+     */
     public Optional<BigDecimal> volatility(int periods) {
-        if (buffer.size() < periods) {
+        if (periods > capacity) {
+            throw new IllegalArgumentException("volatility window " + periods + " exceeds buffer capacity " + capacity);
+        }
+        if (buffer.size() < periods || periods < 2) {
             return Optional.empty();
         }
 
-        var closes = buffer.stream()
-                .skip(buffer.size() - periods)
-                .map(CandleEvent::close)
-                .toList();
-
-        // Calculate returns (price changes in %)
-        var returns = new java.util.ArrayList<BigDecimal>();
-        for (int i = 1; i < closes.size(); i++) {
-            BigDecimal prevClose = closes.get(i - 1);
-            BigDecimal currClose = closes.get(i);
-            if (prevClose.compareTo(BigDecimal.ZERO) > 0) {
-                BigDecimal ret = currClose.subtract(prevClose)
-                        .divide(prevClose, 10, RoundingMode.HALF_UP);
-                returns.add(ret);
-            }
+        int count = periods - 1;
+        double sum = 0;
+        double sumSquares = 0;
+        Iterator<Double> it = returns.descendingIterator();
+        for (int i = 0; i < count; i++) {
+            double r = it.next();
+            sum += r;
+            sumSquares += r * r;
         }
-
-        if (returns.isEmpty()) {
-            return Optional.empty();
-        }
-
-        // Calculate mean of returns
-        BigDecimal meanReturn = returns.stream()
-                .reduce(BigDecimal.ZERO, BigDecimal::add)
-                .divide(BigDecimal.valueOf(returns.size()), 10, RoundingMode.HALF_UP);
-
-        // Calculate variance of returns
-        BigDecimal variance = returns.stream()
-                .map(r -> r.subtract(meanReturn).pow(2))
-                .reduce(BigDecimal.ZERO, BigDecimal::add)
-                .divide(BigDecimal.valueOf(returns.size()), 10, RoundingMode.HALF_UP);
-
-        // StdDev of returns * 100 = volatility in %
-        return Optional.of(sqrt(variance).multiply(BigDecimal.valueOf(100)));
+        double mean = sum / count;
+        double variance = Math.max(0, sumSquares / count - mean * mean);
+        return Optional.of(BigDecimal.valueOf(Math.sqrt(variance) * 100).setScale(10, RoundingMode.HALF_UP));
     }
 
     public Optional<BigDecimal> averageVolume(int periods) {
+        if (periods > capacity) {
+            throw new IllegalArgumentException("volume window " + periods + " exceeds buffer capacity " + capacity);
+        }
         if (buffer.size() < periods) {
             return Optional.empty();
         }
 
-        BigDecimal sum = buffer.stream()
-                .skip(buffer.size() - periods)
-                .map(CandleEvent::volume)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
+        BigDecimal sum = BigDecimal.ZERO;
+        Iterator<CandleEvent> it = buffer.descendingIterator();
+        for (int i = 0; i < periods; i++) {
+            sum = sum.add(it.next().volume());
+        }
         return Optional.of(sum.divide(BigDecimal.valueOf(periods), 8, RoundingMode.HALF_UP));
+    }
+
+    public int capacity() {
+        return capacity;
     }
 
     public int size() {
@@ -85,25 +97,8 @@ public class FeatureBuffer {
         return Optional.ofNullable(buffer.peekLast());
     }
 
-    private BigDecimal sqrt(BigDecimal value) {
-        if (value.compareTo(BigDecimal.ZERO) <= 0) {
-            return BigDecimal.ZERO;
-        }
-
-        BigDecimal x = value;
-        BigDecimal y = value.divide(BigDecimal.valueOf(2), 10, RoundingMode.HALF_UP);
-
-        for (int i = 0; i < 10; i++) {
-            x = y.add(value.divide(y, 10, RoundingMode.HALF_UP))
-                    .divide(BigDecimal.valueOf(2), 10, RoundingMode.HALF_UP);
-
-            if (x.subtract(y).abs().compareTo(new BigDecimal("0.0000000001")) < 0) {
-                break;
-            }
-            y = x;
-        }
-
-        return x;
+    private static double simpleReturn(BigDecimal previousClose, BigDecimal close) {
+        double prev = previousClose.doubleValue();
+        return prev > 0 ? (close.doubleValue() - prev) / prev : 0;
     }
 }
-

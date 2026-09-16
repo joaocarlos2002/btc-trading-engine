@@ -309,6 +309,30 @@ public class FeatureExtractorTest {
         assertEquals(live.get(1).priceAction(), warmed.get(1).priceAction());
     }
 
+    @Test
+    public void longVolatilityAndVolumeRatioLeaveWarmupOnceTheWindowIsFull() {
+        IndicatorPeriods periods = IndicatorPeriods.fromConfig();
+        assertEquals(300, periods.volatilityLong(), "test assumes the default 300-candle window");
+        assertEquals(300, periods.volumeAverage(), "test assumes the default 300-candle window");
+
+        List<FeatureVector> features = new ArrayList<>();
+        FeatureExtractor extractor = new FeatureExtractor(periods, features::add);
+        for (int i = 0; i < 301; i++) {
+            BigDecimal close = BigDecimal.valueOf(100 + (i % 7));
+            // The last candle trades three times the usual volume
+            String volume = i == 300 ? "3000" : "1000";
+            extractor.onEvent(createCandle(close.toPlainString(), close.add(BigDecimal.ONE).toPlainString(),
+                    close.subtract(BigDecimal.ONE).toPlainString(), close.toPlainString(), volume, 10));
+        }
+
+        // Before issue #71 the 100-candle buffer kept both at their warmup values forever
+        assertEquals(0, features.get(298).volatility20m().signum(), "299 candles are not a full window");
+        FeatureVector last = features.get(300);
+        assertTrue(last.volatility20m().signum() > 0, "volatility20m should be computed with 300 candles");
+        assertTrue(last.volatility5m().signum() > 0);
+        assertNotEquals(0, last.volumeRatio().compareTo(BigDecimal.ONE), "volumeRatio should leave its neutral value");
+    }
+
     private CandleEvent createCandle(String open, String high, String low, String close, String volume, int tickCount) {
         Instant openTime = Instant.parse("2026-09-08T10:00:00Z");
         Instant closeTime = Instant.parse("2026-09-08T10:15:00Z");
