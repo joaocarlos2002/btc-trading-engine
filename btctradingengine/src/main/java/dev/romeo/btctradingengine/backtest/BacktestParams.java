@@ -36,6 +36,14 @@ public record BacktestParams(
         int vwapRollingPeriods,
         int priceActionLookback,
         int priceActionSwingStrength,
+        int cvdPeriod,
+        int emaSlopePeriods,
+        int vpinBuckets,
+        int vpinBucketCandles,
+        BigDecimal absorptionDeltaMin,
+        BigDecimal absorptionVolumeRatioMin,
+        BigDecimal absorptionMaxMoveAtr,
+        int absorptionWindow,
 
         BigDecimal rsiOversold,
         BigDecimal rsiNeutralLow,
@@ -54,6 +62,10 @@ public record BacktestParams(
         BigDecimal mfiOverbought,
         BigDecimal adxTrendMin,
         BigDecimal bollingerSqueezeThreshold,
+        BigDecimal adxTrendStrong,
+        boolean regimeGatingEnabled,
+        boolean vpinFilterEnabled,
+        BigDecimal vpinHighThreshold,
 
         double buyThreshold,
         double sellThreshold,
@@ -84,6 +96,14 @@ public record BacktestParams(
                 Config.getVwapRollingPeriods(),
                 Config.getPriceActionLookback(),
                 Config.getPriceActionSwingStrength(),
+                Config.getCvdPeriod(),
+                Config.getEmaSlopePeriods(),
+                Config.getVpinBuckets(),
+                Config.getVpinBucketCandles(),
+                Config.getAbsorptionDeltaMin(),
+                Config.getAbsorptionVolumeRatioMin(),
+                Config.getAbsorptionMaxMoveAtr(),
+                Config.getAbsorptionWindow(),
 
                 Config.getRsiOversold(),
                 Config.getRsiNeutralLow(),
@@ -102,6 +122,10 @@ public record BacktestParams(
                 Config.getMfiOverbought(),
                 Config.getAdxTrendMin(),
                 Config.getBollingerSqueezeThreshold(),
+                Config.getAdxTrendStrong(),
+                Config.isRegimeGatingEnabled(),
+                Config.isVpinFilterEnabled(),
+                Config.getVpinHighThreshold(),
 
                 Config.getBuyThreshold(),
                 Config.getSellThreshold(),
@@ -121,6 +145,10 @@ public record BacktestParams(
                 adxPeriod, bollingerPeriod, bollingerStdDev,
                 mfiPeriod, donchianPeriod,
                 vwapAnchor, vwapRollingPeriods,
-                priceActionLookback, priceActionSwingStrength);
+                priceActionLookback, priceActionSwingStrength,
+                cvdPeriod, emaSlopePeriods,
+                vpinBuckets, vpinBucketCandles,
+                absorptionDeltaMin, absorptionVolumeRatioMin,
+                absorptionMaxMoveAtr, absorptionWindow);
     }
 }

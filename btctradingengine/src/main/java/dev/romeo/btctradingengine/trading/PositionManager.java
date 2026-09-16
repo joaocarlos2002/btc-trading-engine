@@ -154,6 +154,12 @@ public class PositionManager {
                         connectivityGuard.get().getUnhealthyReason(), prediction.signal());
                 return;
             }
+            if (!prediction.entryAllowed()) {
+                // Only new entries: the reversal close above has already run for this prediction
+                logger.info("Entry blocked (filter rules / VPIN / order book) - not opening new {} position",
+                        prediction.signal());
+                return;
+            }
             openNewPosition(prediction, candle);
         }
     }

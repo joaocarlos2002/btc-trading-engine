@@ -22,7 +22,11 @@ public record IndicatorPeriods(
         int adx, int bollinger, BigDecimal bollingerStdDev,
         int mfi, int donchian,
         VwapAnchor vwapAnchor, int vwapRollingPeriods,
-        int priceActionLookback, int priceActionSwingStrength
+        int priceActionLookback, int priceActionSwingStrength,
+        int cvd, int emaSlope,
+        int vpinBuckets, int vpinBucketCandles,
+        BigDecimal absorptionDeltaMin, BigDecimal absorptionVolumeRatioMin,
+        BigDecimal absorptionMaxMoveAtr, int absorptionWindow
 ) {
 
     public static IndicatorPeriods fromConfig() {
@@ -33,7 +37,11 @@ public record IndicatorPeriods(
                 Config.getAdxPeriod(), Config.getBollingerPeriod(), Config.getBollingerStdDev(),
                 Config.getMfiPeriod(), Config.getDonchianPeriod(),
                 Config.getVwapAnchor(), Config.getVwapRollingPeriods(),
-                Config.getPriceActionLookback(), Config.getPriceActionSwingStrength());
+                Config.getPriceActionLookback(), Config.getPriceActionSwingStrength(),
+                Config.getCvdPeriod(), Config.getEmaSlopePeriods(),
+                Config.getVpinBuckets(), Config.getVpinBucketCandles(),
+                Config.getAbsorptionDeltaMin(), Config.getAbsorptionVolumeRatioMin(),
+                Config.getAbsorptionMaxMoveAtr(), Config.getAbsorptionWindow());
     }
 
     /** Overrides only the three periods the short FeatureExtractor constructor takes. */
@@ -45,6 +53,10 @@ public record IndicatorPeriods(
                 adx, bollinger, bollingerStdDev,
                 mfi, donchian,
                 vwapAnchor, vwapRollingPeriods,
-                priceActionLookback, priceActionSwingStrength);
+                priceActionLookback, priceActionSwingStrength,
+                cvd, emaSlope,
+                vpinBuckets, vpinBucketCandles,
+                absorptionDeltaMin, absorptionVolumeRatioMin,
+                absorptionMaxMoveAtr, absorptionWindow);
     }
 }

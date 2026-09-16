@@ -28,17 +28,48 @@ public class RuleBasedPredictor implements FeatureEventListener {
     private final double buyThreshold;
     private final double sellThreshold;
     private final int confirmationSnapshots;
+    private final MarketRegimeClassifier regimeClassifier;
+    private final boolean regimeGatingEnabled;
+    private final EntryGuard entryGuard;
 
     // Estado para confirmaÃ§Ã£o temporal
     private Signal lastSignal = Signal.HOLD;
     private int signalConfirmationCount = 0;
 
     public RuleBasedPredictor(PredictionEventListener listener) {
-        this(listener, Config.getBuyThreshold(), Config.getSellThreshold(), Config.getConfirmationSnapshots());
+        this(listener, Config.getBuyThreshold(), Config.getSellThreshold(), Config.getConfirmationSnapshots(),
+                MarketRegimeClassifier.fromConfig(), Config.isRegimeGatingEnabled(),
+                EntryGuard.allOf(VpinEntryGuard.fromConfig(), OrderBookEntryGuard.fromConfig()));
     }
 
     /** Allows overriding the entry threshold/confirmation without touching global Config - used by on-demand backtests. */
     public RuleBasedPredictor(PredictionEventListener listener, double buyThreshold, double sellThreshold, int confirmationSnapshots) {
+        this(listener, buyThreshold, sellThreshold, confirmationSnapshots, MarketRegimeClassifier.fromConfig(), false,
+                EntryGuard.NONE);
+    }
+
+    /**
+     * The regime is always classified and reported; regimeGatingEnabled decides whether it also
+     * removes the rule family the regime invalidates from the score (issue #7).
+     */
+    public RuleBasedPredictor(PredictionEventListener listener, double buyThreshold, double sellThreshold,
+                              int confirmationSnapshots, MarketRegimeClassifier regimeClassifier,
+                              boolean regimeGatingEnabled) {
+        this(listener, buyThreshold, sellThreshold, confirmationSnapshots, regimeClassifier, regimeGatingEnabled,
+                EntryGuard.NONE);
+    }
+
+    /**
+     * entryGuard (VPIN, order book) marks the prediction as "no new entries" instead of turning it into
+     * HOLD: the same prediction also closes an opposite position on signal reversal, and a bad moment
+     * to enter is exactly when that exit must still go through (issues #13 and #10).
+     */
+    public RuleBasedPredictor(PredictionEventListener listener, double buyThreshold, double sellThreshold,
+                              int confirmationSnapshots, MarketRegimeClassifier regimeClassifier,
+                              boolean regimeGatingEnabled, EntryGuard entryGuard) {
+        this.entryGuard = entryGuard;
+        this.regimeClassifier = regimeClassifier;
+        this.regimeGatingEnabled = regimeGatingEnabled;
         this.rules = new ArrayList<>();
         this.filterRules = new ArrayList<>();
         this.listener = listener;
@@ -72,16 +103,25 @@ public class RuleBasedPredictor implements FeatureEventListener {
             return defaultPrediction(features);
         }
 
+        MarketRegime regime = regimeClassifier.classify(features);
         double sumScore = 0.0;
+        int votingRules = 0;
         StringBuilder reasonBuilder = new StringBuilder();
+        reasonBuilder.append("regime=").append(regime).append("; ");
 
         for (SignalRule rule : rules) {
+            if (regimeGatingEnabled && !regime.allows(rule.family())) {
+                reasonBuilder.append(String.format("%s=off; ", rule.getName()));
+                continue;
+            }
             double score = rule.evaluate(features);
             sumScore += score;
+            votingRules++;
             reasonBuilder.append(String.format("%s=%.2f; ", rule.getName(), score));
         }
 
-        double avgScore = sumScore / rules.size();
+        // Average over the rules that voted: a gated-out family must not dilute the one left active
+        double avgScore = votingRules == 0 ? 0.0 : sumScore / votingRules;
         reasonBuilder.append(String.format("sum=%.2f; avg=%.3f; ", sumScore, avgScore));
         Signal candidateSignal = scoreToSignal(avgScore);
         BigDecimal confidence = calculateConfidence(avgScore);
@@ -98,9 +138,19 @@ public class RuleBasedPredictor implements FeatureEventListener {
                     candidateSignal, signalConfirmationCount, confirmationSnapshots);
         }
 
-        if (finalSignal != Signal.HOLD && isVetoedByFilters(features, reasonBuilder)) {
-            confirmationStatus += " [blocked by filter rules]";
-            finalSignal = Signal.HOLD;
+        // A filter veto blocks NEW entries only, exactly like the entry guards. It used to turn the signal
+        // into HOLD, which also swallowed the reversal that closes an opposite position - a position
+        // opened before conditions turned bad then stayed open until target or stop.
+        // Guards are directional (the order book one is), so there is only something to judge on BUY/SELL.
+        String entryBlockReason = null;
+        if (finalSignal != Signal.HOLD) {
+            entryBlockReason = isVetoedByFilters(features, reasonBuilder)
+                    ? "filter rules"
+                    : entryGuard.blockReason(features, finalSignal);
+        }
+        boolean entryAllowed = entryBlockReason == null;
+        if (!entryAllowed) {
+            confirmationStatus += " [new entries blocked: " + entryBlockReason + "]";
         }
 
         return PredictionVector.builder()
@@ -112,6 +162,8 @@ public class RuleBasedPredictor implements FeatureEventListener {
                 .confidence(confidence)
                 .price(features.price())
                 .modelVersion(MODEL_VERSION)
+                .marketRegime(regime)
+                .entryAllowed(entryAllowed)
                 .reason(reasonBuilder.toString() + confirmationStatus)
                 .build();
     }

@@ -12,8 +12,16 @@ public interface SignalRule {
     double evaluate(FeatureVector features);
 
     /**
-     * Nome legÃ­vel da regra (pra logging/debugging)
+     * Returns the name of the rule.
      */
     String getName();
+
+    /**
+     * Regime family of this rule (issue #7). With prediction.regime.gating.enabled the predictor
+     * leaves out every rule whose family the current regime invalidates.
+     */
+    default RuleFamily family() {
+        return RuleFamily.OTHER;
+    }
 }
 

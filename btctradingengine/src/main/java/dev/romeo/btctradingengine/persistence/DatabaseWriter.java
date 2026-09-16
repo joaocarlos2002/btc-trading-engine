@@ -1,8 +1,10 @@
 package dev.romeo.btctradingengine.persistence;
 
 import dev.romeo.btctradingengine.adapter.CandleEventListener;
+import dev.romeo.btctradingengine.model.AggressorSide;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
+import dev.romeo.btctradingengine.model.TradeFlow;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,11 +27,12 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
     private static final long INTERRUPT_GRACE_MS = 1000;
 
     private static final String INSERT_CANDLE_SQL =
-            "INSERT INTO candles (symbol, open_time_ms, close_time_ms, open, high, low, close, volume, tick_count) " +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+            "INSERT INTO candles (symbol, open_time_ms, close_time_ms, open, high, low, close, volume, tick_count, " +
+            "taker_buy_volume, large_buy_volume, large_sell_volume, flow_source) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
             "ON CONFLICT (symbol, open_time_ms) DO NOTHING";
     private static final String INSERT_TICK_SQL =
-            "INSERT INTO ticks (symbol, time_ms, price, quantity) VALUES (?, ?, ?, ?)";
+            "INSERT INTO ticks (symbol, time_ms, price, quantity, aggressor_side) VALUES (?, ?, ?, ?, ?)";
 
     private final BlockingQueue<Object> queue = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -275,6 +278,13 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
         stmt.setBigDecimal(7, event.close());
         stmt.setBigDecimal(8, event.volume());
         stmt.setInt(9, event.tickCount());
+
+        // NULL, not 0, when the split is unknown - 0 would read as "no aggression" on the way back
+        TradeFlow flow = event.flow();
+        stmt.setBigDecimal(10, flow.hasTakerSplit() ? flow.takerBuyVolume() : null);
+        stmt.setBigDecimal(11, flow.hasSizeSplit() ? flow.largeBuyVolume() : null);
+        stmt.setBigDecimal(12, flow.hasSizeSplit() ? flow.largeSellVolume() : null);
+        stmt.setString(13, flow.hasTakerSplit() ? flow.source().name() : null);
     }
 
     private static void bindTick(PreparedStatement stmt, NormalizedPriceEvent event) throws SQLException {
@@ -282,5 +292,6 @@ public class DatabaseWriter implements CandleEventListener, dev.romeo.btctrading
         stmt.setLong(2, event.eventTimestamp().toEpochMilli());
         stmt.setBigDecimal(3, event.price());
         stmt.setBigDecimal(4, event.quantity());
+        stmt.setString(5, event.aggressorSide() == AggressorSide.UNKNOWN ? null : event.aggressorSide().name());
     }
 }

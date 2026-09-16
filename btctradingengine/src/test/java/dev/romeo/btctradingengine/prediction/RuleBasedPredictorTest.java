@@ -99,8 +99,11 @@ public class RuleBasedPredictorTest {
         predictor.onEvent(features);
 
         assertEquals(2, predictions.size());
-        assertEquals(Signal.HOLD, predictions.get(1).signal(),
-                "A negative filter rule average must veto an otherwise-confirmed BUY");
+        PredictionVector vetoed = predictions.get(1);
+        // The veto blocks opening a position, but the BUY must survive: it is also what closes an open SELL
+        assertEquals(Signal.BUY, vetoed.signal());
+        assertFalse(vetoed.entryAllowed(), "A negative filter rule average must block a new entry");
+        assertTrue(vetoed.reason().contains("filter rules"));
     }
 
     @Test
@@ -118,6 +121,7 @@ public class RuleBasedPredictorTest {
         assertEquals(2, predictions.size());
         assertEquals(Signal.BUY, predictions.get(1).signal(),
                 "A non-negative filter rule average must not block a confirmed BUY");
+        assertTrue(predictions.get(1).entryAllowed());
     }
 
     @Test
@@ -172,6 +176,99 @@ public class RuleBasedPredictorTest {
         assertEquals(now, pred.timestamp());
     }
 
+    @Test
+    public void regimeGatingDropsMeanReversionInATrend() {
+        List<PredictionVector> predictions = new ArrayList<>();
+        RuleBasedPredictor predictor = gatedPredictor(predictions::add, true);
+        predictor.addRule(new RsiRule());                                 // mean reversion: RSI 25 -> +0.8
+        predictor.addRule(new FixedScoreRule(0.5, RuleFamily.TREND));
+
+        predictor.onEvent(trendUpFeatures());
+
+        PredictionVector prediction = predictions.get(0);
+        assertEquals(MarketRegime.TREND_UP, prediction.marketRegime());
+        // RSI is off, so only the trend rule votes and the average is not diluted: 0.5, not 0.65
+        assertEquals(0, prediction.confidence().compareTo(new BigDecimal("0.500")));
+        assertTrue(prediction.reason().contains("=off"), "Gated rules must be visible in the reason");
+    }
+
+    @Test
+    public void regimeGatingDropsTrendRulesInARange() {
+        List<PredictionVector> predictions = new ArrayList<>();
+        RuleBasedPredictor predictor = gatedPredictor(predictions::add, true);
+        predictor.addRule(new RsiRule());
+        predictor.addRule(new FixedScoreRule(-0.5, RuleFamily.TREND));
+
+        FeatureVector range = FeatureVector.builder()
+                .instrument("BTC/USD").timestamp(Instant.now())
+                .rsiValue(new BigDecimal("25"))
+                .adx(new BigDecimal("12")).plusDi(new BigDecimal("20")).minusDi(new BigDecimal("18"))
+                .bbWidth(new BigDecimal("2.0"))
+                .price(new BigDecimal("100")).tickCount(40)
+                .build();
+        predictor.onEvent(range);
+
+        PredictionVector prediction = predictions.get(0);
+        assertEquals(MarketRegime.RANGE, prediction.marketRegime());
+        // only RSI votes
+        assertEquals(0, prediction.confidence().compareTo(new BigDecimal("0.800")));
+    }
+
+    @Test
+    public void withGatingOffTheRegimeIsReportedButEveryRuleVotes() {
+        List<PredictionVector> predictions = new ArrayList<>();
+        RuleBasedPredictor predictor = gatedPredictor(predictions::add, false);
+        predictor.addRule(new RsiRule());
+        predictor.addRule(new FixedScoreRule(0.5, RuleFamily.TREND));
+
+        predictor.onEvent(trendUpFeatures());
+
+        PredictionVector prediction = predictions.get(0);
+        assertEquals(MarketRegime.TREND_UP, prediction.marketRegime());
+        // (0.8 + 0.5) / 2
+        assertEquals(0, prediction.confidence().compareTo(new BigDecimal("0.650")));
+    }
+
+    @Test
+    public void highVpinBlocksEntriesWithoutErasingTheSignal() {
+        List<PredictionVector> predictions = new ArrayList<>();
+        RuleBasedPredictor predictor = new RuleBasedPredictor(predictions::add, 0.28, -0.28, 2,
+                new MarketRegimeClassifier(new BigDecimal("20"), new BigDecimal("25"), new BigDecimal("0.5")),
+                false, new VpinEntryGuard(true, new BigDecimal("0.35")));
+        predictor.addRule(new RsiRule());
+
+        FeatureVector toxic = FeatureVector.builder()
+                .instrument("BTC/USD").timestamp(Instant.now())
+                .rsiValue(new BigDecimal("25"))
+                .vpin(new BigDecimal("0.5"))
+                .price(new BigDecimal("100")).tickCount(40)
+                .build();
+        predictor.onEvent(toxic);
+        predictor.onEvent(toxic);
+
+        PredictionVector prediction = predictions.get(1);
+        // the BUY survives so it can still close an open SELL on reversal; only opening is blocked
+        assertEquals(Signal.BUY, prediction.signal());
+        assertFalse(prediction.entryAllowed());
+        assertTrue(prediction.reason().contains("VPIN"));
+    }
+
+    private RuleBasedPredictor gatedPredictor(PredictionEventListener listener, boolean gatingEnabled) {
+        return new RuleBasedPredictor(listener, 0.28, -0.28, 2,
+                new MarketRegimeClassifier(new BigDecimal("20"), new BigDecimal("25"), new BigDecimal("0.5")),
+                gatingEnabled);
+    }
+
+    private FeatureVector trendUpFeatures() {
+        return FeatureVector.builder()
+                .instrument("BTC/USD").timestamp(Instant.now())
+                .rsiValue(new BigDecimal("25"))
+                .adx(new BigDecimal("30")).plusDi(new BigDecimal("30")).minusDi(new BigDecimal("10"))
+                .bbWidth(new BigDecimal("2.0")).emaSlope(new BigDecimal("0.1"))
+                .price(new BigDecimal("100")).tickCount(40)
+                .build();
+    }
+
     private FeatureVector createFeatures(String price, String rsi) {
         return createFeatures(price, rsi, smaDistance("0.0"));
     }
@@ -202,14 +299,25 @@ public class RuleBasedPredictorTest {
 
     private static class FixedScoreRule implements SignalRule {
         private final double score;
+        private final RuleFamily family;
 
         FixedScoreRule(double score) {
+            this(score, RuleFamily.OTHER);
+        }
+
+        FixedScoreRule(double score, RuleFamily family) {
             this.score = score;
+            this.family = family;
         }
 
         @Override
         public double evaluate(FeatureVector features) {
             return score;
+        }
+
+        @Override
+        public RuleFamily family() {
+            return family;
         }
 
         @Override

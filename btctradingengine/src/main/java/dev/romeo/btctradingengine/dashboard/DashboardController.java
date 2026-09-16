@@ -1,12 +1,18 @@
 package dev.romeo.btctradingengine.dashboard;
 
+import dev.romeo.btctradingengine.adapter.BinanceAggTradeArchive;
 import dev.romeo.btctradingengine.adapter.BinanceKlineClient;
 import dev.romeo.btctradingengine.backtest.BacktestParams;
 import dev.romeo.btctradingengine.backtest.BacktestReport;
 import dev.romeo.btctradingengine.backtest.BacktestRunner;
 import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.derivatives.BinanceFuturesClient;
+import dev.romeo.btctradingengine.derivatives.BinanceMetricsArchive;
+import dev.romeo.btctradingengine.derivatives.DerivativesHistory;
 import dev.romeo.btctradingengine.indicator.VwapAnchor;
 import dev.romeo.btctradingengine.model.CandleEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -15,6 +21,11 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -22,10 +33,93 @@ import java.util.Map;
 @RequestMapping("/api")
 public class DashboardController {
     private final DashboardState state;
+    private static final Logger logger = LoggerFactory.getLogger(DashboardController.class);
+
     private final BinanceKlineClient klineClient = new BinanceKlineClient();
+    private final BinanceKlineClient futuresKlineClient = BinanceKlineClient.usdmFutures();
+    private final BinanceFuturesClient futuresClient = new BinanceFuturesClient();
+    private final BinanceMetricsArchive metricsArchive = new BinanceMetricsArchive();
+    private final BinanceAggTradeArchive aggTradeArchive = new BinanceAggTradeArchive();
 
     public DashboardController(DashboardState state) {
         this.state = state;
+    }
+
+    /**
+     * Replaces each candle's kline flow (taker split only) with flow rebuilt from the aggTrades dumps,
+     * so the size split exists in the backtest (issue #51). Minutes without a dump keep their kline
+     * flow, and a failure returns the candles unchanged instead of failing the request.
+     */
+    private List<CandleEvent> withTradeSizeSplit(List<CandleEvent> candles) {
+        try {
+            LocalDate from = candles.get(0).openTime().atZone(ZoneOffset.UTC).toLocalDate();
+            LocalDate to = candles.get(candles.size() - 1).closeTime().atZone(ZoneOffset.UTC).toLocalDate();
+            Map<java.time.Instant, BinanceAggTradeArchive.SizeBuckets> buckets =
+                    aggTradeArchive.load(Config.getMarketSymbol(), from, to);
+            BigDecimal largeTradeNotional = Config.getLargeTradeNotional();
+
+            List<CandleEvent> merged = new ArrayList<>(candles.size());
+            for (CandleEvent candle : candles) {
+                BinanceAggTradeArchive.SizeBuckets candleBuckets = buckets.get(candle.openTime());
+                merged.add(candleBuckets == null ? candle : new CandleEvent(
+                        candle.instrument(), candle.openTime(), candle.closeTime(),
+                        candle.open(), candle.high(), candle.low(), candle.close(),
+                        candle.volume(), candle.tickCount(), candleBuckets.toTradeFlow(largeTradeNotional)));
+            }
+            return merged;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("Interrupted loading aggTrades for the backtest size split");
+            return candles;
+        } catch (Exception e) {
+            logger.warn("Could not load aggTrades for the backtest size split, continuing with kline flow: {}", e.getMessage());
+            return candles;
+        }
+    }
+
+    /**
+     * Derivatives history for the backtest range: funding and basis from the futures REST API, open
+     * interest and long/short from the data.binance.vision metrics dumps (issue #54). Each source fails
+     * on its own - the backtest runs with whatever loaded instead of failing the request.
+     */
+    private DerivativesHistory loadBacktestDerivatives(List<CandleEvent> candles, int days) {
+        DerivativesHistory history = DerivativesHistory.forBacktest();
+        if (!Config.isDerivativesEnabled()) {
+            return history;
+        }
+        try {
+            futuresKlineClient.loadClosedCandlesRange(Config.getMarketSymbol(), Config.getBinanceKlineInterval(), days)
+                    .forEach(kline -> history.addPerpClose(kline.openTime(), kline.close()));
+            // One funding interval before the first candle, so it already has a settled rate
+            Instant from = candles.get(0).openTime().minus(DerivativesHistory.FUNDING_INTERVAL);
+            Instant to = candles.get(candles.size() - 1).closeTime();
+            futuresClient.fundingRates(Config.getMarketSymbol(), from, to)
+                    .forEach(rate -> history.addFundingRate(rate.time(), rate.value()));
+        } catch (Exception e) {
+            logger.warn("Could not load derivatives history for the backtest, continuing without it: {}", e.getMessage());
+        }
+        try {
+            // Start one change window early, so the first candles already have an open interest to compare against
+            LocalDate from = candles.get(0).openTime()
+                    .minus(Duration.ofMinutes(Config.getOpenInterestChangeMinutes()))
+                    .atZone(ZoneOffset.UTC).toLocalDate();
+            LocalDate to = candles.get(candles.size() - 1).closeTime().atZone(ZoneOffset.UTC).toLocalDate();
+            metricsArchive.load(Config.getMarketSymbol(), from, to).forEach(row -> {
+                if (row.openInterest() != null) {
+                    history.addOpenInterest(row.publishedAt(), row.openInterest());
+                }
+                if (row.longShortRatio() != null) {
+                    history.addLongShortRatio(row.publishedAt(), row.longShortRatio());
+                }
+            });
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.warn("Interrupted loading the open interest / long-short history for the backtest");
+        } catch (Exception e) {
+            logger.warn("Could not load open interest / long-short history for the backtest, continuing without it: {}",
+                    e.getMessage());
+        }
+        return history;
     }
 
     @GetMapping("/candles/latest")
@@ -75,6 +169,7 @@ public class DashboardController {
     @GetMapping("/backtest")
     public ResponseEntity<?> backtest(
             @RequestParam(defaultValue = "30") int days,
+            @RequestParam(defaultValue = "false") boolean sizeSplit,
             @RequestParam(required = false) Integer smaPeriod,
             @RequestParam(required = false) Integer emaPeriod,
             @RequestParam(required = false) Integer rsiPeriod,
@@ -94,6 +189,14 @@ public class DashboardController {
             @RequestParam(required = false) Integer vwapRollingPeriods,
             @RequestParam(required = false) Integer priceActionLookback,
             @RequestParam(required = false) Integer priceActionSwingStrength,
+            @RequestParam(required = false) Integer cvdPeriod,
+            @RequestParam(required = false) Integer emaSlopePeriods,
+            @RequestParam(required = false) Integer vpinBuckets,
+            @RequestParam(required = false) Integer vpinBucketCandles,
+            @RequestParam(required = false) BigDecimal absorptionDeltaMin,
+            @RequestParam(required = false) BigDecimal absorptionVolumeRatioMin,
+            @RequestParam(required = false) BigDecimal absorptionMaxMoveAtr,
+            @RequestParam(required = false) Integer absorptionWindow,
             @RequestParam(required = false) BigDecimal rsiOversold,
             @RequestParam(required = false) BigDecimal rsiNeutralLow,
             @RequestParam(required = false) BigDecimal rsiNeutralHigh,
@@ -111,6 +214,10 @@ public class DashboardController {
             @RequestParam(required = false) BigDecimal mfiOverbought,
             @RequestParam(required = false) BigDecimal adxTrendMin,
             @RequestParam(required = false) BigDecimal bollingerSqueezeThreshold,
+            @RequestParam(required = false) BigDecimal adxTrendStrong,
+            @RequestParam(required = false) Boolean regimeGatingEnabled,
+            @RequestParam(required = false) Boolean vpinFilterEnabled,
+            @RequestParam(required = false) BigDecimal vpinHighThreshold,
             @RequestParam(required = false) Double buyThreshold,
             @RequestParam(required = false) Double sellThreshold,
             @RequestParam(required = false) Integer confirmationSnapshots,
@@ -147,6 +254,14 @@ public class DashboardController {
                     vwapRollingPeriods != null ? vwapRollingPeriods : defaults.vwapRollingPeriods(),
                     priceActionLookback != null ? priceActionLookback : defaults.priceActionLookback(),
                     priceActionSwingStrength != null ? priceActionSwingStrength : defaults.priceActionSwingStrength(),
+                    cvdPeriod != null ? cvdPeriod : defaults.cvdPeriod(),
+                    emaSlopePeriods != null ? emaSlopePeriods : defaults.emaSlopePeriods(),
+                    vpinBuckets != null ? vpinBuckets : defaults.vpinBuckets(),
+                    vpinBucketCandles != null ? vpinBucketCandles : defaults.vpinBucketCandles(),
+                    absorptionDeltaMin != null ? absorptionDeltaMin : defaults.absorptionDeltaMin(),
+                    absorptionVolumeRatioMin != null ? absorptionVolumeRatioMin : defaults.absorptionVolumeRatioMin(),
+                    absorptionMaxMoveAtr != null ? absorptionMaxMoveAtr : defaults.absorptionMaxMoveAtr(),
+                    absorptionWindow != null ? absorptionWindow : defaults.absorptionWindow(),
                     rsiOversold != null ? rsiOversold : defaults.rsiOversold(),
                     rsiNeutralLow != null ? rsiNeutralLow : defaults.rsiNeutralLow(),
                     rsiNeutralHigh != null ? rsiNeutralHigh : defaults.rsiNeutralHigh(),
@@ -164,6 +279,10 @@ public class DashboardController {
                     mfiOverbought != null ? mfiOverbought : defaults.mfiOverbought(),
                     adxTrendMin != null ? adxTrendMin : defaults.adxTrendMin(),
                     bollingerSqueezeThreshold != null ? bollingerSqueezeThreshold : defaults.bollingerSqueezeThreshold(),
+                    adxTrendStrong != null ? adxTrendStrong : defaults.adxTrendStrong(),
+                    regimeGatingEnabled != null ? regimeGatingEnabled : defaults.regimeGatingEnabled(),
+                    vpinFilterEnabled != null ? vpinFilterEnabled : defaults.vpinFilterEnabled(),
+                    vpinHighThreshold != null ? vpinHighThreshold : defaults.vpinHighThreshold(),
                     buyThreshold != null ? buyThreshold : defaults.buyThreshold(),
                     sellThreshold != null ? sellThreshold : defaults.sellThreshold(),
                     confirmationSnapshots != null ? confirmationSnapshots : defaults.confirmationSnapshots(),
@@ -171,7 +290,11 @@ public class DashboardController {
                     stopLossPercent != null ? stopLossPercent : defaults.stopLossPercent(),
                     commissionRate != null ? commissionRate : defaults.commissionRate());
 
-            BacktestReport report = new BacktestRunner().run(candles, Config.getTradingInitialCapital(), params);
+            if (sizeSplit) {
+                candles = withTradeSizeSplit(candles);
+            }
+            DerivativesHistory derivatives = loadBacktestDerivatives(candles, clampedDays);
+            BacktestReport report = new BacktestRunner().run(candles, Config.getTradingInitialCapital(), params, derivatives);
             return ResponseEntity.ok(Map.of(
                     "symbol", Config.getMarketSymbol(),
                     "interval", Config.getBinanceKlineInterval(),
@@ -180,6 +303,8 @@ public class DashboardController {
                     "rangeStart", candles.get(0).openTime(),
                     "rangeEnd", candles.get(candles.size() - 1).closeTime(),
                     "params", params,
+                    "derivativesLoaded", !derivatives.isEmpty(),
+                    "sizeSplitCandles", BinanceAggTradeArchive.candlesWithSizeSplit(candles),
                     "report", report
             ));
         } catch (Exception e) {

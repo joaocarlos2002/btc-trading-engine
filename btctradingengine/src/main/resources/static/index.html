@@ -591,7 +591,7 @@ footer{
   <div class="row">
     <div class="panel">
       <div class="panel-head">
-        <h3>Technical features · 32</h3>
+        <h3>Technical features · 46</h3>
         <span class="meta" id="lastUpdate">—</span>
       </div>
       <div class="metrics">
@@ -716,6 +716,62 @@ footer{
           <b id="resistanceDistance">—</b><small>% above</small>
         </div>
         <div class="metric">
+          <label data-tip="(Volume comprador agressor − vendedor agressor) ÷ volume da candle. +1 = só compra a mercado, −1 = só venda a mercado, 0 = equilíbrio ou sem dados de fluxo.">Delta ratio</label>
+          <b id="deltaRatio">—</b><small>−1 — 1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Cumulative Volume Delta: soma do delta (compra − venda agressora, em BTC) na janela rolante de N velas. Subindo com o preço confirma; divergindo do preço sugere exaustão.">CVD</label>
+          <b id="cvd">—</b><small>BTC · window</small>
+        </div>
+        <div class="metric">
+          <label data-tip="CVD dividido pelo volume agressor da janela. Versão normalizada do CVD, comparável entre mercado calmo e agitado.">CVD ratio</label>
+          <b id="cvdRatio">—</b><small>−1 — 1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="CVD só das agressões grandes (valor ≥ feature.flow.large.trade.notional). Baleia vs varejo é heurística. Precisa do tamanho dos trades: ao vivo sempre; no backtest só com sizeSplit=true; 0 no warmup.">Large CVD</label>
+          <b id="largeCvd">—</b><small>BTC · large trades</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Parcela do volume agressor da janela que veio de trades grandes. Klines não trazem o tamanho dos trades: no backtest só com sizeSplit=true.">Large share</label>
+          <b id="largeVolumeShare">—</b><small>0 — 1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Último funding rate liquidado do perpétuo BTCUSDT (a cada 8h). Positivo = longs pagam shorts (mercado alavancado comprado); negativo = shorts pagam longs.">Funding</label>
+          <b id="fundingRate">—</b><small>per 8h</small>
+        </div>
+        <div class="metric">
+          <label data-tip="(Preço do perpétuo − preço spot) ÷ spot, em %. Positivo = futuros com prêmio (demanda alavancada de compra); negativo = desconto.">Basis</label>
+          <b id="basisPercent">—</b><small>% perp vs spot</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Open interest: contratos abertos no perpétuo, em BTC. No backtest vem dos dumps diários da Binance (valor de 5 em 5 minutos).">Open int</label>
+          <b id="openInterest">—</b><small>BTC</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Variação % do open interest contra derivatives.open.interest.change.minutes atrás. Subindo com o preço = dinheiro novo entrando; caindo = posições sendo fechadas ou liquidadas.">OI change</label>
+          <b id="openInterestChangePercent">—</b><small>%</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Razão entre contas compradas e vendidas no perpétuo. Acima de 1 = mais contas long. Extremos costumam indicar posicionamento lotado.">L/S ratio</label>
+          <b id="longShortRatio">—</b><small>accounts</small>
+        </div>
+        <div class="metric">
+          <label data-tip="VPIN aproximado: desequilíbrio médio entre compra e venda agressora em baldes de volume (cada balde ≈ 20 min de volume médio, últimos 50). Perto de 1 = fluxo muito unilateral (tóxico). Com prediction.vpin.filter.enabled, a partir de prediction.vpin.high bloqueia novas entradas; saídas continuam. Não é probabilidade de verdade. 0 = aquecendo.">VPIN</label>
+          <b id="vpin">—</b><small>0 — 1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Absorção na vela: agressão forte de um lado com o preço sem se mover. Positivo = venda agressora absorvida (compradores passivos segurando o preço, viés de alta); negativo = compra agressora absorvida (viés de baixa). 0 = sem absorção. Inferido só pelos trades, sem order book.">Absorption</label>
+          <b id="absorption">—</b><small>−1 — 1</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Soma da absorção nas últimas feature.absorption.window velas. Absorção repetida no mesmo lado é mais relevante que um evento isolado.">Absorp. sum</label>
+          <b id="absorptionSum">—</b><small>window</small>
+        </div>
+        <div class="metric">
+          <label data-tip="Desequilíbrio do order book: volume de compra ÷ (compra + venda) nos níveis lidos, média dos retratos tirados durante a vela. 0.5 = equilibrado, acima = mais compradores esperando, abaixo = mais vendedores. Filtro de execução (prediction.orderbook.filter.enabled), não voto. Só ao vivo: sem histórico no backtest.">Book imbal.</label>
+          <b id="orderBookImbalance">—</b><small>0 — 1 · live only</small>
+        </div>
+        <div class="metric">
           <label data-tip="Hora do dia em UTC. Útil para identificar sessões mais voláteis (Ásia, Europa, EUA).">Hour</label>
           <b id="hourOfDay">—</b><small>UTC</small>
         </div>
@@ -753,6 +809,10 @@ footer{
           <div class="model-row">
             <label data-tip="Nível de confiança do modelo no sinal emitido. Calculado como a diferença entre P(up) e P(down).">Confidence</label>
             <span id="confidence">—</span>
+          </div>
+          <div class="model-row">
+            <label data-tip="Regime de mercado em que a decisão foi tomada: TREND_UP/TREND_DOWN (ADX forte com +DI/−DI e inclinação da EMA concordando), RANGE (ADX baixo), SQUEEZE (bandas comprimidas), TRANSITION ou UNKNOWN (aquecendo). Com prediction.regime.gating.enabled, tendência desliga RSI/MFI/SMA e lateral desliga o MACD.">Market regime</label>
+            <span id="marketRegime">—</span>
           </div>
           <div class="model-row">
             <label data-tip="Preço do candle usado como base para gerar este sinal.">Signal price</label>
@@ -1134,7 +1194,14 @@ function renderMetrics(m){
    'adx','atrPercent','bbWidth','bbPercentB','mfi','vwapDistance',
    'donchianPosition',
    'bodyRatio','upperWickRatio','lowerWickRatio','recentHighDistance','recentLowDistance',
-   'supportDistance','resistanceDistance'].forEach(id => text(id, fmt(f[id])));
+   'supportDistance','resistanceDistance',
+   'deltaRatio','cvd','cvdRatio','largeCvd','largeVolumeShare','vpin','absorption','absorptionSum','orderBookImbalance'].forEach(id => text(id, fmt(f[id])));
+  // Derivatives are null (not 0) when unavailable; fmt already renders null as —
+  text('fundingRate', f.fundingRate == null ? '—' : `${fmt(f.fundingRate * 100, 4)}%`);
+  text('basisPercent', fmt(f.basisPercent, 4));
+  text('openInterest', fmt(f.openInterest, 0));
+  text('openInterestChangePercent', fmt(f.openInterestChangePercent, 2));
+  text('longShortRatio', fmt(f.longShortRatio, 3));
   // Integer price action signals, shown as-is like hour/day
   ['candleStreak','previousCandleBreak','swingHighTrend','swingLowTrend']
     .forEach(id => text(id, f[id] ?? '—'));
@@ -1172,6 +1239,7 @@ function renderPrediction(p){
   text('probUp', pct(p.probabilityUp));
   text('probDown', pct(p.probabilityDown));
   text('confidence', pct(p.confidence));
+  text('marketRegime', p.marketRegime);
   text('signalPrice', fmt(p.price));
   text('predictionTime', time(p.timestamp));
   text('modelVersion', p.modelVersion || 'rules-v1');
@@ -1266,15 +1334,46 @@ function renderTick(t){
   tickSpark.update('none');
 }
 
+/* ═══════════ API TOKEN ═══════════ */
+/* /api/trades/manual/** requires the X-Api-Token header (dashboard.api.token). The custom header is
+   what makes the request non-simple, so no other site can POST an order from this browser. */
+const TOKEN_KEY = 'btcEngineApiToken';
+function apiToken(reask){
+  let t = null;
+  try{ t = localStorage.getItem(TOKEN_KEY); }catch(e){}
+  if(reask || !t){
+    t = window.prompt('API token (dashboard.api.token in application.properties)', reask ? '' : (t || ''));
+    if(t === null) return null;
+    t = t.trim();
+    try{ localStorage.setItem(TOKEN_KEY, t); }catch(e){}
+  }
+  return t;
+}
+async function authFetch(url, opts){
+  const send = token => fetch(url, Object.assign({}, opts, {
+    headers: Object.assign({}, opts && opts.headers, { 'X-Api-Token': token })
+  }));
+  let token = apiToken(false);
+  if(token === null) return null;
+  let r = await send(token);
+  if(r.status === 401){
+    token = apiToken(true);
+    if(token === null) return r;
+    r = await send(token);
+  }
+  return r;
+}
+
 /* ═══════════ MANUAL ═══════════ */
 async function manualBuy(){
   if(!window.confirm('Open manual BUY at market?')) return;
   $('manualBuy').disabled = true;
   text('actionStatus', 'sending…');
   try{
-    const r = await fetch('/api/trades/manual/buy', { method:'POST' });
+    const r = await authFetch('/api/trades/manual/buy', { method:'POST' });
+    if(r === null){ text('actionStatus', 'cancelled'); updateBuy(false); return; }
     const j = await r.json();
-    text('actionStatus', j.message || 'ok');
+    text('actionStatus', j.message || j.error || 'ok');
     if(!r.ok) updateBuy(false);
   }catch(e){
     text('actionStatus', 'request failed');
@@ -1286,9 +1385,10 @@ async function manualClose(){
   $('manualClose').disabled = true;
   text('actionStatus', 'closing…');
   try{
-    const r = await fetch('/api/trades/manual/close', { method:'POST' });
+    const r = await authFetch('/api/trades/manual/close', { method:'POST' });
+    if(r === null){ text('actionStatus', 'cancelled'); updateClose(true); return; }
     const j = await r.json();
-    text('actionStatus', j.message || 'ok');
+    text('actionStatus', j.message || j.error || 'ok');
     if(!r.ok) updateClose(true);
   }catch(e){
     text('actionStatus', 'request failed');

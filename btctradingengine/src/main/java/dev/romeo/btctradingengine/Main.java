@@ -6,7 +6,18 @@ import dev.romeo.btctradingengine.alerting.DiscordAlertNotifier;
 import dev.romeo.btctradingengine.config.Config;
 import dev.romeo.btctradingengine.dashboard.DashboardApplication;
 import dev.romeo.btctradingengine.dashboard.DashboardState;
+import dev.romeo.btctradingengine.derivatives.BinanceFuturesClient;
+import dev.romeo.btctradingengine.derivatives.DerivativesHistory;
+import dev.romeo.btctradingengine.derivatives.DerivativesPoller;
+import dev.romeo.btctradingengine.feature.DerivativesLookup;
 import dev.romeo.btctradingengine.feature.FeatureExtractor;
+import dev.romeo.btctradingengine.feature.IndicatorPeriods;
+import dev.romeo.btctradingengine.feature.OrderBookLookup;
+import dev.romeo.btctradingengine.orderbook.BinanceDepthClient;
+import dev.romeo.btctradingengine.orderbook.OrderBookHistory;
+import dev.romeo.btctradingengine.orderbook.OrderBookPoller;
+import dev.romeo.btctradingengine.persistence.DerivativesSnapshotWriter;
+import dev.romeo.btctradingengine.persistence.OrderBookSnapshotWriter;
 import dev.romeo.btctradingengine.persistence.DataSourceManager;
 import dev.romeo.btctradingengine.persistence.DatabaseCandleReader;
 import dev.romeo.btctradingengine.persistence.DatabaseInitializer;
@@ -160,10 +171,33 @@ public class Main {
             predictor.addFilterRule(new VolatilityRule());
             predictor.addFilterRule(new AdxRegimeRule());
 
+            DerivativesHistory derivativesHistory = Config.isDerivativesEnabled() ? DerivativesHistory.forLive() : null;
+            DerivativesPoller derivativesPoller = derivativesHistory == null ? null : new DerivativesPoller(
+                    new BinanceFuturesClient(),
+                    derivativesHistory,
+                    new DerivativesSnapshotWriter(),
+                    Config.getMarketSymbol(),
+                    Config.getBinanceKlineInterval());
+            if (derivativesPoller != null) {
+                // Before the warmup below, so the warmup candles get funding and basis too
+                derivativesPoller.seed(Config.getHistoryCandles());
+            }
+
+            // Only the candles closing while the bot runs can have snapshots, so an hour of retention is plenty
+            OrderBookHistory orderBookHistory = Config.isOrderBookEnabled()
+                    ? new OrderBookHistory(java.time.Duration.ofHours(1)) : null;
+            OrderBookPoller orderBookPoller = orderBookHistory == null ? null : new OrderBookPoller(
+                    new BinanceDepthClient(),
+                    orderBookHistory,
+                    new OrderBookSnapshotWriter(),
+                    Config.getMarketSymbol(),
+                    Config.getOrderBookDepthLevels());
+
             FeatureExtractor featureExtractor = new FeatureExtractor(
-                    Config.getSmaPeriod(),
-                    Config.getEmaPeriod(),
-                    Config.getRsiPeriod(),
+                    IndicatorPeriods.fromConfig().withCorePeriods(
+                            Config.getSmaPeriod(), Config.getEmaPeriod(), Config.getRsiPeriod()),
+                    derivativesHistory != null ? derivativesHistory : DerivativesLookup.NONE,
+                    orderBookHistory != null ? orderBookHistory : OrderBookLookup.NONE,
                     features -> {
                         dashboardState.onFeatures(features);
                         predictor.onEvent(features);
@@ -223,6 +257,12 @@ public class Main {
             });
             priceEventBus.subscribeLatest(dashboardState);
 
+            if (derivativesPoller != null) {
+                derivativesPoller.start();
+            }
+            if (orderBookPoller != null) {
+                orderBookPoller.start();
+            }
             aggregator.start();
             source.start(priceEventBus);
 
@@ -232,6 +272,12 @@ public class Main {
                 source.stop();
                 priceEventBus.close();
                 aggregator.stop();
+                if (derivativesPoller != null) {
+                    derivativesPoller.stop();
+                }
+                if (orderBookPoller != null) {
+                    orderBookPoller.stop();
+                }
 
                 String symbol = Config.getMarketSymbol();
                 positionManager.getClosedPositions().forEach(pos ->

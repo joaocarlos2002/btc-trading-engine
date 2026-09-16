@@ -6,6 +6,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Properties;
 
 public class Config {
@@ -69,6 +71,15 @@ public class Config {
     public static int getVwapRollingPeriods() { return Integer.parseInt(getProperty("indicator.vwap.rolling.periods", "300")); }
     public static int getPriceActionLookback() { return Integer.parseInt(getProperty("indicator.priceaction.lookback", "300")); }
     public static int getPriceActionSwingStrength() { return Integer.parseInt(getProperty("indicator.priceaction.swing.strength", "30")); }
+    public static int getCvdPeriod() { return Integer.parseInt(getProperty("indicator.cvd.period", "300")); }
+    public static int getEmaSlopePeriods() { return Integer.parseInt(getProperty("indicator.ema.slope.periods", "15")); }
+    public static int getVpinBuckets() { return Integer.parseInt(getProperty("indicator.vpin.buckets", "50")); }
+    public static int getVpinBucketCandles() { return Integer.parseInt(getProperty("indicator.vpin.bucket.candles", "20")); }
+    public static BigDecimal getAbsorptionDeltaMin() { return getDecimal("feature.absorption.delta.min", "0.3"); }
+    public static BigDecimal getAbsorptionVolumeRatioMin() { return getDecimal("feature.absorption.volume.ratio.min", "1.5"); }
+    public static BigDecimal getAbsorptionMaxMoveAtr() { return getDecimal("feature.absorption.max.move.atr", "0.25"); }
+    public static int getAbsorptionWindow() { return Integer.parseInt(getProperty("feature.absorption.window", "15")); }
+    public static BigDecimal getLargeTradeNotional() { return getDecimal("feature.flow.large.trade.notional", "100000"); }
 
     public static BigDecimal getDecimal(String key, String defaultValue) {
         return new BigDecimal(getProperty(key, defaultValue));
@@ -94,6 +105,9 @@ public class Config {
     public static BigDecimal getMfiNeutralHigh() { return getDecimal("prediction.mfi.neutral.high", "60"); }
     public static BigDecimal getMfiOverbought() { return getDecimal("prediction.mfi.overbought", "80"); }
     public static BigDecimal getBollingerSqueezeThreshold() { return getDecimal("prediction.bollinger.squeeze.threshold", "0.5"); }
+    public static boolean isRegimeGatingEnabled() { return Boolean.parseBoolean(getProperty("prediction.regime.gating.enabled", "false")); }
+    public static boolean isVpinFilterEnabled() { return Boolean.parseBoolean(getProperty("prediction.vpin.filter.enabled", "false")); }
+    public static BigDecimal getVpinHighThreshold() { return getDecimal("prediction.vpin.high", "0.35"); }
     public static double getBuyThreshold() { return Double.parseDouble(getProperty("prediction.buy.threshold", "0.28")); }
     public static double getSellThreshold() { return Double.parseDouble(getProperty("prediction.sell.threshold", "-0.28")); }
     public static double getHoldMin() { return Double.parseDouble(getProperty("prediction.hold.min", "-0.3")); }
@@ -135,6 +149,34 @@ public class Config {
         requirePositive("indicator.vwap.rolling.periods", getVwapRollingPeriods());
         requirePositive("indicator.priceaction.lookback", getPriceActionLookback());
         requirePositive("indicator.priceaction.swing.strength", getPriceActionSwingStrength());
+        requirePositive("indicator.cvd.period", getCvdPeriod());
+        requirePositive("indicator.ema.slope.periods", getEmaSlopePeriods());
+        requirePositive("indicator.vpin.buckets", getVpinBuckets());
+        requirePositive("indicator.vpin.bucket.candles", getVpinBucketCandles());
+        requirePositive("feature.absorption.window", getAbsorptionWindow());
+        if (getAbsorptionDeltaMin().compareTo(BigDecimal.ZERO) <= 0 || getAbsorptionDeltaMin().compareTo(BigDecimal.ONE) > 0) {
+            throw new IllegalArgumentException("feature.absorption.delta.min must be in (0, 1]");
+        }
+        if (getAbsorptionVolumeRatioMin().compareTo(BigDecimal.ZERO) <= 0 || getAbsorptionMaxMoveAtr().compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException("feature.absorption.volume.ratio.min must be positive and max.move.atr non-negative");
+        }
+        if (getVpinHighThreshold().compareTo(BigDecimal.ZERO) <= 0 || getVpinHighThreshold().compareTo(BigDecimal.ONE) > 0) {
+            throw new IllegalArgumentException("prediction.vpin.high must be in (0, 1]");
+        }
+        requirePositive("derivatives.poll.seconds", getDerivativesPollSeconds());
+        requirePositive("derivatives.basis.poll.seconds", getDerivativesBasisPollSeconds());
+        requirePositive("derivatives.stale.seconds", getDerivativesStaleSeconds());
+        requirePositive("derivatives.open.interest.change.minutes", getOpenInterestChangeMinutes());
+        requirePositive("orderbook.poll.seconds", getOrderBookPollSeconds());
+        if (!java.util.Set.of(5, 10, 20, 50, 100, 500, 1000, 5000).contains(getOrderBookDepthLevels())) {
+            throw new IllegalArgumentException("orderbook.depth.levels must be one of 5, 10, 20, 50, 100, 500, 1000, 5000");
+        }
+        if (getOrderBookBuyMin().compareTo(getOrderBookSellMax()) >= 0) {
+            throw new IllegalArgumentException("prediction.orderbook.buy.min must be lower than prediction.orderbook.sell.max");
+        }
+        if (getLargeTradeNotional().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("feature.flow.large.trade.notional must be positive");
+        }
 
         if (getMacdFastPeriod() >= getMacdSlowPeriod()) {
             throw new IllegalArgumentException("indicator.macd.fast.period must be lower than slow.period");
@@ -207,6 +249,40 @@ public class Config {
         return Long.parseLong(getProperty("binance.max.backoff.ms", "60000"));
     }
 
+    // Derivatives (issue #53) always come from mainnet USD-M futures: testnet futures data is synthetic.
+    public static boolean isDerivativesEnabled() { return Boolean.parseBoolean(getProperty("derivatives.enabled", "true")); }
+    public static String getBinanceFuturesRestUrl() { return getProperty("binance.futures.rest.url", "https://fapi.binance.com"); }
+    public static long getDerivativesPollSeconds() { return Long.parseLong(getProperty("derivatives.poll.seconds", "60")); }
+    public static long getDerivativesBasisPollSeconds() { return Long.parseLong(getProperty("derivatives.basis.poll.seconds", "5")); }
+    public static long getDerivativesStaleSeconds() { return Long.parseLong(getProperty("derivatives.stale.seconds", "300")); }
+    public static long getOpenInterestChangeMinutes() { return Long.parseLong(getProperty("derivatives.open.interest.change.minutes", "60")); }
+    public static String getBinanceDataUrl() { return getProperty("binance.data.url", "https://data.binance.vision"); }
+
+    /** Blank means a folder under java.io.tmpdir, so a fresh checkout needs no setup. */
+    public static java.nio.file.Path getMetricsCacheDir() {
+        String dir = getProperty("derivatives.metrics.cache.dir", "");
+        return dir.isBlank()
+                ? java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), "btc-trading-engine", "metrics")
+                : java.nio.file.Path.of(dir);
+    }
+
+    /** Blank means a folder under java.io.tmpdir, like the metrics cache. */
+    public static java.nio.file.Path getAggTradesCacheDir() {
+        String dir = getProperty("backtest.aggtrades.cache.dir", "");
+        return dir.isBlank()
+                ? java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), "btc-trading-engine", "aggtrades")
+                : java.nio.file.Path.of(dir);
+    }
+
+    // Order book (issue #10): mainnet by default, the testnet book is synthetic.
+    public static boolean isOrderBookEnabled() { return Boolean.parseBoolean(getProperty("orderbook.enabled", "true")); }
+    public static String getOrderBookRestUrl() { return getProperty("orderbook.rest.url", "https://api.binance.com"); }
+    public static long getOrderBookPollSeconds() { return Long.parseLong(getProperty("orderbook.poll.seconds", "5")); }
+    public static int getOrderBookDepthLevels() { return Integer.parseInt(getProperty("orderbook.depth.levels", "100")); }
+    public static boolean isOrderBookFilterEnabled() { return Boolean.parseBoolean(getProperty("prediction.orderbook.filter.enabled", "false")); }
+    public static BigDecimal getOrderBookBuyMin() { return getDecimal("prediction.orderbook.buy.min", "0.35"); }
+    public static BigDecimal getOrderBookSellMax() { return getDecimal("prediction.orderbook.sell.max", "0.65"); }
+
     public static String getDbUrl() {
         return getProperty("db.url", "jdbc:postgresql://localhost:5432/btc-trading-engine_btc");
     }
@@ -225,6 +301,23 @@ public class Config {
 
     public static String getBinanceApiSecret() {
         return getEnvironmentOrProperty("btc-trading-engine_BINANCE_API_SECRET", "binance.api.secret", "");
+    }
+
+    /**
+     * Shared secret required in the X-Api-Token header on the manual-order and backtest endpoints
+     * (issue #66). Blank = those endpoints are refused for everyone.
+     */
+    public static String getDashboardApiToken() {
+        return getEnvironmentOrProperty("BTC_TRADING_ENGINE_DASHBOARD_API_TOKEN", "dashboard.api.token", "");
+    }
+
+    /** Origins allowed to open the /ws/live WebSocket. */
+    public static List<String> getDashboardAllowedOrigins() {
+        return Arrays.stream(getProperty("dashboard.allowed.origins",
+                        "http://localhost:8080,http://127.0.0.1:8080").split(","))
+                .map(String::trim)
+                .filter(origin -> !origin.isEmpty())
+                .toList();
     }
 
     public static int getDbPoolSize() {

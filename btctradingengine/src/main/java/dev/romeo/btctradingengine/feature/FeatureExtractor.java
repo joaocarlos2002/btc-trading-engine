@@ -1,9 +1,11 @@
 package dev.romeo.btctradingengine.feature;
 
 import dev.romeo.btctradingengine.adapter.CandleEventListener;
+import dev.romeo.btctradingengine.indicator.Absorption;
 import dev.romeo.btctradingengine.indicator.AdxIndicator;
 import dev.romeo.btctradingengine.indicator.AtrIndicator;
 import dev.romeo.btctradingengine.indicator.BollingerBands;
+import dev.romeo.btctradingengine.indicator.CumulativeVolumeDelta;
 import dev.romeo.btctradingengine.indicator.DonchianChannel;
 import dev.romeo.btctradingengine.indicator.Ema;
 import dev.romeo.btctradingengine.indicator.MacdIndicator;
@@ -11,6 +13,7 @@ import dev.romeo.btctradingengine.indicator.MfiIndicator;
 import dev.romeo.btctradingengine.indicator.PriceAction;
 import dev.romeo.btctradingengine.indicator.Rsi;
 import dev.romeo.btctradingengine.indicator.SmaIncremental;
+import dev.romeo.btctradingengine.indicator.Vpin;
 import dev.romeo.btctradingengine.indicator.Vwap;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import org.slf4j.Logger;
@@ -20,6 +23,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.Objects;
 
 public class FeatureExtractor implements CandleEventListener {
     private static final Logger logger = LoggerFactory.getLogger(FeatureExtractor.class);
@@ -39,6 +45,13 @@ public class FeatureExtractor implements CandleEventListener {
     private final MfiIndicator mfiIndicator;
     private final DonchianChannel donchianChannel;
     private final PriceAction priceAction;
+    private final CumulativeVolumeDelta cumulativeVolumeDelta;
+    private final Vpin vpin;
+    private final Absorption absorption;
+    private final DerivativesLookup derivatives;
+    private final OrderBookLookup orderBook;
+    private final Deque<BigDecimal> emaHistory = new ArrayDeque<>();
+    private final int emaSlopePeriods;
     private final FeatureEventListener listener;
     private final int volatilityShortPeriods;
     private final int volatilityLongPeriods;
@@ -50,6 +63,19 @@ public class FeatureExtractor implements CandleEventListener {
 
     /** Allows overriding every period without touching global Config - used by on-demand backtests. */
     public FeatureExtractor(IndicatorPeriods periods, FeatureEventListener listener) {
+        this(periods, DerivativesLookup.NONE, listener);
+    }
+
+    /** Derivatives do not come out of the candle stream, so they are looked up per candle. */
+    public FeatureExtractor(IndicatorPeriods periods, DerivativesLookup derivatives, FeatureEventListener listener) {
+        this(periods, derivatives, OrderBookLookup.NONE, listener);
+    }
+
+    /** The order book is also polled outside the candle stream (issue #10), so it is looked up per candle too. */
+    public FeatureExtractor(IndicatorPeriods periods, DerivativesLookup derivatives, OrderBookLookup orderBook,
+                            FeatureEventListener listener) {
+        this.derivatives = Objects.requireNonNull(derivatives, "derivatives");
+        this.orderBook = Objects.requireNonNull(orderBook, "orderBook");
         this.smaIncremental = new SmaIncremental(periods.sma());
         this.emaIncremental = new Ema(periods.ema());
         this.rsiIncremental = new Rsi(periods.rsi());
@@ -61,6 +87,11 @@ public class FeatureExtractor implements CandleEventListener {
         this.mfiIndicator = new MfiIndicator(periods.mfi());
         this.donchianChannel = new DonchianChannel(periods.donchian());
         this.priceAction = new PriceAction(periods.priceActionLookback(), periods.priceActionSwingStrength());
+        this.cumulativeVolumeDelta = new CumulativeVolumeDelta(periods.cvd());
+        this.vpin = new Vpin(periods.vpinBuckets(), periods.vpinBucketCandles());
+        this.absorption = new Absorption(periods.absorptionDeltaMin(), periods.absorptionVolumeRatioMin(),
+                periods.absorptionMaxMoveAtr(), periods.absorptionWindow());
+        this.emaSlopePeriods = periods.emaSlope();
         this.volatilityShortPeriods = periods.volatilityShort();
         this.volatilityLongPeriods = periods.volatilityLong();
         this.volumeAveragePeriods = periods.volumeAverage();
@@ -95,6 +126,7 @@ public class FeatureExtractor implements CandleEventListener {
 
         BigDecimal sma = smaIncremental.updateSum(close).orElse(BigDecimal.ZERO);
         BigDecimal ema = emaIncremental.update(close);
+        BigDecimal emaSlope = calculateEmaSlope(ema);
         BigDecimal rsi = rsiIncremental.update(close).orElse(NEUTRAL_OSCILLATOR);
         var macd = macdIndicator.update(close);
         BigDecimal atr = atrIndicator.update(candle).orElse(BigDecimal.ZERO);
@@ -104,6 +136,10 @@ public class FeatureExtractor implements CandleEventListener {
         BigDecimal mfi = mfiIndicator.update(candle).orElse(NEUTRAL_OSCILLATOR);
         var donchian = donchianChannel.update(candle);
         var priceActionValue = priceAction.update(candle);
+        var cvd = cumulativeVolumeDelta.update(candle);
+        BigDecimal vpinValue = vpin.update(candle);
+        BigDecimal volumeRatio = calculateVolumeRatio(candle);
+        var absorptionValue = absorption.update(candle, cvd.deltaRatio(), volumeRatio, atr);
 
         ZonedDateTime zdt = candle.closeTime().atZone(ZoneOffset.UTC);
 
@@ -120,7 +156,7 @@ public class FeatureExtractor implements CandleEventListener {
                 .macdValue(macd.map(MacdIndicator.MacdValue::macd).orElse(BigDecimal.ZERO))
                 .macdSignal(macd.map(MacdIndicator.MacdValue::signal).orElse(BigDecimal.ZERO))
                 .atrValue(atr)
-                .volumeRatio(calculateVolumeRatio(candle))
+                .volumeRatio(volumeRatio)
                 .highLowRatio(calculateHighLowRatio(candle))
                 .closePosition(calculateClosePosition(candle))
                 .hourOfDay(zdt.getHour())
@@ -131,6 +167,7 @@ public class FeatureExtractor implements CandleEventListener {
                 .minusDi(adx.map(AdxIndicator.AdxValue::minusDi).orElse(BigDecimal.ZERO))
                 .atrPercent(calculateAtrPercent(atr, close))
                 .bbWidth(bollinger.map(BollingerBands.BollingerValue::width).orElse(BigDecimal.ZERO))
+                .emaSlope(emaSlope)
 
                 .vwap(vwapValue)
                 .vwapDistance(percentDistanceFrom(close, vwapValue))
@@ -140,12 +177,38 @@ public class FeatureExtractor implements CandleEventListener {
                 .donchianPosition(donchian.map(DonchianChannel.DonchianValue::position).orElse(BigDecimal.ZERO))
 
                 .mfi(mfi)
+                .volumeDelta(cvd.volumeDelta())
+                .deltaRatio(cvd.deltaRatio())
+                .cvd(cvd.cvd())
+                .cvdRatio(cvd.cvdRatio())
+                .largeCvd(cvd.largeCvd())
+                .largeVolumeShare(cvd.largeVolumeShare())
+                .vpin(vpinValue)
+                .absorption(absorptionValue.strength())
+                .absorptionSum(absorptionValue.windowSum())
+                .orderBookImbalance(orderBook.imbalanceFor(candle))
 
                 .priceAction(PriceActionFeatures.from(priceActionValue))
+                .deriv(derivatives.featuresFor(candle))
 
                 .price(close)
                 .tickCount(candle.tickCount())
                 .build();
+    }
+
+    /**
+     * % change of the EMA over the last emaSlopePeriods candles. Zero until that much history exists,
+     * the same "not available yet" convention the other regime fields use.
+     */
+    private BigDecimal calculateEmaSlope(BigDecimal ema) {
+        emaHistory.addLast(ema);
+        if (emaHistory.size() > emaSlopePeriods + 1) {
+            emaHistory.removeFirst();
+        }
+        if (emaHistory.size() <= emaSlopePeriods) {
+            return BigDecimal.ZERO;
+        }
+        return percentDistanceFrom(ema, emaHistory.peekFirst());
     }
 
     private BigDecimal calculateReturn(CandleEvent candle) {
