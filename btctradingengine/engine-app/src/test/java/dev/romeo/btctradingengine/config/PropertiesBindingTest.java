@@ -11,6 +11,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -26,7 +27,7 @@ class PropertiesBindingTest {
     @EnableConfigurationProperties({MarketProperties.class, IndicatorProperties.class, FeatureProperties.class,
             PredictionProperties.class, TradingProperties.class, BinanceProperties.class, DerivativesProperties.class,
             OrderBookProperties.class, BacktestProperties.class, DbProperties.class, AlertProperties.class,
-            DashboardProperties.class, PriceBusProperties.class})
+            DashboardProperties.class, PriceBusProperties.class, ResilienceProperties.class})
     @ImportAutoConfiguration(ValidationAutoConfiguration.class)
     @Import(StartupSettingsValidator.class)
     static class Settings {
@@ -83,7 +84,21 @@ class PropertiesBindingTest {
             assertEquals(7, context.getBean(DbProperties.class).ticksRetentionDays());
             assertEquals(50000, context.getBean(PriceBusProperties.class).queueCapacity());
             assertEquals(8, context.getBean(BacktestProperties.class).klineCacheMaxEntries());
+
+            var resilience = context.getBean(ResilienceProperties.class).toSettings();
+            assertEquals(Duration.ofSeconds(10), resilience.requestTimeout());
+            assertEquals(4, resilience.maxAttempts());
+            assertEquals(Duration.ofMillis(500), resilience.initialBackoff());
+            assertEquals(5000, resilience.spotWeightPerMinute());
+            assertEquals(2000, resilience.futuresWeightPerMinute());
+            assertEquals(Duration.ofMinutes(2), resilience.banFallback());
         }
+    }
+
+    @Test
+    void resilienceRetryNeedsAtLeastOneAttempt() {
+        String message = failure("--binance.resilience.retry.max.attempts=0");
+        assertTrue(message.contains("binance.resilience.retry.max.attempts must be at least 1"), message);
     }
 
     @Test

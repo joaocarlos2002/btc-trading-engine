@@ -20,6 +20,7 @@ import dev.romeo.btctradingengine.persistence.JdbcOrderCommandStore;
 import dev.romeo.btctradingengine.persistence.OrderBookSnapshotWriter;
 import dev.romeo.btctradingengine.persistence.TickRetentionJob;
 import dev.romeo.btctradingengine.prediction.PredictionSettings;
+import dev.romeo.btctradingengine.resilience.BinanceResilience;
 import dev.romeo.btctradingengine.trading.ConnectivityGuard;
 import dev.romeo.btctradingengine.trading.PositionManager;
 import dev.romeo.btctradingengine.trading.TradeJournal;
@@ -119,16 +120,17 @@ public class LivePipelineConfiguration {
     @Bean(destroyMethod = "")
     @ConditionalOnProperty(name = "orderbook.enabled", havingValue = "true")
     OrderBookPoller orderBookPoller(OrderBookHistory history, DataSource dataSource, OrderBookProperties orderBook,
-                                    MarketProperties market) {
-        return new OrderBookPoller(new BinanceDepthClient(orderBook.restUrl()), history,
+                                    MarketProperties market, BinanceResilience resilience) {
+        return new OrderBookPoller(new BinanceDepthClient(resilience, orderBook.restUrl()), history,
                 new OrderBookSnapshotWriter(dataSource), market.symbol(), orderBook.depthLevels(),
                 orderBook.pollSeconds());
     }
 
     @Bean(destroyMethod = "")
-    BinanceAdapter marketDataSource(MarketProperties market, BinanceProperties binance) {
-        return new BinanceAdapter(market.dataWsUrl(), market.symbol(),
-                binance.maxRetries(), binance.initialBackoffMs(), binance.maxBackoffMs());
+    BinanceAdapter marketDataSource(MarketProperties market, BinanceProperties binance, BinanceResilience resilience) {
+        return new BinanceAdapter(market.dataWsUrl(), market.symbol(), binance.maxRetries(),
+                resilience.settings().backoff(Duration.ofMillis(binance.initialBackoffMs()),
+                        Duration.ofMillis(binance.maxBackoffMs())));
     }
 
     @Bean(destroyMethod = "")
@@ -144,7 +146,7 @@ public class LivePipelineConfiguration {
                               ObjectProvider<DerivativesHistory> derivativesHistory,
                               ObjectProvider<DerivativesPoller> derivativesPoller,
                               ObjectProvider<OrderBookHistory> orderBookHistory,
-                              ObjectProvider<OrderBookPoller> orderBookPoller,
+                              ObjectProvider<OrderBookPoller> orderBookPoller, BinanceResilience resilience,
                               @Qualifier("spotKlineClient") BinanceKlineClient spotKlineClient, BinanceAdapter source, PriceEventBus priceEventBus,
                               MarketProperties market, FeatureProperties features, TradingProperties trading,
                               BinanceProperties binance, IndicatorPeriods periods, PredictionSettings prediction) {
@@ -152,7 +154,7 @@ public class LivePipelineConfiguration {
                 orderCommands, positionManager, connectivityGuard, alertNotifier, dashboardState,
                 derivativesHistory.getIfAvailable(), derivativesPoller.getIfAvailable(),
                 orderBookHistory.getIfAvailable(), orderBookPoller.getIfAvailable(),
-                spotKlineClient, source, priceEventBus),
+                spotKlineClient, source, priceEventBus, resilience),
                 market, features, trading, binance, periods, prediction);
     }
 }

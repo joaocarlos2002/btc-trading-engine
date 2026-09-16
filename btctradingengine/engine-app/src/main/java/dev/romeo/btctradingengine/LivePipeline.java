@@ -29,6 +29,7 @@ import dev.romeo.btctradingengine.prediction.RuleBasedPredictor;
 import dev.romeo.btctradingengine.trading.BinanceOrderExecutor;
 import dev.romeo.btctradingengine.trading.BinanceReconciliationService;
 import dev.romeo.btctradingengine.trading.BinanceUserDataStreamClient;
+import dev.romeo.btctradingengine.resilience.BinanceResilience;
 import dev.romeo.btctradingengine.trading.ConnectivityGuard;
 import dev.romeo.btctradingengine.trading.OrderConfirmationManager;
 import dev.romeo.btctradingengine.trading.PortfolioManager;
@@ -41,6 +42,7 @@ import org.springframework.boot.ApplicationRunner;
 
 import javax.sql.DataSource;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.math.RoundingMode;
 
 /**
@@ -74,7 +76,8 @@ public class LivePipeline implements ApplicationRunner, AutoCloseable {
             OrderBookPoller orderBookPoller,
             BinanceKlineClient spotKlines,
             BinanceAdapter source,
-            PriceEventBus priceEventBus) {
+            PriceEventBus priceEventBus,
+            BinanceResilience resilience) {
     }
 
     private final Components c;
@@ -223,8 +226,11 @@ public class LivePipeline implements ApplicationRunner, AutoCloseable {
     private void startRealTrading(String symbol) {
         PositionManager positionManager = c.positionManager();
         AlertNotifier alertNotifier = c.alertNotifier();
+        // Shared REST policies (issue #100): per-request retries live there; exit retries across ticks stay in
+        // PositionManager, and an open order breaker blocks entries through the guard, never exits
         BinanceOrderExecutor executor = new BinanceOrderExecutor(binance.apiKey(), binance.apiSecret(),
-                binance.restUrl(), binance.maxRetries(), binance.initialBackoffMs(), binance.maxBackoffMs());
+                binance.restUrl(), c.resilience());
+        c.connectivityGuard().setExchangeHealth(executor::circuitOpenReason);
         BinanceOrderExecutor.BalanceResult balance = executor.getBalance("USDT");
         if (!balance.success() || balance.total().compareTo(BigDecimal.ZERO) <= 0) {
             alertNotifier.alert("Startup aborted: could not validate positive USDT balance: " + balance.error());
@@ -280,7 +286,8 @@ public class LivePipeline implements ApplicationRunner, AutoCloseable {
         c.dashboardState().attachOrderConfirmationManager(confirmationManager);
 
         userDataStream = new BinanceUserDataStreamClient(binance.apiKey(), binance.apiSecret(),
-                binance.testnetEndpoint(), binance.maxRetries(), binance.initialBackoffMs(), binance.maxBackoffMs());
+                binance.testnetEndpoint(), binance.maxRetries(), c.resilience().settings()
+                        .backoff(Duration.ofMillis(binance.initialBackoffMs()), Duration.ofMillis(binance.maxBackoffMs())));
         userDataStream.setExecutionReportListener(report -> {
             logger.debug("Execution report received: orderId={} status={}", report.orderId(), report.orderStatus());
             confirmationManager.processExecutionReport(report);
