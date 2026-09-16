@@ -464,6 +464,21 @@ public class Config {
         return Long.parseLong(getProperty("backtest.kline.cache.max.candles", "600000"));
     }
 
+    /** Days of raw ticks kept in the database; 0 keeps them forever (issue #85). Also bounds tick replay. */
+    public static int getTicksRetentionDays() {
+        return Integer.parseInt(getProperty("db.ticks.retention.days", "7"));
+    }
+
+    /** Rows removed per DELETE by the ticks retention job (issue #85). */
+    public static int getTicksRetentionBatchSize() {
+        return Integer.parseInt(getProperty("db.ticks.retention.batch.size", "10000"));
+    }
+
+    /** Minutes between ticks retention runs (issue #85). */
+    public static long getTicksRetentionIntervalMinutes() {
+        return Long.parseLong(getProperty("db.ticks.retention.interval.minutes", "60"));
+    }
+
     private static String getProperty(String key, String defaultValue) {
         return props.getProperty(key, defaultValue);
     }

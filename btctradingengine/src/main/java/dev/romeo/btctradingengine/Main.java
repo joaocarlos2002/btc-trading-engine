@@ -21,6 +21,7 @@ import dev.romeo.btctradingengine.persistence.OrderBookSnapshotWriter;
 import dev.romeo.btctradingengine.persistence.DataSourceManager;
 import dev.romeo.btctradingengine.persistence.DatabaseCandleReader;
 import dev.romeo.btctradingengine.persistence.DatabaseInitializer;
+import dev.romeo.btctradingengine.persistence.TickRetentionJob;
 import dev.romeo.btctradingengine.persistence.DatabaseWriter;
 import dev.romeo.btctradingengine.persistence.JdbcOrderCommandStore;
 import dev.romeo.btctradingengine.prediction.RuleBasedPredictor;
@@ -45,6 +46,8 @@ public class Main {
 
             DatabaseWriter dbWriter = new DatabaseWriter();
             dbWriter.start();
+            TickRetentionJob tickRetention = TickRetentionJob.fromConfig();
+            tickRetention.start();
 
             TradeJournal tradeJournal = new TradeJournal();
             tradeJournal.createTableIfNotExists();
@@ -306,6 +309,7 @@ public class Main {
 
                 logger.info("Trades saved: {}", positionManager.getTotalTrades());
 
+                tickRetention.close();
                 dbWriter.stop();
                 DataSourceManager.close();
                 dashboardState.close();
