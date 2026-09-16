@@ -401,6 +401,15 @@ public class BinanceOrderExecutor {
     }
 
     public Optional<OrderResult> findOrderByClientOrderId(String symbol, String clientOrderId) {
+        return queryOrder(symbol, clientOrderId).map(order -> new OrderResult(
+                true, String.valueOf(order.orderId()), order.executedQuantity(), order.averagePrice(), null));
+    }
+
+    /**
+     * GET /api/v3/order by clientOrderId. Empty when the request fails or Binance does not know the
+     * order - which is not the same as "filled", so callers must not assume a fill from it.
+     */
+    public Optional<QueriedOrder> queryOrder(String symbol, String clientOrderId) {
         try {
             Map<String, String> params = new TreeMap<>();
             params.put("symbol", symbol);
@@ -420,11 +429,20 @@ public class BinanceOrderExecutor {
             BigDecimal quote = new BigDecimal(json.path("cummulativeQuoteQty").asText("0"));
             BigDecimal price = qty.signum() > 0
                     ? quote.divide(qty, 8, java.math.RoundingMode.HALF_UP) : BigDecimal.ZERO;
-            return Optional.of(new OrderResult(true, json.path("orderId").asText(), qty, price, null));
+            return Optional.of(new QueriedOrder(json.path("orderId").asLong(), clientOrderId,
+                    json.path("status").asText(""), qty, price));
         } catch (Exception ignored) {
             return Optional.empty();
         }
     }
+
+    public record QueriedOrder(
+            long orderId,
+            String clientOrderId,
+            String status,                  // NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED...
+            BigDecimal executedQuantity,
+            BigDecimal averagePrice
+    ) {}
 
     public SymbolFilters getSymbolFilters(String symbol) {
         try {
