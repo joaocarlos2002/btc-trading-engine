@@ -7,10 +7,16 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class BinanceOrderExecutorRetryTest {
@@ -106,5 +112,97 @@ public class BinanceOrderExecutorRetryTest {
 
         assertFalse(result.success());
         assertEquals(1, requestCount.get());
+    }
+
+    private static long timestampOf(String query) {
+        for (String pair : query.split("&")) {
+            if (pair.startsWith("timestamp=")) {
+                return Long.parseLong(pair.substring("timestamp=".length()));
+            }
+        }
+        throw new AssertionError("no timestamp in " + query);
+    }
+
+    @Test
+    public void failsWithinTimeoutWhenServerNeverResponds() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.setExecutor(Executors.newCachedThreadPool());
+        server.createContext("/api/v3/order", exchange -> {
+            try {
+                release.await(); // never answers while the client waits
+            } catch (InterruptedException ignored) {
+            }
+            exchange.close();
+        });
+        server.start();
+        String baseUrl = "http://localhost:" + server.getAddress().getPort();
+        BinanceOrderExecutor executor = new BinanceOrderExecutor("key", "secret", baseUrl, 3, 10, 50,
+                Duration.ofMillis(500), Duration.ofMillis(500));
+
+        long start = System.nanoTime();
+        BinanceOrderExecutor.OrderResult result = executor.executeBuyMarket("BTCUSDT", BigDecimal.ONE, null);
+        long elapsedMs = Duration.ofNanos(System.nanoTime() - start).toMillis();
+        release.countDown();
+
+        assertFalse(result.success());
+        assertTrue(elapsedMs < 10_000, "took " + elapsedMs + "ms");
+        assertTrue(BinanceOrderExecutor.REQUEST_TIMEOUT.compareTo(Duration.ofSeconds(10)) <= 0);
+        assertTrue(BinanceOrderExecutor.CONNECT_TIMEOUT.compareTo(Duration.ofSeconds(5)) <= 0);
+    }
+
+    @Test
+    public void resignsEachRetryWithFreshTimestamp() throws Exception {
+        List<Long> timestamps = new CopyOnWriteArrayList<>();
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/api/v3/account", exchange -> {
+            timestamps.add(timestampOf(exchange.getRequestURI().getRawQuery()));
+            if (timestamps.size() < 3) {
+                respond(exchange, 429, "{\"msg\":\"rate limited\"}");
+            } else {
+                respond(exchange, 200, "{\"balances\":[{\"asset\":\"USDT\",\"free\":\"1.0\",\"locked\":\"0.0\"}]}");
+            }
+        });
+        server.start();
+
+        assertTrue(executorFor(5).getBalance("USDT").success());
+
+        assertEquals(3, timestamps.size());
+        assertNotEquals(timestamps.get(0), timestamps.get(1));
+        assertNotEquals(timestamps.get(1), timestamps.get(2));
+    }
+
+    @Test
+    public void doesNotRetryWhenIpBanned() throws Exception {
+        AtomicInteger requestCount = new AtomicInteger(0);
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/api/v3/account", exchange -> {
+            requestCount.incrementAndGet();
+            respond(exchange, 418, "{\"code\":-1003,\"msg\":\"banned\"}");
+        });
+        server.start();
+
+        assertFalse(executorFor(5).getBalance("USDT").success());
+        assertEquals(1, requestCount.get());
+    }
+
+    @Test
+    public void signsWithServerClockOffset() throws Exception {
+        long skewMs = Duration.ofHours(1).toMillis();
+        List<Long> timestamps = new CopyOnWriteArrayList<>();
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/api/v3/time", exchange ->
+                respond(exchange, 200, "{\"serverTime\":" + (System.currentTimeMillis() + skewMs) + "}"));
+        server.createContext("/api/v3/account", exchange -> {
+            timestamps.add(timestampOf(exchange.getRequestURI().getRawQuery()));
+            respond(exchange, 200, "{\"balances\":[]}");
+        });
+        server.start();
+
+        executorFor(0).getBalance("USDT");
+
+        assertEquals(1, timestamps.size());
+        long drift = timestamps.get(0) - System.currentTimeMillis();
+        assertTrue(Math.abs(drift - skewMs) < 5_000, "offset not applied, drift=" + drift);
     }
 }

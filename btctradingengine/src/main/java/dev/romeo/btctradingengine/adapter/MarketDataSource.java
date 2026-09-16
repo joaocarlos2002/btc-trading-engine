@@ -1,8 +1,7 @@
 package dev.romeo.btctradingengine.adapter;
 
-public interface MarketDataSource {
-    void start(PriceEventListener listener);
+import dev.romeo.btctradingengine.port.MarketDataPort;
 
-    void stop();
+/** Live market data adapters; the contract is {@link MarketDataPort}. */
+public interface MarketDataSource extends MarketDataPort {
 }
-

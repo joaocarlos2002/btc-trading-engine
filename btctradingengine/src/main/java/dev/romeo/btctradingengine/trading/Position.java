@@ -16,10 +16,10 @@ public class Position {
 
     private BigDecimal currentPrice;
     private Instant lastUpdateTime;
-    private PositionStatus status;
+    private PositionState state;
     private BigDecimal exitPrice;
     private Instant exitTime;
-    private String exitReason;                                      // "TARGET_HIT", "STOP_LOSS", "MANUAL_CLOSE"
+    private ExitReason exitReason;
     private BigDecimal quantity = BigDecimal.ZERO;                  // quantidade preenchida (cumulativa)
     private BigDecimal targetQuantity = BigDecimal.ZERO;            // quantidade total solicitada na ordem
 
@@ -27,8 +27,15 @@ public class Position {
         OPEN, CLOSED, STOPPED_OUT
     }
 
+    /** Starts OPEN: restored rows and tests hold an entry that already executed. */
     public Position(String positionId, Signal signal, BigDecimal entryPrice,
                    Instant entryTime, BigDecimal targetPercent, BigDecimal stopLossPercent) {
+        this(positionId, signal, entryPrice, entryTime, targetPercent, stopLossPercent, PositionState.OPEN);
+    }
+
+    public Position(String positionId, Signal signal, BigDecimal entryPrice,
+                   Instant entryTime, BigDecimal targetPercent, BigDecimal stopLossPercent,
+                   PositionState initialState) {
         this.positionId = positionId;
         this.signal = signal;
         this.entryPrice = entryPrice;
@@ -37,7 +44,18 @@ public class Position {
         this.stopLossPercent = stopLossPercent;
         this.currentPrice = entryPrice;
         this.lastUpdateTime = entryTime;
-        this.status = PositionStatus.OPEN;
+        this.state = java.util.Objects.requireNonNull(initialState, "initialState");
+    }
+
+    /**
+     * Moves to {@code target} or throws: an illegal transition means the caller's view of the
+     * position is wrong, and acting on it could send an order that should not exist.
+     */
+    public void transitionTo(PositionState target) {
+        if (!state.canTransitionTo(target)) {
+            throw new PositionState.IllegalTransitionException(positionId, state, target);
+        }
+        this.state = target;
     }
 
     public void updatePrice(BigDecimal price, Instant time) {
@@ -46,7 +64,7 @@ public class Position {
     }
 
     public boolean hasHitTarget() {
-        if (status != PositionStatus.OPEN) {
+        if (state.isTerminal()) {
             return false;
         }
 
@@ -65,7 +83,7 @@ public class Position {
     }
 
     public boolean hasHitStopLoss() {
-        if (status != PositionStatus.OPEN) {
+        if (state.isTerminal()) {
             return false;
         }
 
@@ -84,26 +102,28 @@ public class Position {
     }
 
     public void closeAtTarget(BigDecimal exitPrice, Instant exitTime) {
-        close(exitPrice, exitTime, "TARGET_HIT");
+        close(exitPrice, exitTime, ExitReason.TARGET_HIT);
     }
 
     public void closeAtStopLoss(BigDecimal exitPrice, Instant exitTime) {
-        close(exitPrice, exitTime, "STOP_LOSS");
+        close(exitPrice, exitTime, ExitReason.STOP_LOSS);
     }
 
     public void closeManual(BigDecimal exitPrice, Instant exitTime) {
-        close(exitPrice, exitTime, "MANUAL_CLOSE");
+        close(exitPrice, exitTime, ExitReason.MANUAL_CLOSE);
     }
 
+    /** Restores a row from the trade journal; an unknown stored reason becomes null. */
     public void restoreClosed(BigDecimal exitPrice, Instant exitTime, String reason) {
-        close(exitPrice, exitTime, reason);
+        close(exitPrice, exitTime, ExitReason.parse(reason));
     }
 
-    private void close(BigDecimal exitPrice, Instant exitTime, String reason) {
+    /** CLOSED, or FAILED for an entry that never executed; throws from a state that cannot close. */
+    public void close(BigDecimal exitPrice, Instant exitTime, ExitReason reason) {
+        transitionTo(PositionState.terminalFor(reason));
         this.exitPrice = exitPrice;
         this.exitTime = exitTime;
         this.exitReason = reason;
-        this.status = PositionStatus.CLOSED;
     }
 
     public BigDecimal getPnL() {
@@ -134,11 +154,14 @@ public class Position {
     public void setEntryPrice(BigDecimal entryPrice) { this.entryPrice = entryPrice; }
     public Instant getEntryTime() { return entryTime; }
     public BigDecimal getCurrentPrice() { return currentPrice; }
+    public Instant getLastUpdateTime() { return lastUpdateTime; }
     public BigDecimal getExitPrice() { return exitPrice; }
     public Instant getExitTime() { return exitTime; }
-    public String getExitReason() { return exitReason; }
-    public PositionStatus getStatus() { return status; }
-    public boolean isOpen() { return status == PositionStatus.OPEN; }
+    public ExitReason getExitReason() { return exitReason; }
+    public PositionStatus getStatus() { return state.isTerminal() ? PositionStatus.CLOSED : PositionStatus.OPEN; }
+    public PositionState getState() { return state; }
+    /** Not closed or failed yet: a pending entry or exit still counts as open. */
+    public boolean isOpen() { return !state.isTerminal(); }
     public BigDecimal getTargetPercent() { return targetPercent; }
     public BigDecimal getStopLossPercent() { return stopLossPercent; }
     public BigDecimal getQuantity() { return quantity; }
@@ -146,8 +169,14 @@ public class Position {
     public BigDecimal getTargetQuantity() { return targetQuantity; }
     public void setTargetQuantity(BigDecimal targetQuantity) { this.targetQuantity = targetQuantity; }
 
+    /**
+     * A cumulative fill never shrinks: a late, duplicated or empty confirmation must not drop the
+     * quantity already known, or the exit order would sell less than was bought (issue #63).
+     */
     public void applyFill(BigDecimal cumulativeFilledQuantity) {
-        this.quantity = cumulativeFilledQuantity;
+        if (cumulativeFilledQuantity != null && cumulativeFilledQuantity.compareTo(quantity) > 0) {
+            this.quantity = cumulativeFilledQuantity;
+        }
     }
 
     public BigDecimal getRemainingQuantity() {

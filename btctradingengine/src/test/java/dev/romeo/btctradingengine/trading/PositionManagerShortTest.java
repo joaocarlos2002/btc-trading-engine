@@ -93,6 +93,7 @@ public class PositionManagerShortTest {
         PositionManager manager = manager();
         // Even explicitly allowed, real spot must refuse: there is nothing to sell.
         manager.setAllowShort(true);
+        manager.setOrderIoExecutor(Runnable::run);
         manager.setRealTradingMode(executor, new PortfolioManager(new BigDecimal("1000"), new BigDecimal("5")), "BTCUSDT");
         manager.markReconciliationComplete();
 
@@ -106,6 +107,7 @@ public class PositionManagerShortTest {
     public void realModeStillOpensABuy() {
         RecordingExecutor executor = new RecordingExecutor();
         PositionManager manager = manager();
+        manager.setOrderIoExecutor(Runnable::run);
         manager.setRealTradingMode(executor, new PortfolioManager(new BigDecimal("1000"), new BigDecimal("5")), "BTCUSDT");
         manager.markReconciliationComplete();
 

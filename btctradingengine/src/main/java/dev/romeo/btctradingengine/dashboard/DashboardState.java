@@ -7,6 +7,7 @@ import dev.romeo.btctradingengine.feature.FeatureVector;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
 import dev.romeo.btctradingengine.prediction.PredictionVector;
+import dev.romeo.btctradingengine.trading.ExitReason;
 import dev.romeo.btctradingengine.trading.Position;
 import dev.romeo.btctradingengine.trading.PositionManager;
 import dev.romeo.btctradingengine.trading.OrderConfirmationManager;
@@ -104,13 +105,11 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
             return new ManualBuyResult(false, "Waiting for a current market price");
         }
 
-        boolean opened = manager.openManualBuy(tick.price(), tick.eventTimestamp() != null ? tick.eventTimestamp() : Instant.now());
-        if (!opened) {
-            return new ManualBuyResult(false, "A position is already open or trading is blocked");
-        }
-
+        PositionManager.ManualBuyResult result = manager.openManualBuy(
+                tick.price(), tick.eventTimestamp() != null ? tick.eventTimestamp() : Instant.now());
+        // Refresh either way: a failed real entry still adds a closed position
         refreshPositions();
-        return new ManualBuyResult(true, "Manual BUY opened");
+        return new ManualBuyResult(result.opened(), result.message());
     }
 
     public ManualBuyResult manualClose() {
@@ -131,7 +130,8 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
         }
 
         refreshPositions();
-        return new ManualBuyResult(true, "Position closed manually");
+        boolean exitPending = manager.getOpenPosition().isPresent();
+        return new ManualBuyResult(true, exitPending ? "Exit order sent" : "Position closed manually");
     }
 
     public void addSession(WebSocketSession session) {
@@ -167,7 +167,10 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
 
     public Stats stats() {
         if (positionManager == null) return new Stats(0, 0, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
-        List<Position> positions = positionManager.getClosedPositions();
+        // Same filter as PositionManager's counters: failed entries are not trades
+        List<Position> positions = positionManager.getClosedPositions().stream()
+                .filter(ExitReason::isPerformanceTrade)
+                .toList();
         BigDecimal pnl = positionManager.getTotalPnL();
         BigDecimal peak = BigDecimal.ZERO;
         BigDecimal equity = BigDecimal.ZERO;

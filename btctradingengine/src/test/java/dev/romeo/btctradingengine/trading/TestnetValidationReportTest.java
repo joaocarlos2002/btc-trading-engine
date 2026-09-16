@@ -54,4 +54,32 @@ public class TestnetValidationReportTest {
         assertEquals(1, report.getIncompleteFillCount());
         assertFalse(report.allFillsConfirmed());
     }
+
+    @Test
+    public void failedEntriesAreKeptOutOfPerformanceButStillBrokenDown() {
+        Position winner = closedPosition(BigDecimal.valueOf(100), BigDecimal.valueOf(110),
+                BigDecimal.valueOf(2), BigDecimal.valueOf(2), "SIGNAL_REVERSAL");
+        Position failed = closedPosition(BigDecimal.valueOf(100), BigDecimal.valueOf(100),
+                BigDecimal.ZERO, BigDecimal.valueOf(2), "ORDER_FAILED");
+        Position invalid = closedPosition(BigDecimal.valueOf(100), BigDecimal.valueOf(100),
+                BigDecimal.ZERO, BigDecimal.ZERO, "VALIDATION_FAILED");
+
+        TestnetValidationReport report = new TestnetValidationReport(List.of(winner, failed, invalid));
+
+        assertEquals(1, report.getTotalTrades());
+        assertEquals(1, report.getWinTrades());
+        assertEquals(0, BigDecimal.valueOf(100).compareTo(report.getWinRate()));
+        assertEquals(0, report.getIncompleteFillCount(), "a failed entry is not an incomplete fill");
+        assertEquals(1L, report.getExitReasonBreakdown().get("ORDER_FAILED"));
+        assertEquals(1L, report.getExitReasonBreakdown().get("SIGNAL_REVERSAL"));
+    }
+
+    @Test
+    public void legacyReasonsStillLoad() {
+        assertEquals(ExitReason.TARGET_HIT, ExitReason.parse("TARGET_HIT"));
+        assertEquals(ExitReason.STOP_LOSS, ExitReason.parse("STOP_LOSS"));
+        assertEquals(ExitReason.MANUAL_CLOSE, ExitReason.parse("MANUAL_CLOSE"));
+        assertEquals(null, ExitReason.parse("SOMETHING_ELSE"));
+        assertEquals(null, ExitReason.parse(null));
+    }
 }

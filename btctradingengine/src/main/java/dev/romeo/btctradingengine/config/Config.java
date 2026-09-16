@@ -174,6 +174,25 @@ public class Config {
     public static boolean isMainnetTradingConfirmed() { return Boolean.parseBoolean(getProperty("trading.confirm.mainnet", "false")); }
     public static BigDecimal getTradingInitialCapital() { return getDecimal("trading.initial.capital.usdt", "100"); }
     public static BigDecimal getTradingMaxDrawdownPercent() { return getDecimal("trading.max.drawdown.percent", "5"); }
+    /** OCO target/stop resting on Binance for real positions (issue #99); BTC_ENGINE_TRADING_OCO_ENABLED overrides. */
+    public static boolean isOcoProtectionEnabled() {
+        return Boolean.parseBoolean(getEnvironmentOrProperty("BTC_ENGINE_TRADING_OCO_ENABLED", "trading.oco.enabled", "true"));
+    }
+    public static BigDecimal getOcoStopLimitOffsetPercent() { return getDecimal("trading.oco.stop.limit.offset.percent", "0.1"); }
+    /** Position sizing (issue #111): fixed (default), atr or kelly; BTC_ENGINE_TRADING_SIZING_STRATEGY overrides. */
+    public static String getSizingStrategyName() {
+        return getEnvironmentOrProperty("BTC_ENGINE_TRADING_SIZING_STRATEGY", "trading.sizing.strategy", "fixed");
+    }
+    public static BigDecimal getSizingFraction() { return getDecimal("trading.sizing.fraction", "0.5"); }
+    public static BigDecimal getSizingAtrRiskPercent() { return getDecimal("trading.sizing.atr.risk.percent", "1.0"); }
+    public static BigDecimal getSizingAtrMultiplier() { return getDecimal("trading.sizing.atr.multiplier", "2.0"); }
+    public static BigDecimal getSizingKellyFraction() { return getDecimal("trading.sizing.kelly.fraction", "0.25"); }
+    public static int getSizingKellyMinTrades() { return Integer.parseInt(getProperty("trading.sizing.kelly.min.trades", "30")); }
+    public static dev.romeo.btctradingengine.trading.PositionSizingStrategy getPositionSizingStrategy() {
+        return dev.romeo.btctradingengine.trading.PositionSizingStrategy.named(getSizingStrategyName(),
+                getSizingFraction(), getSizingAtrRiskPercent(), getSizingAtrMultiplier(),
+                getSizingKellyFraction(), getSizingKellyMinTrades());
+    }
     public static boolean isShortSellingAllowed() { return Boolean.parseBoolean(getProperty("trading.allow.short", "false")); }
     public static long getMaxDataStalenessSeconds() { return Long.parseLong(getProperty("trading.max.data.staleness.seconds", "60")); }
     public static BigDecimal getBacktestCommissionRate() { return getDecimal("backtest.commission.rate", "0.001"); }
@@ -262,6 +281,12 @@ public class Config {
             throw new IllegalArgumentException("Trading capital and max drawdown must be positive");
         }
         requirePositive("trading.max.data.staleness.seconds", getMaxDataStalenessSeconds());
+        // Builds the strategy so a bad name or out-of-range fraction fails at startup, not at the first entry
+        getPositionSizingStrategy();
+        if (getOcoStopLimitOffsetPercent().compareTo(BigDecimal.ZERO) <= 0
+                || getOcoStopLimitOffsetPercent().compareTo(BigDecimal.TEN) >= 0) {
+            throw new IllegalArgumentException("trading.oco.stop.limit.offset.percent must be in (0, 10)");
+        }
         if (getDbPassword().isBlank()) {
             logger.warn("db.password is blank: set BTC_ENGINE_DB_PASSWORD in .env (see .env.example), "
                     + "the same variable docker-compose uses to create the database. "

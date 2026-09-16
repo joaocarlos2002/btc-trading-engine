@@ -2,48 +2,108 @@ package dev.romeo.btctradingengine.trading;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import dev.romeo.btctradingengine.config.Config;
 
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.net.URI;
+import java.net.http.HttpClient;
 import java.net.http.WebSocket;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.HexFormat;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 
+/**
+ * User Data Stream over the WebSocket API ({@code userDataStream.subscribe.signature}).
+ * The REST listenKey endpoints were retired by Binance on 2026-02-20.
+ */
 public class BinanceUserDataStreamClient {
     private static final Logger logger = LoggerFactory.getLogger(BinanceUserDataStreamClient.class);
 
-    private final String apiKey;
-    private final String baseUrl;
-    private final ObjectMapper mapper = new ObjectMapper();
-    private final HttpClient httpClient;
-    private final int maxRetries = Config.getBinanceMaxRetries();
-    private final long initialBackoffMs = Config.getBinanceInitialBackoffMs();
-    private final long maxBackoffMs = Config.getBinanceMaxBackoffMs();
-    private final AtomicInteger reconnectAttempts = new AtomicInteger(0);
+    static final String MAINNET_WS_API_URL = "wss://ws-api.binance.com:443/ws-api/v3";
+    static final String TESTNET_WS_API_URL = "wss://ws-api.testnet.binance.vision/ws-api/v3";
+    static final String SUBSCRIBE_METHOD = "userDataStream.subscribe.signature";
+    private static final Duration HTTP_CONNECT_TIMEOUT = Duration.ofSeconds(5);
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
 
-    private WebSocket webSocket;
-    private String listenKey;
+    /** Opens a WebSocket with the given listener; swapped in tests to avoid the network. */
+    interface SocketFactory {
+        CompletableFuture<WebSocket> open(WebSocket.Listener listener);
+    }
+
+    private final String apiKey;
+    private final String apiSecret;
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final SocketFactory socketFactory;
+    private final LongSupplier clock;
+    private final int maxRetries;
+    private final long initialBackoffMs;
+    private final long maxBackoffMs;
+    private final AtomicInteger reconnectAttempts = new AtomicInteger(0);
+    // Bumped on every connection attempt so callbacks from older sockets are ignored
+    private final AtomicLong generation = new AtomicLong(0);
+
+    private volatile WebSocket webSocket;
     private Consumer<ExecutionReport> executionReportListener;
     private Consumer<String> connectionStatusListener;
     private volatile boolean connected = false;
     private volatile boolean running = false;
-    private static final long LISTEN_KEY_REFRESH_INTERVAL_MS = 20 * 60 * 1000; // 20 minutes
 
-    public BinanceUserDataStreamClient(String apiKey) {
+    private ScheduledExecutorService scheduler;
+    private ScheduledFuture<?> pendingReconnect;
+
+    public BinanceUserDataStreamClient(String apiKey, String apiSecret) {
+        this(apiKey, apiSecret, defaultSocketFactory(defaultWsApiUrl()), System::currentTimeMillis,
+                Config.getBinanceMaxRetries(), Config.getBinanceInitialBackoffMs(), Config.getBinanceMaxBackoffMs());
+    }
+
+    BinanceUserDataStreamClient(String apiKey, String apiSecret, SocketFactory socketFactory, LongSupplier clock,
+                                int maxRetries, long initialBackoffMs, long maxBackoffMs) {
         this.apiKey = apiKey;
-        this.baseUrl = Config.getBinanceRestUrl();
-        this.httpClient = HttpClient.newHttpClient();
+        this.apiSecret = apiSecret;
+        this.socketFactory = socketFactory;
+        this.clock = clock;
+        this.maxRetries = maxRetries;
+        this.initialBackoffMs = initialBackoffMs;
+        this.maxBackoffMs = maxBackoffMs;
+    }
+
+    static String defaultWsApiUrl() {
+        return Config.isBinanceTestnetEndpoint() ? TESTNET_WS_API_URL : MAINNET_WS_API_URL;
+    }
+
+    private static SocketFactory defaultSocketFactory(String wsApiUrl) {
+        HttpClient httpClient = HttpClient.newBuilder().connectTimeout(HTTP_CONNECT_TIMEOUT).build();
+        return listener -> httpClient.newWebSocketBuilder()
+                .connectTimeout(REQUEST_TIMEOUT)
+                .buildAsync(URI.create(wsApiUrl), listener);
     }
 
     public boolean connect() {
-        running = true;
+        synchronized (this) {
+            running = true;
+            if (scheduler == null) {
+                scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+                    Thread t = new Thread(r, "UserDataStreamScheduler");
+                    t.setDaemon(true);
+                    return t;
+                });
+            }
+        }
         boolean success = attemptConnect();
         if (success) {
             reconnectAttempts.set(0);
@@ -52,25 +112,25 @@ public class BinanceUserDataStreamClient {
     }
 
     private boolean attemptConnect() {
+        long gen = generation.incrementAndGet();
+        WebSocket socket = null;
         try {
-            // Step 1: Get listenKey
-            listenKey = createListenKey();
-            if (listenKey == null) {
-                logger.error("âœ— Failed to create listen key");
+            StreamListener listener = new StreamListener(gen);
+            socket = socketFactory.open(listener).get(REQUEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            webSocket = socket;
+            logger.info("âœ“ WebSocket API connected for User Data Stream");
+
+            socket.sendText(buildSubscribeRequest(listener.subscribeRequestId), true);
+            JsonNode response = listener.subscribeResponse.get(REQUEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            if (response.path("status").asInt() != 200) {
+                logger.error("âœ— User Data Stream subscription rejected: {}", response.path("error"));
+                generation.compareAndSet(gen, gen + 1);
+                socket.sendClose(WebSocket.NORMAL_CLOSURE, "Subscription rejected");
+                notifyConnectionStatus("disconnected");
                 return false;
             }
-            logger.info("âœ“ Listen key obtained: {}", listenKey.substring(0, 20) + "...");
-
-            // Step 2: Connect WebSocket
-            String wsUrl = Config.getBinanceWsUrl() + listenKey;
-            CompletionStage<WebSocket> webSocketFuture = httpClient.newWebSocketBuilder()
-                    .buildAsync(URI.create(wsUrl), new WebSocketListener());
-
-            webSocket = webSocketFuture.toCompletableFuture().get(10, TimeUnit.SECONDS);
-            logger.info("âœ“ WebSocket connected for User Data Stream");
-
-            // Step 3: Start listen key refresh thread
-            startListenKeyRefreshThread();
+            logger.info("âœ“ Subscribed to User Data Stream (subscriptionId={})",
+                    response.path("result").path("subscriptionId").asText());
 
             connected = true;
             notifyConnectionStatus("connected");
@@ -78,19 +138,50 @@ public class BinanceUserDataStreamClient {
 
         } catch (Exception e) {
             logger.error("âœ— Failed to connect User Data Stream: {}", e.getMessage(), e);
+            // Failed attempts must not trigger reconnects from their own socket callbacks
+            generation.compareAndSet(gen, gen + 1);
+            if (socket != null) {
+                socket.abort();
+            }
             notifyConnectionStatus("disconnected");
             return false;
         }
     }
 
+    String buildSubscribeRequest(String requestId) throws Exception {
+        long timestamp = clock.getAsLong();
+        // Signature payload: params sorted by name, without the signature itself
+        String payload = "apiKey=" + apiKey + "&timestamp=" + timestamp;
+        ObjectNode request = mapper.createObjectNode();
+        request.put("id", requestId);
+        request.put("method", SUBSCRIBE_METHOD);
+        ObjectNode params = request.putObject("params");
+        params.put("apiKey", apiKey);
+        params.put("timestamp", timestamp);
+        params.put("signature", sign(payload));
+        return mapper.writeValueAsString(request);
+    }
+
+    private String sign(String payload) throws Exception {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(apiSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        return HexFormat.of().formatHex(mac.doFinal(payload.getBytes(StandardCharsets.UTF_8)));
+    }
+
     public void disconnect() {
         running = false;
-        try {
-            if (webSocket != null) {
-                webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "Closing");
+        synchronized (this) {
+            if (scheduler != null) {
+                scheduler.shutdownNow();
+                scheduler = null;
+                pendingReconnect = null;
             }
-            if (listenKey != null) {
-                deleteListenKey(listenKey);
+        }
+        generation.incrementAndGet();
+        try {
+            WebSocket socket = webSocket;
+            if (socket != null) {
+                socket.sendClose(WebSocket.NORMAL_CLOSURE, "Closing");
             }
             connected = false;
             notifyConnectionStatus("disconnected");
@@ -115,19 +206,25 @@ public class BinanceUserDataStreamClient {
         long backoffMs = calculateBackoff(attempt);
         logger.warn("Reconnecting User Data Stream (attempt {}/{}) in {}ms", attempt, maxRetries, backoffMs);
 
-        Thread reconnectThread = new Thread(() -> {
-            try {
-                Thread.sleep(backoffMs);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+        synchronized (this) {
+            if (scheduler == null) {
                 return;
             }
-            if (running && attemptConnect()) {
-                reconnectAttempts.set(0);
+            // Only one pending reconnect at a time
+            if (pendingReconnect != null) {
+                pendingReconnect.cancel(false);
             }
-        }, "UserDataStreamReconnect");
-        reconnectThread.setDaemon(true);
-        reconnectThread.start();
+            pendingReconnect = scheduler.schedule(() -> {
+                if (!running) {
+                    return;
+                }
+                if (attemptConnect()) {
+                    reconnectAttempts.set(0);
+                } else {
+                    scheduleReconnect();
+                }
+            }, backoffMs, TimeUnit.MILLISECONDS);
+        }
     }
 
     private long calculateBackoff(int attempt) {
@@ -147,66 +244,8 @@ public class BinanceUserDataStreamClient {
         return connected && webSocket != null;
     }
 
-    private String createListenKey() {
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/api/v3/userDataStream"))
-                    .header("X-MBX-APIKEY", apiKey)
-                    .POST(HttpRequest.BodyPublishers.noBody())
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() == 200) {
-                JsonNode json = mapper.readTree(response.body());
-                return json.get("listenKey").asText();
-            }
-            logger.error("âœ— Failed to create listen key: {}", response.statusCode());
-            return null;
-        } catch (Exception e) {
-            logger.error("âœ— Error creating listen key: {}", e.getMessage(), e);
-            return null;
-        }
-    }
-
-    private void deleteListenKey(String key) {
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/api/v3/userDataStream?listenKey=" + key))
-                    .header("X-MBX-APIKEY", apiKey)
-                    .DELETE()
-                    .build();
-            httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        } catch (Exception e) {
-            logger.warn("Error deleting listen key: {}", e.getMessage());
-        }
-    }
-
-    private void startListenKeyRefreshThread() {
-        new Thread(() -> {
-            while (connected) {
-                try {
-                    Thread.sleep(LISTEN_KEY_REFRESH_INTERVAL_MS);
-                    refreshListenKey();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-        }, "ListenKeyRefresh").start();
-    }
-
-    private void refreshListenKey() {
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/api/v3/userDataStream?listenKey=" + listenKey))
-                    .header("X-MBX-APIKEY", apiKey)
-                    .PUT(HttpRequest.BodyPublishers.noBody())
-                    .build();
-            httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            logger.debug("âœ“ Listen key refreshed");
-        } catch (Exception e) {
-            logger.warn("Error refreshing listen key: {}", e.getMessage());
-        }
+    synchronized boolean hasPendingReconnect() {
+        return pendingReconnect != null && !pendingReconnect.isDone();
     }
 
     private void notifyConnectionStatus(String status) {
@@ -215,7 +254,62 @@ public class BinanceUserDataStreamClient {
         }
     }
 
-    private class WebSocketListener implements WebSocket.Listener {
+    /** Handles a complete text message (all fragments joined). */
+    void handleMessage(String text, StreamListener listener) {
+        try {
+            JsonNode json = mapper.readTree(text);
+
+            // Response to our subscribe request
+            if (json.has("id") && listener.subscribeRequestId.equals(json.path("id").asText())) {
+                listener.subscribeResponse.complete(json);
+                return;
+            }
+
+            JsonNode event = json.path("event");
+            String type = event.path("e").asText("");
+            switch (type) {
+                case "executionReport" -> {
+                    ExecutionReport report = parseExecutionReport(event);
+                    if (report != null && executionReportListener != null) {
+                        executionReportListener.accept(report);
+                    }
+                }
+                case "eventStreamTerminated", "serverShutdown" -> {
+                    logger.warn("User Data Stream {} received; reconnecting", type);
+                    connectionLost(listener.generation, "closed");
+                }
+                default -> { }
+            }
+        } catch (Exception e) {
+            logger.warn("Error parsing message: {}", e.getMessage());
+        }
+    }
+
+    private void connectionLost(long gen, String status) {
+        if (gen != generation.get()) {
+            return; // stale socket from an earlier connection
+        }
+        // Invalidate this socket so its later close/error callbacks don't reconnect again
+        generation.incrementAndGet();
+        connected = false;
+        WebSocket socket = webSocket;
+        if (socket != null) {
+            socket.abort();
+        }
+        notifyConnectionStatus(status);
+        scheduleReconnect();
+    }
+
+    class StreamListener implements WebSocket.Listener {
+        final long generation;
+        final String subscribeRequestId = UUID.randomUUID().toString();
+        final CompletableFuture<JsonNode> subscribeResponse = new CompletableFuture<>();
+        private final StringBuilder buffer = new StringBuilder();
+
+        StreamListener(long generation) {
+            this.generation = generation;
+        }
+
         @Override
         public void onOpen(WebSocket webSocket) {
             logger.debug("WebSocket opened");
@@ -224,18 +318,12 @@ public class BinanceUserDataStreamClient {
 
         @Override
         public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-            try {
-                JsonNode json = mapper.readTree(data.toString());
-
-                // Check for execution report
-                if ("executionReport".equals(json.get("e").asText())) {
-                    ExecutionReport report = parseExecutionReport(json);
-                    if (report != null && executionReportListener != null) {
-                        executionReportListener.accept(report);
-                    }
-                }
-            } catch (Exception e) {
-                logger.warn("Error parsing message: {}", e.getMessage());
+            // A message may arrive in several fragments; parse only once complete
+            buffer.append(data);
+            if (last) {
+                String message = buffer.toString();
+                buffer.setLength(0);
+                handleMessage(message, this);
             }
             webSocket.request(1);
             return null;
@@ -244,26 +332,28 @@ public class BinanceUserDataStreamClient {
         @Override
         public void onError(WebSocket webSocket, Throwable error) {
             logger.error("âœ— WebSocket error: {}", error.getMessage());
-            connected = false;
-            notifyConnectionStatus("error");
-            scheduleReconnect();
+            subscribeResponse.completeExceptionally(error);
+            connectionLost(generation, "error");
         }
 
         @Override
         public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
             logger.warn("âœ— WebSocket closed: {} {}", statusCode, reason);
-            connected = false;
-            notifyConnectionStatus("closed");
-            scheduleReconnect();
+            subscribeResponse.completeExceptionally(new IllegalStateException("closed: " + statusCode));
+            connectionLost(generation, "closed");
             return null;
         }
     }
 
-    private ExecutionReport parseExecutionReport(JsonNode json) {
+    static ExecutionReport parseExecutionReport(JsonNode json) {
         try {
+            // "c" is the clientOrderId (text); on a cancel it is the cancel request's id and the
+            // original one comes in "C"
+            String originalClientOrderId = json.path("C").asText("");
             return new ExecutionReport(
                     json.get("s").asText(),                    // symbol
-                    json.get("c").asLong(),                    // orderId
+                    json.get("i").asLong(),                    // orderId
+                    originalClientOrderId.isEmpty() ? json.get("c").asText() : originalClientOrderId,
                     json.get("o").asText(),                    // orderType (MARKET, LIMIT, etc)
                     json.get("S").asText(),                    // side (BUY/SELL)
                     json.get("x").asText(),                    // executionType (NEW, FILLED, etc)
@@ -285,6 +375,7 @@ public class BinanceUserDataStreamClient {
     public record ExecutionReport(
             String symbol,
             long orderId,
+            String clientOrderId,
             String orderType,
             String side,
             String executionType,           // NEW, PARTIALLY_FILLED, FILLED, CANCELED
@@ -314,4 +405,3 @@ public class BinanceUserDataStreamClient {
         }
     }
 }
-

@@ -45,6 +45,17 @@ public class PositionTest {
     }
 
     @Test
+    public void applyFillNeverReducesTheKnownQuantity() {
+        Position pos = newPosition();
+        pos.applyFill(BigDecimal.valueOf(5));
+
+        pos.applyFill(BigDecimal.ZERO);
+        pos.applyFill(BigDecimal.valueOf(3));
+
+        assertEquals(BigDecimal.valueOf(5), pos.getQuantity());
+    }
+
+    @Test
     public void remainingQuantityIsZeroWhenNoTargetSet() {
         Position pos = newPosition();
         assertEquals(BigDecimal.ZERO, pos.getRemainingQuantity());

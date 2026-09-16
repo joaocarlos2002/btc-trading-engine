@@ -3,6 +3,7 @@ package dev.romeo.btctradingengine.trading;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.port.ExecutionPort;
 
 import java.math.BigDecimal;
 import java.net.URI;
@@ -10,6 +11,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Map;
 import java.util.TreeMap;
 import javax.crypto.Mac;
@@ -19,20 +21,29 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Supplier;
 
-public class BinanceOrderExecutor {
+public class BinanceOrderExecutor implements ExecutionPort {
     private static final Logger logger = LoggerFactory.getLogger(BinanceOrderExecutor.class);
     private static final int HTTP_TOO_MANY_REQUESTS = 429;
     private static final int HTTP_IP_BANNED = 418;
+    static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
+    static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
+    private static final long CLOCK_SYNC_INTERVAL_MS = Duration.ofMinutes(30).toMillis();
 
     private final String apiKey;
     private final String apiSecret;
     private final String baseUrl;
-    private final HttpClient client = HttpClient.newHttpClient();
+    private final HttpClient client;
+    private final Duration requestTimeout;
     private final ObjectMapper mapper = new ObjectMapper();
     private final int maxRetries;
     private final long initialBackoffMs;
     private final long maxBackoffMs;
+    // serverTime - localTime, applied to signed timestamps so a drifting local clock
+    // does not push requests outside recvWindow (-1021)
+    private volatile long clockOffsetMs = 0;
+    private volatile long lastClockSyncMs = Long.MIN_VALUE;
 
     public BinanceOrderExecutor(String apiKey, String apiSecret) {
         this(apiKey, apiSecret, Config.getBinanceRestUrl(),
@@ -42,6 +53,15 @@ public class BinanceOrderExecutor {
     // Visible for testing: allows pointing at a local HTTP server with fast retry timings.
     BinanceOrderExecutor(String apiKey, String apiSecret, String baseUrl,
                           int maxRetries, long initialBackoffMs, long maxBackoffMs) {
+        this(apiKey, apiSecret, baseUrl, maxRetries, initialBackoffMs, maxBackoffMs, CONNECT_TIMEOUT, REQUEST_TIMEOUT);
+    }
+
+    // Visible for testing: short timeouts keep the "server never answers" test fast.
+    BinanceOrderExecutor(String apiKey, String apiSecret, String baseUrl,
+                          int maxRetries, long initialBackoffMs, long maxBackoffMs,
+                          Duration connectTimeout, Duration requestTimeout) {
+        this.client = HttpClient.newBuilder().connectTimeout(connectTimeout).build();
+        this.requestTimeout = requestTimeout;
         this.apiKey = apiKey;
         this.apiSecret = apiSecret;
         this.baseUrl = baseUrl;
@@ -51,17 +71,27 @@ public class BinanceOrderExecutor {
     }
 
     /**
-     * Envia a requisicao com retry/backoff. Rate-limit (429/418) e sempre retentado,
+     * Envia a requisicao com retry/backoff. O request e reconstruido a cada tentativa para que
+     * requests assinados levem um timestamp novo. 418 (IP banido) nunca e retentado, pois
+     * insistir prolonga o banimento. Rate-limit (429) e sempre retentado,
      * respeitando o header Retry-After quando presente. Falhas de rede (timeout,
      * conexao) so sao retentadas quando {@code retryOnIOException} e true - chamadas
      * nao-idempotentes (como o POST de ordem) mantem o comportamento original nesse
      * caso, para nao arriscar reenviar uma ordem cujo resultado ficou ambiguo.
      */
-    private HttpResponse<String> send(HttpRequest request, boolean retryOnIOException) throws Exception {
+    private HttpResponse<String> send(Supplier<HttpRequest> request, boolean retryOnIOException) throws Exception {
         for (int attempt = 0; ; attempt++) {
             try {
-                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-                if (!isRateLimited(response) || attempt >= maxRetries) {
+                HttpResponse<String> response = client.send(request.get(), HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() == HTTP_IP_BANNED) {
+                    logger.error("Binance returned 418 (IP banned); not retrying: {}", response.body());
+                    return response;
+                }
+                if (isTimestampRejected(response)) {
+                    // Re-sync so the next signed request uses a corrected offset
+                    lastClockSyncMs = Long.MIN_VALUE;
+                }
+                if (response.statusCode() != HTTP_TOO_MANY_REQUESTS || attempt >= maxRetries) {
                     return response;
                 }
                 long backoffMs = retryAfterMs(response).orElse(calculateBackoff(attempt + 1));
@@ -80,8 +110,57 @@ public class BinanceOrderExecutor {
         }
     }
 
-    private boolean isRateLimited(HttpResponse<String> response) {
-        return response.statusCode() == HTTP_TOO_MANY_REQUESTS || response.statusCode() == HTTP_IP_BANNED;
+    private boolean isTimestampRejected(HttpResponse<String> response) {
+        return response.statusCode() == 400 && response.body() != null && response.body().contains("-1021");
+    }
+
+    /** Builds a signed request with a fresh timestamp; called once per attempt by send. */
+    private HttpRequest signedRequest(String method, String path, Map<String, String> params) {
+        Map<String, String> signed = new TreeMap<>(params);
+        signed.put("timestamp", String.valueOf(serverTimeMillis()));
+        signed.put("recvWindow", "5000");
+        String queryString = buildQueryString(signed);
+        return HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + path + "?" + queryString + "&signature=" + generateSignature(queryString)))
+                .header("X-MBX-APIKEY", apiKey)
+                .timeout(requestTimeout)
+                .method(method, HttpRequest.BodyPublishers.noBody())
+                .build();
+    }
+
+    private long serverTimeMillis() {
+        long now = System.currentTimeMillis();
+        if (lastClockSyncMs == Long.MIN_VALUE || now - lastClockSyncMs > CLOCK_SYNC_INTERVAL_MS) {
+            syncClock();
+        }
+        return System.currentTimeMillis() + clockOffsetMs;
+    }
+
+    /** GET /api/v3/time without retries; on failure keeps the previous offset until the next interval. */
+    private synchronized void syncClock() {
+        lastClockSyncMs = System.currentTimeMillis();
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "/api/v3/time"))
+                    .timeout(requestTimeout)
+                    .GET().build();
+            long before = System.currentTimeMillis();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            long after = System.currentTimeMillis();
+            if (response.statusCode() != 200) {
+                logger.warn("Binance server time sync failed: HTTP {}", response.statusCode());
+                return;
+            }
+            long serverTime = mapper.readTree(response.body()).path("serverTime").asLong(0);
+            if (serverTime > 0) {
+                // Midpoint compensates for the round trip
+                clockOffsetMs = serverTime - (before + after) / 2;
+                logger.debug("Binance clock offset: {}ms", clockOffsetMs);
+            }
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            logger.warn("Binance server time sync error: {}", e.getMessage());
+        }
     }
 
     private Optional<Long> retryAfterMs(HttpResponse<String> response) {
@@ -143,47 +222,19 @@ public class BinanceOrderExecutor {
             params.put("side", side);
             params.put("type", "MARKET");
             params.put("quantity", formatQuantity(quantity));
-            params.put("timestamp", String.valueOf(System.currentTimeMillis()));
-            params.put("recvWindow", "5000");
             if (clientOrderId != null && !clientOrderId.isBlank()) {
                 params.put("newClientOrderId", clientOrderId);
             }
 
-            String queryString = buildQueryString(params);
-            String signature = generateSignature(queryString);
-
-            String url = baseUrl + "/api/v3/order?" + queryString + "&signature=" + signature;
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("X-MBX-APIKEY", apiKey)
-                    .POST(HttpRequest.BodyPublishers.noBody())
-                    .build();
-
-            HttpResponse<String> response = send(request, false);
+            HttpResponse<String> response = send(() -> signedRequest("POST", "/api/v3/order", params), false);
 
             if (response.statusCode() == 200) {
-                JsonNode json = mapper.readTree(response.body());
-
-                // Null-safe parsing
-                String orderId = json.has("orderId") && !json.get("orderId").isNull()
-                    ? json.get("orderId").asText()
-                    : "UNKNOWN";
-                String executedQty = json.has("executedQty") && !json.get("executedQty").isNull()
-                    ? json.get("executedQty").asText()
-                    : "0";
-                String cumulativeQuoteQty = json.has("cumulativeQuoteQty") && !json.get("cumulativeQuoteQty").isNull()
-                    ? json.get("cumulativeQuoteQty").asText()
-                    : "0";
-
-                BigDecimal actualQty = new BigDecimal(executedQty);
-                BigDecimal totalCost = new BigDecimal(cumulativeQuoteQty);
-                BigDecimal avgPrice = totalCost.compareTo(BigDecimal.ZERO) > 0 && actualQty.compareTo(BigDecimal.ZERO) > 0
-                    ? totalCost.divide(actualQty, 8, java.math.RoundingMode.HALF_UP)
-                    : BigDecimal.ZERO;
+                OrderResult result = parseOrderResult(mapper.readTree(response.body()));
+                BigDecimal actualQty = result.executedQuantity();
+                BigDecimal avgPrice = result.averagePrice();
 
                 logger.info("âœ“ Order executed: {} {} {} @ avg {}", side, actualQty, symbol, avgPrice);
-                return new OrderResult(true, orderId, actualQty, avgPrice, null);
+                return result;
             } else {
                 String error = response.body();
                 logger.error("âœ— Order failed: {} {}", response.statusCode(), error);
@@ -204,6 +255,19 @@ public class BinanceOrderExecutor {
         }
     }
 
+    /**
+     * Shared by the POST response and GET /api/v3/order. Binance spells the field
+     * "cummulativeQuoteQty" (double m); a misspelling silently yields an average price of 0.
+     */
+    private OrderResult parseOrderResult(JsonNode json) {
+        String orderId = json.hasNonNull("orderId") ? json.get("orderId").asText() : "UNKNOWN";
+        BigDecimal qty = new BigDecimal(json.path("executedQty").asText("0"));
+        BigDecimal quote = new BigDecimal(json.path("cummulativeQuoteQty").asText("0"));
+        BigDecimal avgPrice = qty.signum() > 0 && quote.signum() > 0
+                ? quote.divide(qty, 8, java.math.RoundingMode.HALF_UP) : BigDecimal.ZERO;
+        return new OrderResult(true, orderId, qty, avgPrice, null);
+    }
+
     private OrderResult failedOrder(String error) {
         logger.error("âœ— Order rejected before request: {}", error);
         return new OrderResult(false, null, BigDecimal.ZERO, BigDecimal.ZERO, error);
@@ -211,22 +275,7 @@ public class BinanceOrderExecutor {
 
     public BalanceResult getBalance(String asset) {
         try {
-            Map<String, String> params = new TreeMap<>();
-            params.put("timestamp", String.valueOf(System.currentTimeMillis()));
-            params.put("recvWindow", "5000");
-
-            String queryString = buildQueryString(params);
-            String signature = generateSignature(queryString);
-
-            String url = baseUrl + "/api/v3/account?" + queryString + "&signature=" + signature;
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("X-MBX-APIKEY", apiKey)
-                    .GET()
-                    .build();
-
-            HttpResponse<String> response = send(request, true);
+            HttpResponse<String> response = send(() -> signedRequest("GET", "/api/v3/account", Map.of()), true);
 
             if (response.statusCode() == 200) {
                 JsonNode json = mapper.readTree(response.body());
@@ -256,12 +305,17 @@ public class BinanceOrderExecutor {
         }
     }
 
-    private String generateSignature(String data) throws Exception {
-        Mac sha256 = Mac.getInstance("HmacSHA256");
-        SecretKeySpec key = new SecretKeySpec(apiSecret.getBytes(StandardCharsets.UTF_8), 0, apiSecret.getBytes(StandardCharsets.UTF_8).length, "HmacSHA256");
-        sha256.init(key);
-        byte[] hash = sha256.doFinal(data.getBytes(StandardCharsets.UTF_8));
-        return bytesToHex(hash);
+    private String generateSignature(String data) {
+        try {
+            Mac sha256 = Mac.getInstance("HmacSHA256");
+            SecretKeySpec key = new SecretKeySpec(apiSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+            sha256.init(key);
+            byte[] hash = sha256.doFinal(data.getBytes(StandardCharsets.UTF_8));
+            return bytesToHex(hash);
+        } catch (java.security.GeneralSecurityException e) {
+            // Unchecked so signing can run inside the per-attempt Supplier
+            throw new IllegalStateException("Cannot sign Binance request", e);
+        }
     }
 
     private String buildQueryString(Map<String, String> params) {
@@ -286,7 +340,8 @@ public class BinanceOrderExecutor {
     }
 
     private String formatQuantity(BigDecimal qty) {
-        return qty.setScale(4, java.math.RoundingMode.DOWN).stripTrailingZeros().toPlainString();
+        // Quantities arrive already rounded to the LOT_SIZE step; 4 decimals would truncate BTC (step 0.00001)
+        return qty.setScale(8, java.math.RoundingMode.DOWN).stripTrailingZeros().toPlainString();
     }
 
     public record OrderResult(
@@ -308,23 +363,8 @@ public class BinanceOrderExecutor {
     public List<OpenOrder> getOpenOrders(String symbol) {
         List<OpenOrder> orders = new ArrayList<>();
         try {
-            Map<String, String> params = new TreeMap<>();
-            params.put("symbol", symbol);
-            params.put("timestamp", String.valueOf(System.currentTimeMillis()));
-            params.put("recvWindow", "5000");
-
-            String queryString = buildQueryString(params);
-            String signature = generateSignature(queryString);
-
-            String url = baseUrl + "/api/v3/openOrders?" + queryString + "&signature=" + signature;
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("X-MBX-APIKEY", apiKey)
-                    .GET()
-                    .build();
-
-            HttpResponse<String> response = send(request, true);
+            HttpResponse<String> response = send(
+                    () -> signedRequest("GET", "/api/v3/openOrders", Map.of("symbol", symbol)), true);
 
             if (response.statusCode() == 200) {
                 JsonNode jsonArray = mapper.readTree(response.body());
@@ -376,19 +416,8 @@ public class BinanceOrderExecutor {
 
     public boolean cancelOrder(String symbol, String orderId) {
         try {
-            Map<String, String> params = new TreeMap<>();
-            params.put("symbol", symbol);
-            params.put("orderId", orderId);
-            params.put("timestamp", String.valueOf(System.currentTimeMillis()));
-            params.put("recvWindow", "5000");
-            String queryString = buildQueryString(params);
-            String signature = generateSignature(queryString);
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/api/v3/order?" + queryString + "&signature=" + signature))
-                    .header("X-MBX-APIKEY", apiKey)
-                    .method("DELETE", HttpRequest.BodyPublishers.noBody())
-                    .build();
-            HttpResponse<String> response = send(request, true);
+            HttpResponse<String> response = send(() -> signedRequest("DELETE", "/api/v3/order",
+                    Map.of("symbol", symbol, "orderId", orderId)), true);
             boolean success = response.statusCode() == 200;
             if (!success) {
                 logger.error("Failed to cancel order {}: {}", orderId, response.body());
@@ -401,41 +430,71 @@ public class BinanceOrderExecutor {
     }
 
     public Optional<OrderResult> findOrderByClientOrderId(String symbol, String clientOrderId) {
+        return queryOrder(symbol, clientOrderId).map(order -> new OrderResult(
+                true, String.valueOf(order.orderId()), order.executedQuantity(), order.averagePrice(), null));
+    }
+
+    /**
+     * GET /api/v3/order by clientOrderId. Empty when the request fails or Binance does not know the
+     * order - which is not the same as "filled", so callers must not assume a fill from it.
+     */
+    public Optional<QueriedOrder> queryOrder(String symbol, String clientOrderId) {
+        return lookupOrder(symbol, clientOrderId).order();
+    }
+
+    /**
+     * Like {@link #queryOrder} but tells "Binance does not know this order" (-2013) apart from "could
+     * not ask": only the first proves an order was never accepted (issue #111 outbox reconciliation).
+     */
+    public OrderLookup lookupOrder(String symbol, String clientOrderId) {
         try {
-            Map<String, String> params = new TreeMap<>();
-            params.put("symbol", symbol);
-            params.put("origClientOrderId", clientOrderId);
-            params.put("timestamp", String.valueOf(System.currentTimeMillis()));
-            params.put("recvWindow", "5000");
-            String queryString = buildQueryString(params);
-            String signature = generateSignature(queryString);
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/api/v3/order?" + queryString + "&signature=" + signature))
-                    .header("X-MBX-APIKEY", apiKey)
-                    .GET().build();
-            HttpResponse<String> response = send(request, true);
-            if (response.statusCode() != 200) return Optional.empty();
+            HttpResponse<String> response = send(() -> signedRequest("GET", "/api/v3/order",
+                    Map.of("symbol", symbol, "origClientOrderId", clientOrderId)), true);
+            if (response.statusCode() != 200) {
+                String body = response.body();
+                boolean notFound = response.statusCode() == 400 && body != null && body.contains("-2013");
+                return notFound ? OrderLookup.notFound() : OrderLookup.error(body);
+            }
             JsonNode json = mapper.readTree(response.body());
-            BigDecimal qty = new BigDecimal(json.path("executedQty").asText("0"));
-            BigDecimal quote = new BigDecimal(json.path("cummulativeQuoteQty").asText("0"));
-            BigDecimal price = qty.signum() > 0
-                    ? quote.divide(qty, 8, java.math.RoundingMode.HALF_UP) : BigDecimal.ZERO;
-            return Optional.of(new OrderResult(true, json.path("orderId").asText(), qty, price, null));
-        } catch (Exception ignored) {
-            return Optional.empty();
+            OrderResult parsed = parseOrderResult(json);
+            return OrderLookup.found(new QueriedOrder(json.path("orderId").asLong(), clientOrderId,
+                    json.path("status").asText(""), parsed.executedQuantity(), parsed.averagePrice()));
+        } catch (Exception e) {
+            return OrderLookup.error(e.getMessage());
         }
     }
 
+    public record OrderLookup(OrderListQuery.State state, Optional<QueriedOrder> order, String error) {
+        public static OrderLookup found(QueriedOrder order) {
+            return new OrderLookup(OrderListQuery.State.FOUND, Optional.of(order), null);
+        }
+
+        public static OrderLookup notFound() {
+            return new OrderLookup(OrderListQuery.State.NOT_FOUND, Optional.empty(), null);
+        }
+
+        public static OrderLookup error(String error) {
+            return new OrderLookup(OrderListQuery.State.ERROR, Optional.empty(), error);
+        }
+    }
+
+    public record QueriedOrder(
+            long orderId,
+            String clientOrderId,
+            String status,                  // NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED...
+            BigDecimal executedQuantity,
+            BigDecimal averagePrice
+    ) {}
+
     public SymbolFilters getSymbolFilters(String symbol) {
         try {
-            String url = baseUrl + "/api/v3/exchangeInfo?symbol=" + symbol;
-
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
+                    .uri(URI.create(baseUrl + "/api/v3/exchangeInfo?symbol=" + symbol))
+                    .timeout(requestTimeout)
                     .GET()
                     .build();
 
-            HttpResponse<String> response = send(request, true);
+            HttpResponse<String> response = send(() -> request, true);
 
             if (response.statusCode() == 200) {
                 JsonNode json = mapper.readTree(response.body());
@@ -446,20 +505,24 @@ public class BinanceOrderExecutor {
                 BigDecimal minQty = BigDecimal.ZERO;
                 BigDecimal maxQty = BigDecimal.ZERO;
                 BigDecimal stepSize = BigDecimal.ONE;
+                BigDecimal tickSize = null;
 
                 for (JsonNode filter : filters) {
                     String filterType = filter.get("filterType").asText();
 
-                    if ("MIN_NOTIONAL".equals(filterType)) {
+                    // Spot pairs moved from MIN_NOTIONAL to NOTIONAL; both carry "minNotional"
+                    if ("MIN_NOTIONAL".equals(filterType) || "NOTIONAL".equals(filterType)) {
                         minNotional = new BigDecimal(filter.get("minNotional").asText());
                     } else if ("LOT_SIZE".equals(filterType)) {
                         minQty = new BigDecimal(filter.get("minQty").asText());
                         maxQty = new BigDecimal(filter.get("maxQty").asText());
                         stepSize = new BigDecimal(filter.get("stepSize").asText());
+                    } else if ("PRICE_FILTER".equals(filterType)) {
+                        tickSize = new BigDecimal(filter.get("tickSize").asText());
                     }
                 }
 
-                SymbolFilters result = new SymbolFilters(symbol, minNotional, minQty, maxQty, stepSize);
+                SymbolFilters result = new SymbolFilters(symbol, minNotional, minQty, maxQty, stepSize, tickSize);
                 logger.debug("Symbol filters for {}: minNotional={}, minQty={}, maxQty={}, stepSize={}",
                         symbol, minNotional, minQty, maxQty, stepSize);
                 return result;
@@ -478,7 +541,99 @@ public class BinanceOrderExecutor {
             BigDecimal minNotional,
             BigDecimal minQty,
             BigDecimal maxQty,
-            BigDecimal stepSize
-    ) {}
+            BigDecimal stepSize,
+            BigDecimal tickSize             // PRICE_FILTER; null when absent
+    ) {
+        public SymbolFilters(String symbol, BigDecimal minNotional, BigDecimal minQty, BigDecimal maxQty,
+                             BigDecimal stepSize) {
+            this(symbol, minNotional, minQty, maxQty, stepSize, null);
+        }
+    }
+
+    /**
+     * SELL OCO protecting a BUY (issue #99): LIMIT_MAKER target above the price and STOP_LOSS_LIMIT
+     * stop below it, sharing one quantity. Never retried on a network error, like any new order:
+     * the caller resolves an ambiguous result by querying the list's clientOrderId.
+     */
+    public OcoResult placeOcoSell(String symbol, BigDecimal quantity, BigDecimal targetPrice,
+                                  BigDecimal stopPrice, BigDecimal stopLimitPrice,
+                                  String listClientOrderId, String targetClientOrderId, String stopClientOrderId) {
+        if (apiKey == null || apiKey.isBlank() || apiSecret == null || apiSecret.isBlank()) {
+            return new OcoResult(false, -1, "", "Binance API credentials are not configured");
+        }
+        Map<String, String> params = new TreeMap<>();
+        params.put("symbol", symbol);
+        params.put("side", "SELL");
+        params.put("quantity", formatQuantity(quantity));
+        params.put("listClientOrderId", listClientOrderId);
+        params.put("aboveType", "LIMIT_MAKER");
+        params.put("abovePrice", formatPrice(targetPrice));
+        params.put("aboveClientOrderId", targetClientOrderId);
+        params.put("belowType", "STOP_LOSS_LIMIT");
+        params.put("belowStopPrice", formatPrice(stopPrice));
+        params.put("belowPrice", formatPrice(stopLimitPrice));
+        params.put("belowTimeInForce", "GTC");
+        params.put("belowClientOrderId", stopClientOrderId);
+        try {
+            HttpResponse<String> response = send(() -> signedRequest("POST", "/api/v3/orderList/oco", params), false);
+            if (response.statusCode() != 200) {
+                logger.error("OCO order failed: {} {}", response.statusCode(), response.body());
+                return new OcoResult(false, -1, "", response.body());
+            }
+            JsonNode json = mapper.readTree(response.body());
+            logger.info("OCO placed: {} qty={} target={} stop={}/{}", listClientOrderId,
+                    params.get("quantity"), params.get("abovePrice"), params.get("belowStopPrice"), params.get("belowPrice"));
+            return new OcoResult(true, json.path("orderListId").asLong(-1), json.path("listOrderStatus").asText(""), null);
+        } catch (Exception e) {
+            logger.error("OCO order error for {}: {}", listClientOrderId, e.getMessage(), e);
+            return new OcoResult(false, -1, "", e.getMessage());
+        }
+    }
+
+    /** GET /api/v3/orderList by listClientOrderId. */
+    public OrderListQuery queryOrderList(String listClientOrderId) {
+        return orderListRequest("GET", Map.of("origClientOrderId", listClientOrderId));
+    }
+
+    /** DELETE /api/v3/orderList: cancels both legs. NOT_FOUND when the list is no longer open. */
+    public OrderListQuery cancelOrderList(String symbol, String listClientOrderId) {
+        return orderListRequest("DELETE", Map.of("symbol", symbol, "listClientOrderId", listClientOrderId));
+    }
+
+    private OrderListQuery orderListRequest(String method, Map<String, String> params) {
+        try {
+            HttpResponse<String> response = send(() -> signedRequest(method, "/api/v3/orderList", params), true);
+            if (response.statusCode() == 200) {
+                return new OrderListQuery(OrderListQuery.State.FOUND,
+                        mapper.readTree(response.body()).path("listOrderStatus").asText(""), null);
+            }
+            String body = response.body();
+            // -2011 unknown order (cancel), -2013 order does not exist (query)
+            boolean notFound = response.statusCode() == 400 && body != null
+                    && (body.contains("-2011") || body.contains("-2013"));
+            if (!notFound) {
+                logger.error("Order list {} failed: {} {}", method, response.statusCode(), body);
+            }
+            return new OrderListQuery(notFound ? OrderListQuery.State.NOT_FOUND : OrderListQuery.State.ERROR, "", body);
+        } catch (Exception e) {
+            logger.error("Order list {} error: {}", method, e.getMessage(), e);
+            return new OrderListQuery(OrderListQuery.State.ERROR, "", e.getMessage());
+        }
+    }
+
+    private String formatPrice(BigDecimal price) {
+        return price.stripTrailingZeros().toPlainString();
+    }
+
+    public record OcoResult(boolean success, long orderListId, String listOrderStatus, String error) {}
+
+    public record OrderListQuery(State state, String listOrderStatus, String error) {
+        public enum State { FOUND, NOT_FOUND, ERROR }
+
+        /** EXECUTING while both legs are working; ALL_DONE once a leg filled or the list was cancelled. */
+        public boolean isExecuting() {
+            return state == State.FOUND && "EXECUTING".equals(listOrderStatus);
+        }
+    }
 }
 
