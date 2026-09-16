@@ -3,6 +3,8 @@ package dev.romeo.btctradingengine.trading;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import dev.romeo.btctradingengine.resilience.BinanceResilienceSettings;
+import io.github.resilience4j.core.IntervalFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,8 +52,8 @@ public class BinanceUserDataStreamClient {
     private final SocketFactory socketFactory;
     private final LongSupplier clock;
     private final int maxRetries;
-    private final long initialBackoffMs;
-    private final long maxBackoffMs;
+    // Shared exponential-with-jitter policy (issue #100)
+    private final IntervalFunction reconnectBackoff;
     private final AtomicInteger reconnectAttempts = new AtomicInteger(0);
     // Bumped on every connection attempt so callbacks from older sockets are ignored
     private final AtomicLong generation = new AtomicLong(0);
@@ -68,19 +70,31 @@ public class BinanceUserDataStreamClient {
     /** @param testnet whether binance.rest.url is the testnet, which selects the matching WebSocket API */
     public BinanceUserDataStreamClient(String apiKey, String apiSecret, boolean testnet,
                                        int maxRetries, long initialBackoffMs, long maxBackoffMs) {
+        this(apiKey, apiSecret, testnet, maxRetries, BinanceResilienceSettings.defaults()
+                .backoff(Duration.ofMillis(initialBackoffMs), Duration.ofMillis(maxBackoffMs)));
+    }
+
+    /** @param reconnectBackoff wait before reconnect attempt n (1-based), e.g. {@link BinanceResilienceSettings#backoff} */
+    public BinanceUserDataStreamClient(String apiKey, String apiSecret, boolean testnet,
+                                       int maxRetries, IntervalFunction reconnectBackoff) {
         this(apiKey, apiSecret, defaultSocketFactory(defaultWsApiUrl(testnet)), System::currentTimeMillis,
-                maxRetries, initialBackoffMs, maxBackoffMs);
+                maxRetries, reconnectBackoff);
     }
 
     BinanceUserDataStreamClient(String apiKey, String apiSecret, SocketFactory socketFactory, LongSupplier clock,
                                 int maxRetries, long initialBackoffMs, long maxBackoffMs) {
+        this(apiKey, apiSecret, socketFactory, clock, maxRetries, BinanceResilienceSettings.defaults()
+                .backoff(Duration.ofMillis(initialBackoffMs), Duration.ofMillis(maxBackoffMs)));
+    }
+
+    BinanceUserDataStreamClient(String apiKey, String apiSecret, SocketFactory socketFactory, LongSupplier clock,
+                                int maxRetries, IntervalFunction reconnectBackoff) {
         this.apiKey = apiKey;
         this.apiSecret = apiSecret;
         this.socketFactory = socketFactory;
         this.clock = clock;
         this.maxRetries = maxRetries;
-        this.initialBackoffMs = initialBackoffMs;
-        this.maxBackoffMs = maxBackoffMs;
+        this.reconnectBackoff = reconnectBackoff;
     }
 
     static String defaultWsApiUrl(boolean testnet) {
@@ -204,7 +218,7 @@ public class BinanceUserDataStreamClient {
             return;
         }
 
-        long backoffMs = calculateBackoff(attempt);
+        long backoffMs = reconnectBackoff.apply(attempt);
         logger.warn("Reconnecting User Data Stream (attempt {}/{}) in {}ms", attempt, maxRetries, backoffMs);
 
         synchronized (this) {
@@ -226,11 +240,6 @@ public class BinanceUserDataStreamClient {
                 }
             }, backoffMs, TimeUnit.MILLISECONDS);
         }
-    }
-
-    private long calculateBackoff(int attempt) {
-        long backoff = initialBackoffMs * (1L << Math.min(attempt - 1, 6));
-        return Math.min(backoff, maxBackoffMs);
     }
 
     public void setExecutionReportListener(Consumer<ExecutionReport> listener) {

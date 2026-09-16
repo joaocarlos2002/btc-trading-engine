@@ -1,11 +1,14 @@
 package dev.romeo.btctradingengine.trading;
 
+import dev.romeo.btctradingengine.resilience.BinanceCall;
+import dev.romeo.btctradingengine.resilience.BinanceEndpoint;
+import dev.romeo.btctradingengine.resilience.BinanceResilience;
+import dev.romeo.btctradingengine.resilience.BinanceResilienceSettings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -23,27 +26,46 @@ import java.util.function.Supplier;
 
 public class BinanceOrderExecutor implements ExecutionPort {
     private static final Logger logger = LoggerFactory.getLogger(BinanceOrderExecutor.class);
-    private static final int HTTP_TOO_MANY_REQUESTS = 429;
-    private static final int HTTP_IP_BANNED = 418;
     static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
     private static final long CLOCK_SYNC_INTERVAL_MS = Duration.ofMinutes(30).toMillis();
 
+    // Spot request weights (Binance docs); each endpoint also has its own circuit breaker (issue #100)
+    static final BinanceEndpoint NEW_ORDER = BinanceEndpoint.spot("POST", "/api/v3/order", 1);
+    static final BinanceEndpoint QUERY_ORDER = BinanceEndpoint.spot("GET", "/api/v3/order", 4);
+    static final BinanceEndpoint CANCEL_ORDER = BinanceEndpoint.spot("DELETE", "/api/v3/order", 1);
+    static final BinanceEndpoint OPEN_ORDERS = BinanceEndpoint.spot("GET", "/api/v3/openOrders", 6);
+    static final BinanceEndpoint ACCOUNT = BinanceEndpoint.spot("GET", "/api/v3/account", 20);
+    static final BinanceEndpoint EXCHANGE_INFO = BinanceEndpoint.spot("GET", "/api/v3/exchangeInfo", 20);
+    static final BinanceEndpoint SERVER_TIME = BinanceEndpoint.spot("GET", "/api/v3/time", 1);
+    static final BinanceEndpoint NEW_OCO = BinanceEndpoint.spot("POST", "/api/v3/orderList/oco", 1);
+    static final BinanceEndpoint QUERY_ORDER_LIST = BinanceEndpoint.spot("GET", "/api/v3/orderList", 4);
+    static final BinanceEndpoint CANCEL_ORDER_LIST = BinanceEndpoint.spot("DELETE", "/api/v3/orderList", 1);
+    /** An open breaker on any of these blocks new entries (never exits) through the ConnectivityGuard. */
+    private static final List<BinanceEndpoint> ENTRY_CRITICAL = List.of(NEW_ORDER, QUERY_ORDER, ACCOUNT, NEW_OCO);
+
     private final String apiKey;
     private final String apiSecret;
     private final String baseUrl;
-    private final HttpClient client;
-    private final Duration requestTimeout;
+    private final BinanceResilience resilience;
     private final ObjectMapper mapper = new ObjectMapper();
-    private final int maxRetries;
-    private final long initialBackoffMs;
-    private final long maxBackoffMs;
     // serverTime - localTime, applied to signed timestamps so a drifting local clock
     // does not push requests outside recvWindow (-1021)
     private volatile long clockOffsetMs = 0;
     private volatile long lastClockSyncMs = Long.MIN_VALUE;
 
-    /** baseUrl is binance.rest.url, the execution venue; the retry settings are binance.max.retries and the backoffs. */
+    /**
+     * baseUrl is binance.rest.url, the execution venue. The live bot passes the process-wide
+     * {@link BinanceResilience}, so orders count against the same request weight as every other client.
+     */
+    public BinanceOrderExecutor(String apiKey, String apiSecret, String baseUrl, BinanceResilience resilience) {
+        this.apiKey = apiKey;
+        this.apiSecret = apiSecret;
+        this.baseUrl = baseUrl;
+        this.resilience = resilience;
+    }
+
+    /** Standalone policies (not shared with other clients) from binance.max.retries and the backoffs; tests and tools. */
     public BinanceOrderExecutor(String apiKey, String apiSecret, String baseUrl,
                           int maxRetries, long initialBackoffMs, long maxBackoffMs) {
         this(apiKey, apiSecret, baseUrl, maxRetries, initialBackoffMs, maxBackoffMs, CONNECT_TIMEOUT, REQUEST_TIMEOUT);
@@ -53,54 +75,42 @@ public class BinanceOrderExecutor implements ExecutionPort {
     BinanceOrderExecutor(String apiKey, String apiSecret, String baseUrl,
                           int maxRetries, long initialBackoffMs, long maxBackoffMs,
                           Duration connectTimeout, Duration requestTimeout) {
-        this.client = HttpClient.newBuilder().connectTimeout(connectTimeout).build();
-        this.requestTimeout = requestTimeout;
-        this.apiKey = apiKey;
-        this.apiSecret = apiSecret;
-        this.baseUrl = baseUrl;
-        this.maxRetries = maxRetries;
-        this.initialBackoffMs = initialBackoffMs;
-        this.maxBackoffMs = maxBackoffMs;
+        this(apiKey, apiSecret, baseUrl, new BinanceResilience(BinanceResilienceSettings.defaults()
+                .withRetry(maxRetries, Duration.ofMillis(initialBackoffMs), Duration.ofMillis(maxBackoffMs))
+                .withTimeouts(connectTimeout, requestTimeout)));
+    }
+
+    public BinanceResilience resilience() {
+        return resilience;
     }
 
     /**
-     * Envia a requisicao com retry/backoff. O request e reconstruido a cada tentativa para que
-     * requests assinados levem um timestamp novo. 418 (IP banido) nunca e retentado, pois
-     * insistir prolonga o banimento. Rate-limit (429) e sempre retentado,
-     * respeitando o header Retry-After quando presente. Falhas de rede (timeout,
-     * conexao) so sao retentadas quando {@code retryOnIOException} e true - chamadas
-     * nao-idempotentes (como o POST de ordem) mantem o comportamento original nesse
-     * caso, para nao arriscar reenviar uma ordem cujo resultado ficou ambiguo.
+     * Why new entries must wait: the circuit breaker of an order, order status, account or OCO endpoint is
+     * open. Only entries read it - exits, stops and cancels are always sent (issue #100).
      */
-    private HttpResponse<String> send(Supplier<HttpRequest> request, boolean retryOnIOException) throws Exception {
-        for (int attempt = 0; ; attempt++) {
-            try {
-                HttpResponse<String> response = client.send(request.get(), HttpResponse.BodyHandlers.ofString());
-                if (response.statusCode() == HTTP_IP_BANNED) {
-                    logger.error("Binance returned 418 (IP banned); not retrying: {}", response.body());
-                    return response;
-                }
-                if (isTimestampRejected(response)) {
-                    // Re-sync so the next signed request uses a corrected offset
-                    lastClockSyncMs = Long.MIN_VALUE;
-                }
-                if (response.statusCode() != HTTP_TOO_MANY_REQUESTS || attempt >= maxRetries) {
-                    return response;
-                }
-                long backoffMs = retryAfterMs(response).orElse(calculateBackoff(attempt + 1));
-                logger.warn("Binance rate limit ({}) on attempt {}/{}; retrying in {}ms",
-                        response.statusCode(), attempt + 1, maxRetries, backoffMs);
-                sleep(backoffMs);
-            } catch (java.io.IOException e) {
-                if (!retryOnIOException || attempt >= maxRetries) {
-                    throw e;
-                }
-                long backoffMs = calculateBackoff(attempt + 1);
-                logger.warn("Binance request error on attempt {}/{}: {}; retrying in {}ms",
-                        attempt + 1, maxRetries, e.getMessage(), backoffMs);
-                sleep(backoffMs);
+    public Optional<String> circuitOpenReason() {
+        for (BinanceEndpoint endpoint : ENTRY_CRITICAL) {
+            if (resilience.isOpen(endpoint)) {
+                return Optional.of("Binance circuit breaker open for " + endpoint.name());
             }
         }
+        return Optional.empty();
+    }
+
+    /**
+     * Sends through the shared policies (issue #100). The request is rebuilt on every attempt, so signed
+     * requests carry a fresh timestamp and signature. What may be retried is set by {@link BinanceCall}: a new
+     * order only after a 429 or a connect failure, never after a timeout or a dropped connection, where the
+     * clientOrderId lookup decides instead. A 418 is returned once and then fails fast until the ban ends.
+     */
+    private HttpResponse<String> send(BinanceEndpoint endpoint, BinanceCall call, Supplier<HttpRequest> request)
+            throws Exception {
+        HttpResponse<String> response = resilience.send(endpoint, call, request);
+        if (isTimestampRejected(response)) {
+            // Re-sync so the next signed request uses a corrected offset
+            lastClockSyncMs = Long.MIN_VALUE;
+        }
+        return response;
     }
 
     private boolean isTimestampRejected(HttpResponse<String> response) {
@@ -116,7 +126,6 @@ public class BinanceOrderExecutor implements ExecutionPort {
         return HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + path + "?" + queryString + "&signature=" + generateSignature(queryString)))
                 .header("X-MBX-APIKEY", apiKey)
-                .timeout(requestTimeout)
                 .method(method, HttpRequest.BodyPublishers.noBody())
                 .build();
     }
@@ -133,12 +142,9 @@ public class BinanceOrderExecutor implements ExecutionPort {
     private synchronized void syncClock() {
         lastClockSyncMs = System.currentTimeMillis();
         try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/api/v3/time"))
-                    .timeout(requestTimeout)
-                    .GET().build();
             long before = System.currentTimeMillis();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = resilience.send(SERVER_TIME, BinanceCall.TRADING_ONCE,
+                    () -> HttpRequest.newBuilder().uri(URI.create(baseUrl + "/api/v3/time")).GET().build());
             long after = System.currentTimeMillis();
             if (response.statusCode() != 200) {
                 logger.warn("Binance server time sync failed: HTTP {}", response.statusCode());
@@ -153,32 +159,6 @@ public class BinanceOrderExecutor implements ExecutionPort {
         } catch (Exception e) {
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             logger.warn("Binance server time sync error: {}", e.getMessage());
-        }
-    }
-
-    private Optional<Long> retryAfterMs(HttpResponse<String> response) {
-        return response.headers().firstValue("Retry-After")
-                .map(value -> {
-                    try {
-                        return Long.parseLong(value.trim()) * 1000;
-                    } catch (NumberFormatException e) {
-                        return null;
-                    }
-                })
-                .filter(java.util.Objects::nonNull);
-    }
-
-    private long calculateBackoff(int attempt) {
-        long backoff = initialBackoffMs * (1L << Math.min(attempt - 1, 6));
-        return Math.min(backoff, maxBackoffMs);
-    }
-
-    private void sleep(long ms) throws java.io.IOException {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            throw new java.io.IOException("Interrupted during retry backoff", ie);
         }
     }
 
@@ -219,7 +199,8 @@ public class BinanceOrderExecutor implements ExecutionPort {
                 params.put("newClientOrderId", clientOrderId);
             }
 
-            HttpResponse<String> response = send(() -> signedRequest("POST", "/api/v3/order", params), false);
+            HttpResponse<String> response = send(NEW_ORDER, BinanceCall.TRADING_WRITE,
+                    () -> signedRequest("POST", "/api/v3/order", params));
 
             if (response.statusCode() == 200) {
                 OrderResult result = parseOrderResult(mapper.readTree(response.body()));
@@ -268,7 +249,8 @@ public class BinanceOrderExecutor implements ExecutionPort {
 
     public BalanceResult getBalance(String asset) {
         try {
-            HttpResponse<String> response = send(() -> signedRequest("GET", "/api/v3/account", Map.of()), true);
+            HttpResponse<String> response = send(ACCOUNT, BinanceCall.TRADING_READ,
+                    () -> signedRequest("GET", "/api/v3/account", Map.of()));
 
             if (response.statusCode() == 200) {
                 JsonNode json = mapper.readTree(response.body());
@@ -356,8 +338,8 @@ public class BinanceOrderExecutor implements ExecutionPort {
     public List<OpenOrder> getOpenOrders(String symbol) {
         List<OpenOrder> orders = new ArrayList<>();
         try {
-            HttpResponse<String> response = send(
-                    () -> signedRequest("GET", "/api/v3/openOrders", Map.of("symbol", symbol)), true);
+            HttpResponse<String> response = send(OPEN_ORDERS, BinanceCall.TRADING_READ,
+                    () -> signedRequest("GET", "/api/v3/openOrders", Map.of("symbol", symbol)));
 
             if (response.statusCode() == 200) {
                 JsonNode jsonArray = mapper.readTree(response.body());
@@ -409,8 +391,8 @@ public class BinanceOrderExecutor implements ExecutionPort {
 
     public boolean cancelOrder(String symbol, String orderId) {
         try {
-            HttpResponse<String> response = send(() -> signedRequest("DELETE", "/api/v3/order",
-                    Map.of("symbol", symbol, "orderId", orderId)), true);
+            HttpResponse<String> response = send(CANCEL_ORDER, BinanceCall.TRADING_READ, () -> signedRequest("DELETE", "/api/v3/order",
+                    Map.of("symbol", symbol, "orderId", orderId)));
             boolean success = response.statusCode() == 200;
             if (!success) {
                 logger.error("Failed to cancel order {}: {}", orderId, response.body());
@@ -441,8 +423,8 @@ public class BinanceOrderExecutor implements ExecutionPort {
      */
     public OrderLookup lookupOrder(String symbol, String clientOrderId) {
         try {
-            HttpResponse<String> response = send(() -> signedRequest("GET", "/api/v3/order",
-                    Map.of("symbol", symbol, "origClientOrderId", clientOrderId)), true);
+            HttpResponse<String> response = send(QUERY_ORDER, BinanceCall.TRADING_READ, () -> signedRequest("GET", "/api/v3/order",
+                    Map.of("symbol", symbol, "origClientOrderId", clientOrderId)));
             if (response.statusCode() != 200) {
                 String body = response.body();
                 boolean notFound = response.statusCode() == 400 && body != null && body.contains("-2013");
@@ -481,13 +463,10 @@ public class BinanceOrderExecutor implements ExecutionPort {
 
     public SymbolFilters getSymbolFilters(String symbol) {
         try {
-            HttpRequest request = HttpRequest.newBuilder()
+            HttpResponse<String> response = send(EXCHANGE_INFO, BinanceCall.TRADING_READ, () -> HttpRequest.newBuilder()
                     .uri(URI.create(baseUrl + "/api/v3/exchangeInfo?symbol=" + symbol))
-                    .timeout(requestTimeout)
                     .GET()
-                    .build();
-
-            HttpResponse<String> response = send(() -> request, true);
+                    .build());
 
             if (response.statusCode() == 200) {
                 JsonNode json = mapper.readTree(response.body());
@@ -545,8 +524,8 @@ public class BinanceOrderExecutor implements ExecutionPort {
 
     /**
      * SELL OCO protecting a BUY (issue #99): LIMIT_MAKER target above the price and STOP_LOSS_LIMIT
-     * stop below it, sharing one quantity. Never retried on a network error, like any new order:
-     * the caller resolves an ambiguous result by querying the list's clientOrderId.
+     * stop below it, sharing one quantity. Like any new order, retried only when it certainly did not reach
+     * Binance (429, connect failure): the caller resolves an ambiguous result by querying the list's clientOrderId.
      */
     public OcoResult placeOcoSell(String symbol, BigDecimal quantity, BigDecimal targetPrice,
                                   BigDecimal stopPrice, BigDecimal stopLimitPrice,
@@ -568,7 +547,8 @@ public class BinanceOrderExecutor implements ExecutionPort {
         params.put("belowTimeInForce", "GTC");
         params.put("belowClientOrderId", stopClientOrderId);
         try {
-            HttpResponse<String> response = send(() -> signedRequest("POST", "/api/v3/orderList/oco", params), false);
+            HttpResponse<String> response = send(NEW_OCO, BinanceCall.TRADING_WRITE,
+                    () -> signedRequest("POST", "/api/v3/orderList/oco", params));
             if (response.statusCode() != 200) {
                 logger.error("OCO order failed: {} {}", response.statusCode(), response.body());
                 return new OcoResult(false, -1, "", response.body());
@@ -595,7 +575,8 @@ public class BinanceOrderExecutor implements ExecutionPort {
 
     private OrderListQuery orderListRequest(String method, Map<String, String> params) {
         try {
-            HttpResponse<String> response = send(() -> signedRequest(method, "/api/v3/orderList", params), true);
+            HttpResponse<String> response = send("GET".equals(method) ? QUERY_ORDER_LIST : CANCEL_ORDER_LIST,
+                    BinanceCall.TRADING_READ, () -> signedRequest(method, "/api/v3/orderList", params));
             if (response.statusCode() == 200) {
                 return new OrderListQuery(OrderListQuery.State.FOUND,
                         mapper.readTree(response.body()).path("listOrderStatus").asText(""), null);
