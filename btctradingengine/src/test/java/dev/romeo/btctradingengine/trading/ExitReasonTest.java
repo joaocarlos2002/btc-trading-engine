@@ -51,6 +51,7 @@ public class ExitReasonTest {
     @Test
     public void failedEntryOrderIsRecordedAndExcludedFromStats() {
         PositionManager manager = new PositionManager(new BigDecimal("2.0"), new BigDecimal("1.5"));
+        manager.setOrderIoExecutor(Runnable::run);
         manager.setRealTradingMode(new FailingBuyExecutor(),
                 new PortfolioManager(new BigDecimal("1000"), new BigDecimal("5")), "BTCUSDT");
         manager.markReconciliationComplete();

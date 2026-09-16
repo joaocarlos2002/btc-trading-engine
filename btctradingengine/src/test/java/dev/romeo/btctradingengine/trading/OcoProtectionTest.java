@@ -116,6 +116,7 @@ public class OcoProtectionTest {
 
     private PositionManager realManager() {
         PositionManager manager = new PositionManager(new BigDecimal("2.0"), new BigDecimal("1.5"));
+        manager.setOrderIoExecutor(Runnable::run);
         manager.setRealTradingMode(executor, new PortfolioManager(new BigDecimal("1000"), new BigDecimal("50")), "BTCUSDT");
         manager.setOcoProtection(true, new BigDecimal("0.1"));
         manager.setAlertNotifier(alerts::add);
@@ -388,6 +389,7 @@ public class OcoProtectionTest {
                 return true;
             }
         };
+        manager.setOrderIoExecutor(Runnable::run);
         manager.setRealTradingMode(withLegs, new PortfolioManager(new BigDecimal("1000"), new BigDecimal("50")), "BTCUSDT");
         manager.setOcoProtection(true, new BigDecimal("0.1"));
         manager.markReconciliationComplete();

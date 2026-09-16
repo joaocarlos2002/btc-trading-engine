@@ -63,6 +63,7 @@ public class ManualBuyGuardsTest {
 
     private static PositionManager realManager(RecordingExecutor executor, PortfolioManager portfolio) {
         PositionManager manager = new PositionManager(new BigDecimal("2.0"), new BigDecimal("1.5"));
+        manager.setOrderIoExecutor(Runnable::run);
         manager.setRealTradingMode(executor, portfolio, "BTCUSDT");
         return manager;
     }

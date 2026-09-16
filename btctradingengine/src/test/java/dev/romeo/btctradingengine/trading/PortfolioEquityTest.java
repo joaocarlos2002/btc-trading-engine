@@ -62,6 +62,7 @@ public class PortfolioEquityTest {
         PortfolioManager portfolio = new PortfolioManager(new BigDecimal("1000"), new BigDecimal("10"));
         // Wide stop so the position stays open while the price moves
         PositionManager manager = new PositionManager(new BigDecimal("50"), new BigDecimal("50"));
+        manager.setOrderIoExecutor(Runnable::run);
         manager.setRealTradingMode(executor, portfolio, "BTCUSDT");
         manager.markReconciliationComplete();
 
@@ -78,6 +79,7 @@ public class PortfolioEquityTest {
         AccountExecutor executor = new AccountExecutor();
         PortfolioManager portfolio = new PortfolioManager(new BigDecimal("1000"), new BigDecimal("10"));
         PositionManager manager = new PositionManager(new BigDecimal("50"), new BigDecimal("50"));
+        manager.setOrderIoExecutor(Runnable::run);
         manager.setRealTradingMode(executor, portfolio, "BTCUSDT");
         manager.markReconciliationComplete();
         assertTrue(manager.openManualBuy(new BigDecimal("100000"), NOW).opened());

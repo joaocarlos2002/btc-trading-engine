@@ -138,6 +138,7 @@ public class PositionStateTest {
     private PositionManager realManager() {
         PositionManager manager = new PositionManager(new BigDecimal("2.0"), new BigDecimal("1.5"),
                 pos -> persisted.add(pos.getState()));
+        manager.setOrderIoExecutor(Runnable::run);
         manager.setRealTradingMode(exchange, new PortfolioManager(new BigDecimal("1000"), new BigDecimal("50")), "BTCUSDT");
         manager.markReconciliationComplete();
         exchange.manager = manager;
