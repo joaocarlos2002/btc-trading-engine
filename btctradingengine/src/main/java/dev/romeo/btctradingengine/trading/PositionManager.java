@@ -13,11 +13,27 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
+/**
+ * Owns the single open position and its lifecycle ({@link PositionState}).
+ *
+ * <p>Threading (issues #70, #111): every public entry point takes this object's lock, but no
+ * Binance call runs while holding it. An order moves the position to PENDING_ENTRY or EXIT_PENDING
+ * under the lock, the HTTP calls run on the order I/O executor (one dedicated thread, so orders stay
+ * serialized), and the result is applied back under the lock after checking the position is still
+ * the one, and in the state, the order was sent for. Ticks, candles and manual actions arriving
+ * meanwhile only see the pending state and never send a second order.
+ */
 public class PositionManager {
     private static final Logger logger = LoggerFactory.getLogger(PositionManager.class);
 
@@ -31,14 +47,15 @@ public class PositionManager {
     private final List<Position> closedPositions = new ArrayList<>();
     private final List<ExecutionEvent> executionLog = new ArrayList<>();
 
-    private Optional<BinanceOrderExecutor> orderExecutor = Optional.empty();
-    private Optional<PortfolioManager> portfolioManager = Optional.empty();
-    private Optional<BinanceSymbolValidationService> validationService = Optional.empty();
-    private Optional<OrderConfirmationManager> confirmationManager = Optional.empty();
-    private Optional<ConnectivityGuard> connectivityGuard = Optional.empty();
-    private Optional<AlertNotifier> alertNotifier = Optional.empty();
-    private String symbol = "BTCUSDT";
-    private boolean simulationMode = true;
+    // Volatile: set at startup, read by the order I/O thread without the lock
+    private volatile Optional<BinanceOrderExecutor> orderExecutor = Optional.empty();
+    private volatile Optional<PortfolioManager> portfolioManager = Optional.empty();
+    private volatile Optional<BinanceSymbolValidationService> validationService = Optional.empty();
+    private volatile Optional<OrderConfirmationManager> confirmationManager = Optional.empty();
+    private volatile Optional<ConnectivityGuard> connectivityGuard = Optional.empty();
+    private volatile Optional<AlertNotifier> alertNotifier = Optional.empty();
+    private volatile String symbol = "BTCUSDT";
+    private volatile boolean simulationMode = true;
     private boolean allowShort = false;
     private volatile boolean reconciliationComplete = true;
 
@@ -46,19 +63,23 @@ public class PositionManager {
     static final Duration EXIT_RETRY_INITIAL_DELAY = Duration.ofSeconds(1);
     static final Duration EXIT_RETRY_MAX_DELAY = Duration.ofSeconds(60);
     static final int EXIT_FAILURE_ALERT_EVERY = 10;
-    private Supplier<Instant> clock = Instant::now;
+    private volatile Supplier<Instant> clock = Instant::now;
     private int exitFailureCount = 0;
     private Instant nextExitAttemptAt = null;
-    private BinanceOrderExecutor.SymbolFilters cachedFilters = null;
+    private volatile BinanceOrderExecutor.SymbolFilters cachedFilters = null;
 
     // OCO protection (issue #99): target and stop rest on Binance, so they survive the bot going down
     static final Duration PROTECTION_POLL_INTERVAL = Duration.ofSeconds(10);
     static final BigDecimal DEFAULT_STOP_LIMIT_OFFSET_PERCENT = new BigDecimal("0.1");
-    private boolean ocoEnabled = false;
-    private BigDecimal stopLimitOffsetPercent = DEFAULT_STOP_LIMIT_OFFSET_PERCENT;
+    private volatile boolean ocoEnabled = false;
+    private volatile BigDecimal stopLimitOffsetPercent = DEFAULT_STOP_LIMIT_OFFSET_PERCENT;
     private boolean protectionActive = false;
     private BigDecimal protectionStopLimitPrice = null;
     private Instant nextProtectionPollAt = null;
+
+    // Order I/O: created on first use unless injected
+    private Executor orderIo;
+    private ExecutorService ownedOrderIo;
 
     public PositionManager(BigDecimal targetPercent, BigDecimal stopLossPercent) {
         this(targetPercent, stopLossPercent, position -> {}, event -> {});
@@ -90,6 +111,74 @@ public class PositionManager {
             logger.warn("trading.allow.short is on, but the spot market has no short selling: "
                     + "SELL signals will only close an open BUY, never open a position");
         }
+    }
+
+    /**
+     * Where order I/O runs. By default a dedicated single thread is created on first use; tests pass
+     * a same-thread executor ({@code Runnable::run}) so an order completes before the call returns.
+     */
+    public synchronized void setOrderIoExecutor(Executor executor) {
+        this.orderIo = Objects.requireNonNull(executor, "executor");
+    }
+
+    private synchronized Executor orderIo() {
+        if (orderIo == null) {
+            ownedOrderIo = Executors.newSingleThreadExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "PositionManager-OrderIO");
+                thread.setDaemon(true);
+                return thread;
+            });
+            orderIo = ownedOrderIo;
+        }
+        return orderIo;
+    }
+
+    /** Lets queued order I/O finish, then stops the thread this manager created. */
+    public void shutdown() {
+        ExecutorService owned;
+        synchronized (this) {
+            owned = ownedOrderIo;
+        }
+        if (owned == null) {
+            return;
+        }
+        // Not under the lock: the queued tasks need it to apply their results
+        owned.shutdown();
+        try {
+            if (!owned.awaitTermination(15, TimeUnit.SECONDS)) {
+                logger.warn("Order I/O did not finish within 15s; interrupting it");
+                owned.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            owned.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Runs {@code task} on the order I/O executor. The task does its HTTP calls without the lock and
+     * takes it only to read a snapshot and to apply the result. {@code onRejected} runs in the
+     * caller (under the lock) when the executor no longer accepts work, so no state stays pending.
+     */
+    private void submitOrderIo(String description, Runnable task, Runnable onRejected) {
+        Runnable guarded = () -> {
+            try {
+                task.run();
+            } catch (RuntimeException e) {
+                logger.error("Order I/O task failed: {}", description, e);
+                alert(String.format("Order I/O task failed (%s): %s", description, e.getMessage()));
+            }
+        };
+        try {
+            orderIo().execute(guarded);
+        } catch (RejectedExecutionException e) {
+            logger.error("Order I/O executor rejected {}: {}", description, e.getMessage());
+            onRejected.run();
+        }
+    }
+
+    private void alert(String message) {
+        alertNotifier.ifPresent(a -> a.alert(message));
     }
 
     /**
@@ -151,6 +240,10 @@ public class PositionManager {
         this.clock = clock;
     }
 
+    private boolean isCurrent(Position pos) {
+        return openPosition.isPresent() && openPosition.get() == pos;
+    }
+
     // synchronized: confirmations come from the User Data Stream and timeout threads
     private synchronized void onOrderConfirmed(OrderConfirmationManager.OrderConfirmation confirmation) {
         if (openPosition.isPresent() && isProtectionLeg(openPosition.get(), confirmation.clientOrderId())) {
@@ -184,8 +277,8 @@ public class PositionManager {
             positionPersistence.accept(pos);
         } else if (confirmation.isFailed()) {
             logger.error("âœ— Order {} failed: {}", confirmation.orderId(), confirmation.status());
-            alertNotifier.ifPresent(a -> a.alert(String.format(
-                    "Order %s for position %s failed: %s", confirmation.orderId(), pos.getPositionId(), confirmation.status())));
+            alert(String.format(
+                    "Order %s for position %s failed: %s", confirmation.orderId(), pos.getPositionId(), confirmation.status()));
             if (pos.getQuantity().signum() > 0) {
                 // The REST response reported a fill: selling on a contradicting report could sell coins
                 // the bot does not hold, so a human decides
@@ -198,9 +291,9 @@ public class PositionManager {
             // Never guess a fill: keep the quantity already known and ask for a manual check
             logger.error("Order {} for position {} could not be confirmed; keeping qty={}",
                     confirmation.clientOrderId(), pos.getPositionId(), pos.getQuantity());
-            alertNotifier.ifPresent(a -> a.alert(String.format(
+            alert(String.format(
                     "Order %s for position %s could not be confirmed on Binance; position kept with qty=%s, check it manually",
-                    confirmation.clientOrderId(), pos.getPositionId(), pos.getQuantity())));
+                    confirmation.clientOrderId(), pos.getPositionId(), pos.getQuantity()));
         }
     }
 
@@ -216,29 +309,48 @@ public class PositionManager {
             logger.debug("Report for inactive protection leg {}: {}", confirmation.clientOrderId(), confirmation.status());
             return;
         }
+        if (pos.getState() != PositionState.OPEN) {
+            // A pending exit cancels the OCO first, and that cancel tells whether a leg filled
+            logger.debug("Report for protection leg {} while {}: left to the pending exit",
+                    confirmation.clientOrderId(), pos.getState());
+            return;
+        }
         if (confirmation.isPartial()) {
             logger.info("Protection leg {} partially filled: {}", confirmation.clientOrderId(), confirmation.filledQuantity());
             return;
         }
         if (confirmation.isFilled()) {
             boolean target = OcoOrderIds.target(symbol, pos.getPositionId()).equals(confirmation.clientOrderId());
-            // The report carries the last execution price; the order's average is the real exit price
-            BigDecimal price = orderExecutor.get().queryOrder(symbol, confirmation.clientOrderId())
-                    .map(BinanceOrderExecutor.QueriedOrder::averagePrice)
-                    .filter(p -> p.signum() > 0)
-                    .orElse(confirmation.lastFillPrice());
-            closeByExchange(pos, target ? ExitReason.TARGET_HIT : ExitReason.STOP_LOSS,
-                    confirmation.filledQuantity(), price, confirmation.confirmedAt());
+            submitOrderIo("OCO fill " + pos.getPositionId(), () -> {
+                // The report carries the last execution price; the order's average is the real exit price
+                BigDecimal price = orderExecutor.get().queryOrder(symbol, confirmation.clientOrderId())
+                        .map(BinanceOrderExecutor.QueriedOrder::averagePrice)
+                        .filter(p -> p.signum() > 0)
+                        .orElse(confirmation.lastFillPrice());
+                synchronized (this) {
+                    if (isCurrent(pos) && pos.getState() == PositionState.OPEN) {
+                        closeByExchange(pos, target ? ExitReason.TARGET_HIT : ExitReason.STOP_LOSS,
+                                confirmation.filledQuantity(), price, confirmation.confirmedAt());
+                    }
+                }
+            }, () -> { });
             return;
         }
         // Cancelled, expired or unconfirmed: when a leg fills Binance expires the other one, and that
         // report may come first - ask Binance before dropping the protection
-        ProtectionCheck check = checkProtection(pos);
-        switch (check.kind()) {
-            case FILLED -> closeByExchange(pos, check.reason(), check.quantity(), check.price(), clock.get());
-            case GONE -> dropProtection(pos, "leg " + confirmation.clientOrderId() + " ended " + confirmation.status());
-            default -> { }
-        }
+        submitOrderIo("OCO leg check " + pos.getPositionId(), () -> {
+            ProtectionCheck check = checkProtection(pos);
+            synchronized (this) {
+                if (!isCurrent(pos) || pos.getState() != PositionState.OPEN || !protectionActive) {
+                    return;
+                }
+                switch (check.kind()) {
+                    case FILLED -> closeByExchange(pos, check.reason(), check.quantity(), check.price(), clock.get());
+                    case GONE -> dropProtection(pos, "leg " + confirmation.clientOrderId() + " ended " + confirmation.status());
+                    default -> { }
+                }
+            }
+        }, () -> { });
     }
 
     private String entryClientOrderId(Position pos) {
@@ -250,31 +362,30 @@ public class PositionManager {
             Position pos = openPosition.get();
             pos.updatePrice(candle.close(), candle.closeTime());
 
-            // With the OCO on Binance, target and stop are the exchange's job
-            boolean tickExits = !protectionActive
-                    || ((pos.hasHitTarget() || pos.hasHitStopLoss()) && pollProtection(pos, candle.close()));
-            if (openPosition.isEmpty()) {
-                return; // the poll found the OCO executed
-            }
-
-            if (tickExits && pos.hasHitTarget()) {
-                closePosition(pos, candle.close(), candle.closeTime(), ExitReason.TARGET_HIT);
-                logger.info("âœ“ TARGET HIT: {} closed at {} (P&L: {}%)",
-                        pos.getPositionId(), candle.close(), pos.getPnLPercent());
+            if (pos.getState() != PositionState.OPEN) {
+                // An order is in flight: no exit and no new entry until its result is applied
+                logger.info("Candle ignored for {} while {}", pos.getPositionId(), pos.getState());
                 return;
             }
 
-            if (tickExits && pos.hasHitStopLoss()) {
-                closePosition(pos, candle.close(), candle.closeTime(), ExitReason.STOP_LOSS);
-                logger.warn("âœ— STOP LOSS: {} closed at {} (P&L: {}%)",
-                        pos.getPositionId(), candle.close(), pos.getPnLPercent());
+            boolean levelHit = pos.hasHitTarget() || pos.hasHitStopLoss();
+            if (protectionActive) {
+                // With the OCO on Binance, target and stop are the exchange's job
+                if (levelHit) {
+                    pollProtectionIfDue(pos);
+                }
+                if (!isCurrent(pos) || pos.getState() != PositionState.OPEN) {
+                    return; // the poll already settled the position
+                }
+            } else if (levelHit) {
+                exitAtLevel(pos);
                 return;
             }
 
             if (shouldReversePosition(pos, prediction)) {
                 closePosition(pos, candle.close(), candle.closeTime(), ExitReason.SIGNAL_REVERSAL);
-                logger.info("â†’ REVERSAL: {} closed at {} for new signal",
-                        pos.getPositionId(), candle.close());
+                logger.info("â†’ REVERSAL: {} exit at {} for new signal ({})",
+                        pos.getPositionId(), candle.close(), pos.getState());
             }
         }
 
@@ -312,24 +423,32 @@ public class PositionManager {
         Position pos = openPosition.get();
         pos.updatePrice(event.price(), event.eventTimestamp());
 
-        if (protectionActive
-                && (!(pos.hasHitTarget() || pos.hasHitStopLoss()) || !pollProtection(pos, event.price()))) {
-            // The OCO on Binance exits the position; no market order from ticks
+        // A pending entry has nothing to exit yet; a pending exit already has its order in flight
+        if (pos.getState() != PositionState.OPEN || !(pos.hasHitTarget() || pos.hasHitStopLoss())) {
             return;
         }
+        if (protectionActive) {
+            // The OCO on Binance exits the position; the poll only catches a lost fill or a gapped stop
+            pollProtectionIfDue(pos);
+            return;
+        }
+        exitAtLevel(pos);
+    }
 
+    /** Tick or candle exit at the position's latest price, when it crossed the target or the stop. */
+    private void exitAtLevel(Position pos) {
+        BigDecimal price = pos.getCurrentPrice();
+        Instant time = pos.getLastUpdateTime();
         if (pos.hasHitTarget()) {
-            if (!closePosition(pos, event.price(), event.eventTimestamp(), ExitReason.TARGET_HIT)) {
-                return;
+            if (closePosition(pos, price, time, ExitReason.TARGET_HIT)) {
+                logger.info("âœ“ TARGET HIT: {} exit at {} ({}, P&L: {}%)",
+                        pos.getPositionId(), price, pos.getState(), pos.getPnLPercent());
             }
-            logger.info("âœ“ TARGET HIT on tick: {} closed at {} (P&L: {}%)",
-                    pos.getPositionId(), event.price(), pos.getPnLPercent());
         } else if (pos.hasHitStopLoss()) {
-            if (!closePosition(pos, event.price(), event.eventTimestamp(), ExitReason.STOP_LOSS)) {
-                return;
+            if (closePosition(pos, price, time, ExitReason.STOP_LOSS)) {
+                logger.warn("âœ— STOP LOSS: {} exit at {} ({}, P&L: {}%)",
+                        pos.getPositionId(), price, pos.getState(), pos.getPnLPercent());
             }
-            logger.warn("âœ— STOP LOSS on tick: {} closed at {} (P&L: {}%)",
-                    pos.getPositionId(), event.price(), pos.getPnLPercent());
         }
     }
 
@@ -368,6 +487,9 @@ public class PositionManager {
             // The real entry order failed and the position was closed with its failure reason
             ExitReason reason = closedPositions.isEmpty() ? null : closedPositions.getLast().getExitReason();
             return ManualBuyResult.blocked("Entry order was not executed (" + reason + ")");
+        }
+        if (openPosition.get().getState() == PositionState.PENDING_ENTRY) {
+            return new ManualBuyResult(true, "Manual BUY entry order sent");
         }
         return new ManualBuyResult(true, "Manual BUY opened");
     }
@@ -412,9 +534,16 @@ public class PositionManager {
         }
     }
 
+    /**
+     * True when the position is closed, or its exit order is in flight (EXIT_PENDING) with the
+     * dedicated order I/O thread; false when nothing could be sent or the exit failed.
+     */
     public synchronized boolean closeManualPosition(BigDecimal price, java.time.Instant time) {
         if (openPosition.isEmpty() || price == null || price.compareTo(BigDecimal.ZERO) <= 0) {
             return false;
+        }
+        if (openPosition.get().getState() == PositionState.EXIT_PENDING) {
+            return true; // the exit already in flight is the one the user asked for
         }
 
         // An explicit user request skips the backoff wait; failures still count
@@ -476,52 +605,90 @@ public class PositionManager {
                         .setScale(0, java.math.RoundingMode.HALF_UP));
 
         if (realOrder) {
-            executeRealOrder(pos, signal);
+            submitEntry(pos, signal);
         }
     }
 
-    private void executeRealOrder(Position pos, Signal signal) {
+    // ---- entry order ----
+
+    enum EntryKind { FILLED, VALIDATION_FAILED, ORDER_FAILED, ERROR }
+
+    record EntryOutcome(EntryKind kind, BigDecimal quantity, BinanceOrderExecutor.OrderResult result, String error) {
+        static EntryOutcome of(EntryKind kind, BigDecimal quantity, String error) {
+            return new EntryOutcome(kind, quantity, null, error);
+        }
+    }
+
+    private void submitEntry(Position pos, Signal signal) {
+        logger.info("Executing real order for position: {}", pos.getPositionId());
+        String clientOrderId = entryClientOrderId(pos);
+        BigDecimal entryPrice = pos.getEntryPrice();
+        submitOrderIo("entry " + pos.getPositionId(), () -> {
+            EntryOutcome outcome = executeEntry(pos.getPositionId(), signal, entryPrice, clientOrderId);
+            synchronized (this) {
+                applyEntryOutcome(pos, signal, outcome);
+            }
+        }, () -> applyEntryOutcome(pos, signal,
+                EntryOutcome.of(EntryKind.ERROR, BigDecimal.ZERO, "order I/O executor is shut down")));
+    }
+
+    /** Runs on the order I/O thread without the lock. */
+    private EntryOutcome executeEntry(String positionId, Signal signal, BigDecimal entryPrice, String clientOrderId) {
+        BigDecimal quantity = BigDecimal.ZERO;
         try {
-            logger.info("Executing real order for position: {}", pos.getPositionId());
             PortfolioManager pm = portfolioManager.get();
             BigDecimal allocatedCapital = pm.getCurrentBalance()
                     .multiply(new java.math.BigDecimal("0.5"))
                     .setScale(2, java.math.RoundingMode.DOWN);
 
-            BigDecimal quantity = allocatedCapital
-                    .divide(pos.getEntryPrice(), 8, java.math.RoundingMode.DOWN);
+            quantity = allocatedCapital.divide(entryPrice, 8, java.math.RoundingMode.DOWN);
 
             if (validationService.isPresent()) {
-                java.util.Optional<BigDecimal> validatedQty = validationService.get()
-                        .validateAndAdjustQuantity(symbol, quantity, pos.getEntryPrice(), allocatedCapital);
+                Optional<BigDecimal> validatedQty = validationService.get()
+                        .validateAndAdjustQuantity(symbol, quantity, entryPrice, allocatedCapital);
                 if (validatedQty.isEmpty()) {
-                    logger.error("âœ— Order rejected: quantity validation failed for {}", symbol);
-                    alertNotifier.ifPresent(a -> a.alert(String.format(
-                            "Order rejected for position %s: quantity validation failed for %s", pos.getPositionId(), symbol)));
-                    closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), ExitReason.VALIDATION_FAILED);
-                    return;
+                    return EntryOutcome.of(EntryKind.VALIDATION_FAILED, quantity, "quantity validation failed");
                 }
                 quantity = validatedQty.get();
             }
 
-            logger.info("Executing real {} order: qty={} {} @ {}", signal, quantity, symbol, pos.getEntryPrice());
-            pos.setTargetQuantity(quantity);
+            logger.info("Executing real {} order: qty={} {} @ {}", signal, quantity, symbol, entryPrice);
+            BigDecimal orderQuantity = quantity;
+            // Before sending: a MARKET order fills at once and its report can beat the REST response
+            confirmationManager.ifPresent(m ->
+                    m.registerOrder(clientOrderId, symbol, signal.toString(), orderQuantity, entryPrice));
 
             BinanceOrderExecutor executor = orderExecutor.get();
-            BinanceOrderExecutor.OrderResult result;
-            String clientOrderId = entryClientOrderId(pos);
-            // Before sending: a MARKET order fills at once and its report can beat the REST response
-            if (confirmationManager.isPresent()) {
-                confirmationManager.get().registerOrder(clientOrderId, symbol, signal.toString(), quantity, pos.getEntryPrice());
-            }
+            BinanceOrderExecutor.OrderResult result = signal == Signal.BUY
+                    ? executor.executeBuyMarket(symbol, quantity, clientOrderId)
+                    : executor.executeSellMarket(symbol, quantity, clientOrderId);
 
-            if (signal == Signal.BUY) {
-                result = executor.executeBuyMarket(symbol, quantity, clientOrderId);
-            } else {
-                result = executor.executeSellMarket(symbol, quantity, clientOrderId);
+            if (!result.success()) {
+                confirmationManager.ifPresent(m -> m.unregisterOrder(clientOrderId));
+                return new EntryOutcome(EntryKind.ORDER_FAILED, quantity, result, result.error());
             }
+            syncPortfolioBalance(result.averagePrice().signum() > 0 ? result.averagePrice() : entryPrice);
+            return new EntryOutcome(EntryKind.FILLED, quantity, result, null);
+        } catch (Exception e) {
+            logger.error("âœ— Error executing real order for {}: {}", positionId, e.getMessage(), e);
+            return EntryOutcome.of(EntryKind.ERROR, quantity, e.getMessage());
+        }
+    }
 
-            if (result.success()) {
+    /** Under the lock. */
+    private void applyEntryOutcome(Position pos, Signal signal, EntryOutcome outcome) {
+        if (!isCurrent(pos) || pos.getState() != PositionState.PENDING_ENTRY) {
+            logger.error("Entry result {} for {} ignored: position is {}", outcome.kind(), pos.getPositionId(), pos.getState());
+            if (outcome.kind() == EntryKind.FILLED) {
+                alert(String.format("Entry order of position %s executed after the position became %s; check Binance manually",
+                        pos.getPositionId(), pos.getState()));
+            }
+            return;
+        }
+        switch (outcome.kind()) {
+            case FILLED -> {
+                BinanceOrderExecutor.OrderResult result = outcome.result();
+                pos.setTargetQuantity(outcome.quantity());
                 pos.applyFill(result.executedQuantity());
                 if (result.averagePrice().compareTo(BigDecimal.ZERO) > 0) {
                     pos.setEntryPrice(result.averagePrice());
@@ -529,34 +696,44 @@ public class PositionManager {
                 pos.transitionTo(PositionState.OPEN);
                 // Always: the quantity is what a restart needs to send the exit order (issue #64)
                 positionPersistence.accept(pos);
-                syncPortfolioBalance(pos.getEntryPrice());
                 logger.info("âœ“ Real order executed: orderId={} qty={} @ price={}",
                         result.orderId(), result.executedQuantity(), result.averagePrice());
                 if (result.averagePrice().signum() > 0) pos.updatePrice(result.averagePrice(), pos.getEntryTime());
                 if (signal == Signal.BUY && pos.getQuantity().signum() > 0) {
-                    placeProtection(pos);
+                    submitProtectionPlacement(pos);
                 }
-            } else {
-                confirmationManager.ifPresent(m -> m.unregisterOrder(clientOrderId));
-                logger.error("âœ— Real order failed: {}", result.error());
-                alertNotifier.ifPresent(a -> a.alert(String.format(
-                        "Real order failed for position %s: %s", pos.getPositionId(), result.error())));
+            }
+            case VALIDATION_FAILED -> {
+                logger.error("âœ— Order rejected: quantity validation failed for {}", symbol);
+                alert(String.format(
+                        "Order rejected for position %s: quantity validation failed for %s", pos.getPositionId(), symbol));
+                closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), ExitReason.VALIDATION_FAILED);
+            }
+            case ORDER_FAILED -> {
+                pos.setTargetQuantity(outcome.quantity());
+                logger.error("âœ— Real order failed: {}", outcome.error());
+                alert(String.format("Real order failed for position %s: %s", pos.getPositionId(), outcome.error()));
                 closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), ExitReason.ORDER_FAILED);
             }
-        } catch (Exception e) {
-            logger.error("âœ— Error executing real order: {}", e.getMessage(), e);
-            alertNotifier.ifPresent(a -> a.alert(String.format(
-                    "Exception executing real order for position %s: %s", pos.getPositionId(), e.getMessage())));
-            if (pos.getState() == PositionState.PENDING_ENTRY) {
+            case ERROR -> {
+                alert(String.format(
+                        "Exception executing real order for position %s: %s", pos.getPositionId(), outcome.error()));
                 closePosition(pos, pos.getEntryPrice(), pos.getEntryTime(), ExitReason.ERROR);
             }
         }
     }
 
+    // ---- exit order ----
+
     private boolean closePosition(Position pos, BigDecimal exitPrice, java.time.Instant exitTime, ExitReason reason) {
         return closePosition(pos, exitPrice, exitTime, reason, true);
     }
 
+    /**
+     * Under the lock. Simulated (or empty) positions close at once. A real exit moves to
+     * EXIT_PENDING and sends its order on the order I/O executor; returns whether the position is no
+     * longer OPEN afterwards (closed, or its exit in flight).
+     */
     private boolean closePosition(Position pos, BigDecimal exitPrice, java.time.Instant exitTime, ExitReason reason,
                                   boolean respectBackoff) {
         PositionState required = reason.countsInPerformance() ? PositionState.OPEN : pos.getState();
@@ -565,39 +742,101 @@ public class PositionManager {
             logger.debug("Close {} of {} ignored in state {}", reason, pos.getPositionId(), pos.getState());
             return false;
         }
-        if (!simulationMode && pos.getQuantity().compareTo(BigDecimal.ZERO) > 0) {
-            Instant now = clock.get();
-            if (respectBackoff && nextExitAttemptAt != null && now.isBefore(nextExitAttemptAt)) {
-                return false;
+        if (simulationMode || pos.getQuantity().compareTo(BigDecimal.ZERO) <= 0) {
+            finishClose(pos, exitPrice, exitTime, reason);
+            return true;
+        }
+
+        Instant now = clock.get();
+        if (respectBackoff && nextExitAttemptAt != null && now.isBefore(nextExitAttemptAt)) {
+            return false;
+        }
+        pos.transitionTo(PositionState.EXIT_PENDING);
+        positionPersistence.accept(pos);
+        submitExit(pos, exitPrice, exitTime, reason);
+        return pos.getState() != PositionState.OPEN;
+    }
+
+    enum ExitKind { FILLED, CLOSED_BY_EXCHANGE, FAILED }
+
+    record ExitOutcome(ExitKind kind, boolean protectionCancelled, BinanceOrderExecutor.OrderResult result,
+                       ProtectionCheck check) {
+    }
+
+    private void submitExit(Position pos, BigDecimal exitPrice, Instant exitTime, ExitReason reason) {
+        submitOrderIo("exit " + pos.getPositionId(), () -> {
+            boolean protection;
+            BigDecimal quantity;
+            synchronized (this) {
+                if (!isCurrent(pos) || pos.getState() != PositionState.EXIT_PENDING) {
+                    logger.warn("Exit {} of {} dropped before sending: position is {}", reason, pos.getPositionId(), pos.getState());
+                    return;
+                }
+                // Read when the task starts, not when it was queued: an OCO placement queued before it
+                // may have activated the protection meanwhile
+                protection = protectionActive;
+                quantity = pos.getQuantity();
             }
-            pos.transitionTo(PositionState.EXIT_PENDING);
-            positionPersistence.accept(pos);
-            if (protectionActive) {
+            ExitOutcome outcome = executeExit(pos, quantity, protection);
+            synchronized (this) {
+                applyExitOutcome(pos, exitPrice, exitTime, reason, outcome);
+            }
+        }, () -> recordExitFailure(pos, reason, clock.get()));
+    }
+
+    /** Runs on the order I/O thread without the lock. */
+    private ExitOutcome executeExit(Position pos, BigDecimal quantity, boolean protection) {
+        boolean cancelled = false;
+        try {
+            if (protection) {
                 // The OCO locks the BTC: it must be cancelled before the market exit can sell it
                 ProtectionCheck cancel = cancelProtection(pos);
                 if (cancel.kind() == ProtectionKind.FILLED) {
-                    logger.warn("Exit {} for {} not sent: Binance already closed it via the OCO ({})",
-                            reason, pos.getPositionId(), cancel.reason());
-                    closeByExchange(pos, cancel.reason(), cancel.quantity(), cancel.price(), now);
-                    return true;
+                    return new ExitOutcome(ExitKind.CLOSED_BY_EXCHANGE, false, null, cancel);
                 }
                 if (cancel.kind() != ProtectionKind.GONE) {
-                    recordExitFailure(pos, reason, now);
-                    return false;
+                    return new ExitOutcome(ExitKind.FAILED, false, null, cancel);
                 }
+                cancelled = true;
             }
-            Optional<BinanceOrderExecutor.OrderResult> result = closeRealPosition(pos);
-            if (result.isEmpty()) {
-                recordExitFailure(pos, reason, now);
-                return false;
-            }
-            if (result.get().averagePrice().compareTo(BigDecimal.ZERO) > 0) {
-                exitPrice = result.get().averagePrice();
-            }
+            Optional<BinanceOrderExecutor.OrderResult> result = closeRealPosition(pos, quantity);
+            return result.isPresent()
+                    ? new ExitOutcome(ExitKind.FILLED, cancelled, result.get(), null)
+                    : new ExitOutcome(ExitKind.FAILED, cancelled, null, null);
+        } catch (RuntimeException e) {
+            logger.error("âœ— Error executing real exit for {}: {}", pos.getPositionId(), e.getMessage(), e);
+            return new ExitOutcome(ExitKind.FAILED, cancelled, null, null);
         }
+    }
 
-        finishClose(pos, exitPrice, exitTime, reason);
-        return true;
+    /** Under the lock. */
+    private void applyExitOutcome(Position pos, BigDecimal exitPrice, Instant exitTime, ExitReason reason,
+                                  ExitOutcome outcome) {
+        if (outcome.protectionCancelled()) {
+            resetProtection();
+            unregisterProtectionLegs(pos);
+        }
+        if (!isCurrent(pos) || pos.getState() != PositionState.EXIT_PENDING) {
+            logger.error("Exit result {} for {} ignored: position is {}", outcome.kind(), pos.getPositionId(), pos.getState());
+            if (outcome.kind() == ExitKind.FILLED) {
+                alert(String.format("Exit order of position %s executed after the position became %s; check Binance manually",
+                        pos.getPositionId(), pos.getState()));
+            }
+            return;
+        }
+        switch (outcome.kind()) {
+            case FILLED -> {
+                BigDecimal average = outcome.result().averagePrice();
+                finishClose(pos, average.compareTo(BigDecimal.ZERO) > 0 ? average : exitPrice, exitTime, reason);
+            }
+            case CLOSED_BY_EXCHANGE -> {
+                ProtectionCheck check = outcome.check();
+                logger.warn("Exit {} for {} not sent: Binance already closed it via the OCO ({})",
+                        reason, pos.getPositionId(), check.reason());
+                closeByExchange(pos, check.reason(), check.quantity(), check.price(), clock.get());
+            }
+            case FAILED -> recordExitFailure(pos, reason, clock.get());
+        }
     }
 
     private void recordExitFailure(Position pos, ExitReason reason, Instant now) {
@@ -614,9 +853,9 @@ public class PositionManager {
         // Alert on the first failure and every 10th, not on every retry
         if (exitFailureCount == 1 || exitFailureCount % EXIT_FAILURE_ALERT_EVERY == 0) {
             int failures = exitFailureCount;
-            alertNotifier.ifPresent(a -> a.alert(String.format(
+            alert(String.format(
                     "CRITICAL: exit order failed for position %s (reason: %s, %d failed attempts) - position remains OPEN and unmanaged, manual intervention required",
-                    pos.getPositionId(), reason, failures)));
+                    pos.getPositionId(), reason, failures));
         }
     }
 
@@ -661,16 +900,16 @@ public class PositionManager {
      * commission from the base asset, so the free balance can be below the filled quantity.
      * Uses min(position qty, free base balance), rounded down to the LOT_SIZE step.
      */
-    BigDecimal sellableExitQuantity(Position pos) {
+    BigDecimal sellableExitQuantity(String positionId, BigDecimal positionQuantity) {
         BinanceOrderExecutor executor = orderExecutor.get();
-        BigDecimal quantity = pos.getQuantity();
+        BigDecimal quantity = positionQuantity;
 
         String baseAsset = baseAsset();
         BinanceOrderExecutor.BalanceResult balance = executor.getBalance(baseAsset);
         if (balance != null && balance.success()) {
             if (balance.free().compareTo(quantity) < 0) {
                 logger.warn("Free {} balance {} is below position {} qty {}; selling the free balance",
-                        baseAsset, balance.free(), pos.getPositionId(), quantity);
+                        baseAsset, balance.free(), positionId, quantity);
                 quantity = balance.free();
             }
         } else {
@@ -691,7 +930,7 @@ public class PositionManager {
         return filters == null ? null : filters.stepSize();
     }
 
-    // Cached on success: filters rarely change and exits run inside this lock
+    // Cached on success: filters rarely change
     private BinanceOrderExecutor.SymbolFilters symbolFilters() {
         if (cachedFilters == null) {
             BinanceOrderExecutor.SymbolFilters filters = orderExecutor.get().getSymbolFilters(symbol);
@@ -718,6 +957,13 @@ public class PositionManager {
 
     record ProtectionPrices(BigDecimal target, BigDecimal stop, BigDecimal stopLimit) {}
 
+    /** Result of sending the OCO: the stop-limit price when placed, the error otherwise. */
+    record ProtectionPlacement(boolean placed, BigDecimal stopLimit, String error) {
+        static ProtectionPlacement failed(String error) {
+            return new ProtectionPlacement(false, null, error);
+        }
+    }
+
     /**
      * Target rounded up and stop rounded down to the tick, so rounding never tightens either level.
      * The limit sits {@code stopLimitOffsetPercent} below the stop and at least one tick under it.
@@ -738,33 +984,48 @@ public class PositionManager {
         return price.divide(tickSize, 0, mode).multiply(tickSize).stripTrailingZeros();
     }
 
-    /** Places the SELL OCO for an open BUY; on failure alerts and leaves the tick exits in charge. */
-    private boolean placeProtection(Position pos) {
+    private boolean protectionApplicable(Position pos) {
+        return ocoEnabled && !simulationMode && orderExecutor.isPresent()
+                && pos.getSignal() == Signal.BUY && pos.getQuantity().signum() > 0;
+    }
+
+    /** Under the lock: places the SELL OCO of a freshly filled BUY on the order I/O executor. */
+    private void submitProtectionPlacement(Position pos) {
         resetProtection();
-        if (!ocoEnabled || simulationMode || orderExecutor.isEmpty()
-                || pos.getSignal() != Signal.BUY || pos.getQuantity().signum() <= 0) {
-            return false;
+        if (!protectionApplicable(pos)) {
+            return;
         }
+        BigDecimal market = pos.getCurrentPrice();
+        BigDecimal quantity = pos.getQuantity();
+        submitOrderIo("OCO placement " + pos.getPositionId(), () -> {
+            ProtectionPlacement placement = placeProtection(pos, market, quantity);
+            synchronized (this) {
+                applyProtectionPlacement(pos, placement);
+            }
+        }, () -> protectionPlacementFailed(pos, "order I/O executor is shut down"));
+    }
+
+    /** Sends the OCO; no lock needed. On failure the caller alerts and leaves the tick exits in charge. */
+    private ProtectionPlacement placeProtection(Position pos, BigDecimal market, BigDecimal positionQuantity) {
         String listId = OcoOrderIds.list(symbol, pos.getPositionId());
         try {
             BinanceOrderExecutor.SymbolFilters filters = symbolFilters();
             if (filters == null || filters.tickSize() == null || filters.tickSize().signum() <= 0) {
-                return protectionPlacementFailed(pos, "PRICE_FILTER tickSize unavailable");
+                return ProtectionPlacement.failed("PRICE_FILTER tickSize unavailable");
             }
             ProtectionPrices prices = protectionPrices(pos, filters.tickSize());
-            BigDecimal market = pos.getCurrentPrice();
             // Binance rejects a SELL OCO unless target > last price > stop
             if (prices.target().compareTo(market) <= 0 || prices.stop().compareTo(market) >= 0) {
-                return protectionPlacementFailed(pos, String.format("price %s is already outside target %s / stop %s",
+                return ProtectionPlacement.failed(String.format("price %s is already outside target %s / stop %s",
                         market, prices.target(), prices.stop()));
             }
-            BigDecimal quantity = sellableExitQuantity(pos);
+            BigDecimal quantity = sellableExitQuantity(pos.getPositionId(), positionQuantity);
             if (quantity.signum() <= 0) {
-                return protectionPlacementFailed(pos, "no sellable quantity");
+                return ProtectionPlacement.failed("no sellable quantity");
             }
             if (filters.minNotional() != null && filters.minNotional().signum() > 0
                     && quantity.multiply(prices.stopLimit()).compareTo(filters.minNotional()) < 0) {
-                return protectionPlacementFailed(pos, String.format("qty %s at stop limit %s is below min notional %s",
+                return ProtectionPlacement.failed(String.format("qty %s at stop limit %s is below min notional %s",
                         quantity, prices.stopLimit(), filters.minNotional()));
             }
 
@@ -776,30 +1037,53 @@ public class PositionManager {
             // An error can be ambiguous (timeout after Binance accepted it): the list id settles it
             if (!result.success() && !executor.queryOrderList(listId).isExecuting()) {
                 unregisterProtectionLegs(pos);
-                return protectionPlacementFailed(pos, result.error());
+                return ProtectionPlacement.failed(result.error());
             }
-            activateProtection(prices.stopLimit());
-            logger.info("OCO protection {} active for {}: qty={} target={} stop={} limit={}",
+            logger.info("OCO protection {} placed for {}: qty={} target={} stop={} limit={}",
                     listId, pos.getPositionId(), quantity, prices.target(), prices.stop(), prices.stopLimit());
-            return true;
+            return new ProtectionPlacement(true, prices.stopLimit(), null);
         } catch (Exception e) {
             unregisterProtectionLegs(pos);
-            return protectionPlacementFailed(pos, e.getMessage());
+            return ProtectionPlacement.failed(e.getMessage());
         }
+    }
+
+    /** Under the lock. */
+    private boolean applyProtectionPlacement(Position pos, ProtectionPlacement placement) {
+        if (!placement.placed()) {
+            return protectionPlacementFailed(pos, placement.error());
+        }
+        if (!isCurrent(pos) || pos.getState().isTerminal()) {
+            // The position ended while the OCO was being sent: left alone it would sell coins later
+            String listId = OcoOrderIds.list(symbol, pos.getPositionId());
+            logger.error("OCO {} placed for {} which is already {}; cancelling it", listId, pos.getPositionId(), pos.getState());
+            unregisterProtectionLegs(pos);
+            submitOrderIo("orphan OCO cancel " + pos.getPositionId(), () -> {
+                BinanceOrderExecutor.OrderListQuery cancel = orderExecutor.get().cancelOrderList(symbol, listId);
+                if (cancel.state() == BinanceOrderExecutor.OrderListQuery.State.ERROR) {
+                    alert(String.format("Could not cancel OCO %s of closed position %s: %s",
+                            listId, pos.getPositionId(), cancel.error()));
+                }
+            }, () -> alert(String.format("OCO %s of closed position %s was not cancelled", listId, pos.getPositionId())));
+            return false;
+        }
+        activateProtection(placement.stopLimit());
+        logger.info("OCO protection active for {}", pos.getPositionId());
+        return true;
     }
 
     private boolean protectionPlacementFailed(Position pos, String error) {
         logger.error("OCO protection not placed for {}: {}; exits stay on ticks", pos.getPositionId(), error);
-        alertNotifier.ifPresent(a -> a.alert(String.format(
+        alert(String.format(
                 "OCO protection could not be placed for position %s: %s - target/stop depend on the bot running",
-                pos.getPositionId(), error)));
+                pos.getPositionId(), error));
         return false;
     }
 
     /**
-     * Where the OCO stands on Binance. EXECUTING is ACTIVE; a finished list is FILLED when a leg
-     * filled and GONE when both legs ended unfilled (cancelled outside the bot); a list Binance does
-     * not know is GONE; anything unanswered is UNKNOWN.
+     * Where the OCO stands on Binance; no lock needed. EXECUTING is ACTIVE; a finished list is FILLED
+     * when a leg filled and GONE when both legs ended unfilled (cancelled outside the bot); a list
+     * Binance does not know is GONE; anything unanswered is UNKNOWN.
      */
     private ProtectionCheck checkProtection(Position pos) {
         BinanceOrderExecutor executor = orderExecutor.get();
@@ -829,8 +1113,8 @@ public class PositionManager {
     }
 
     /**
-     * Cancels the OCO before a bot exit. GONE means the BTC is free to sell; FILLED means Binance
-     * already sold it, so no market order may follow.
+     * Cancels the OCO before a bot exit; no lock needed, the caller applies the result. GONE means the
+     * BTC is free to sell; FILLED means Binance already sold it, so no market order may follow.
      */
     private ProtectionCheck cancelProtection(Position pos) {
         String listId = OcoOrderIds.list(symbol, pos.getPositionId());
@@ -843,8 +1127,6 @@ public class PositionManager {
         };
         if (check.kind() == ProtectionKind.GONE) {
             logger.info("OCO {} cancelled before exiting {}", listId, pos.getPositionId());
-            resetProtection();
-            unregisterProtectionLegs(pos);
         } else if (check.kind() != ProtectionKind.FILLED) {
             logger.error("Could not cancel OCO {} for {}: {}", listId, pos.getPositionId(), cancel.error());
         }
@@ -852,64 +1134,78 @@ public class PositionManager {
     }
 
     /**
-     * Runs when a tick or candle crosses target or stop while the OCO is active, at most every
-     * {@link #PROTECTION_POLL_INTERVAL}: catches a fill whose report was lost. True means the tick
-     * logic must exit at market - the OCO is gone, or the price fell through the stop's limit
+     * Under the lock, when a tick or candle crosses target or stop while the OCO is active: at most
+     * every {@link #PROTECTION_POLL_INTERVAL} asks Binance, to catch a fill whose report was lost. The
+     * result exits at market when the OCO is gone, or when the price fell through the stop's limit
      * without filling it (a STOP_LOSS_LIMIT does not chase the price).
      */
-    private boolean pollProtection(Position pos, BigDecimal price) {
+    private void pollProtectionIfDue(Position pos) {
         Instant now = clock.get();
         if (nextProtectionPollAt != null && now.isBefore(nextProtectionPollAt)) {
-            return false;
+            return;
         }
         nextProtectionPollAt = now.plus(PROTECTION_POLL_INTERVAL);
-        ProtectionCheck check = checkProtection(pos);
-        switch (check.kind()) {
-            case FILLED -> {
-                closeByExchange(pos, check.reason(), check.quantity(), check.price(), now);
-                return false;
+        submitOrderIo("OCO poll " + pos.getPositionId(), () -> {
+            ProtectionCheck check = checkProtection(pos);
+            synchronized (this) {
+                applyProtectionPoll(pos, check);
             }
+        }, () -> { });
+    }
+
+    /** Under the lock. */
+    private void applyProtectionPoll(Position pos, ProtectionCheck check) {
+        // A pending exit owns the OCO: its cancel settles whether a leg filled
+        if (!isCurrent(pos) || pos.getState() != PositionState.OPEN || !protectionActive) {
+            return;
+        }
+        switch (check.kind()) {
+            case FILLED -> closeByExchange(pos, check.reason(), check.quantity(), check.price(), clock.get());
             case GONE -> {
                 dropProtection(pos, "OCO no longer open on Binance");
-                return true;
+                exitAtLevel(pos);
             }
             case ACTIVE -> {
+                BigDecimal price = pos.getCurrentPrice();
                 if (pos.hasHitStopLoss() && protectionStopLimitPrice != null
                         && price.compareTo(protectionStopLimitPrice) < 0) {
                     logger.warn("Price {} fell below stop limit {} of {} without a fill; exiting at market",
                             price, protectionStopLimitPrice, pos.getPositionId());
-                    return true;
+                    exitAtLevel(pos);
                 }
-                return false;
             }
-            default -> {
-                return false;
-            }
+            default -> { }
         }
     }
 
-    /** Binance closed the position through the OCO: recorded locally without sending an order. */
+    /** Under the lock. Binance closed the position through the OCO: recorded without sending an order. */
     private void closeByExchange(Position pos, ExitReason reason, BigDecimal quantity, BigDecimal price, Instant time) {
         BigDecimal exitPrice = price != null && price.signum() > 0 ? price : pos.getCurrentPrice();
         logger.warn("Position {} closed by Binance OCO: {} qty={} @ {}", pos.getPositionId(), reason, quantity, exitPrice);
         unregisterProtectionLegs(pos);
-        syncPortfolioBalance(exitPrice);
         finishClose(pos, exitPrice, time, reason);
+        if (portfolioManager.isPresent() && orderExecutor.isPresent()) {
+            submitOrderIo("balance sync", () -> syncPortfolioBalance(exitPrice), () -> { });
+        }
     }
 
     private void dropProtection(Position pos, String why) {
         resetProtection();
         unregisterProtectionLegs(pos);
         logger.error("OCO protection lost for {}: {}; exits back on ticks", pos.getPositionId(), why);
-        alertNotifier.ifPresent(a -> a.alert(String.format(
+        alert(String.format(
                 "OCO protection lost for position %s (%s) - target/stop depend on the bot running",
-                pos.getPositionId(), why)));
+                pos.getPositionId(), why));
     }
 
     /**
      * After a restart: an executing OCO keeps protecting, an executed one closes the position, a
      * missing one is placed again. An unanswered query assumes it active, so an exit still cancels
      * first and the next poll settles it.
+     *
+     * <p>Unlike the trading paths this talks to Binance while holding the lock: it runs once during
+     * startup reconciliation, before market data and entries are enabled, and its caller needs the
+     * outcome.
      */
     public synchronized ProtectionReconciliation reconcileProtection() {
         if (!ocoEnabled || simulationMode || orderExecutor.isEmpty() || openPosition.isEmpty()) {
@@ -934,12 +1230,15 @@ public class PositionManager {
                 return ProtectionReconciliation.CLOSED_BY_EXCHANGE;
             }
             case GONE -> {
-                return placeProtection(pos) ? ProtectionReconciliation.PLACED : ProtectionReconciliation.PLACEMENT_FAILED;
+                resetProtection();
+                boolean placed = applyProtectionPlacement(pos,
+                        placeProtection(pos, pos.getCurrentPrice(), pos.getQuantity()));
+                return placed ? ProtectionReconciliation.PLACED : ProtectionReconciliation.PLACEMENT_FAILED;
             }
             default -> {
                 activateProtection(null);
-                alertNotifier.ifPresent(a -> a.alert(String.format(
-                        "Could not check the OCO of position %s on Binance; assuming it is active", pos.getPositionId())));
+                alert(String.format(
+                        "Could not check the OCO of position %s on Binance; assuming it is active", pos.getPositionId()));
                 return ProtectionReconciliation.UNKNOWN;
             }
         }
@@ -972,20 +1271,21 @@ public class PositionManager {
         });
     }
 
-    private Optional<BinanceOrderExecutor.OrderResult> closeRealPosition(Position pos) {
+    /** Runs on the order I/O thread without the lock. */
+    private Optional<BinanceOrderExecutor.OrderResult> closeRealPosition(Position pos, BigDecimal positionQuantity) {
         try {
             BinanceOrderExecutor executor = orderExecutor.get();
             String clientOrderId = exitClientOrderId(pos);
             BinanceOrderExecutor.OrderResult result;
             if (pos.getSignal() == Signal.BUY) {
-                BigDecimal quantity = sellableExitQuantity(pos);
+                BigDecimal quantity = sellableExitQuantity(pos.getPositionId(), positionQuantity);
                 if (quantity.compareTo(BigDecimal.ZERO) <= 0) {
-                    logger.error("No sellable quantity for {} (position qty={})", pos.getPositionId(), pos.getQuantity());
+                    logger.error("No sellable quantity for {} (position qty={})", pos.getPositionId(), positionQuantity);
                     return Optional.empty();
                 }
                 result = executor.executeSellMarket(symbol, quantity, clientOrderId);
             } else {
-                result = executor.executeBuyMarket(symbol, pos.getQuantity(), clientOrderId);
+                result = executor.executeBuyMarket(symbol, positionQuantity, clientOrderId);
             }
 
             if (!result.success()) {
@@ -1012,7 +1312,10 @@ public class PositionManager {
         }
     }
 
-    /** Refreshes USDT and base asset totals so the drawdown is measured on equity (issue #81). */
+    /**
+     * Refreshes USDT and base asset totals so the drawdown is measured on equity (issue #81). Runs on
+     * the order I/O thread; PortfolioManager synchronizes itself.
+     */
     private void syncPortfolioBalance(BigDecimal lastFillPrice) {
         if (portfolioManager.isEmpty() || orderExecutor.isEmpty()) {
             return;
@@ -1087,4 +1390,3 @@ public class PositionManager {
             double value
     ) {}
 }
-

@@ -154,6 +154,7 @@ public class Position {
     public void setEntryPrice(BigDecimal entryPrice) { this.entryPrice = entryPrice; }
     public Instant getEntryTime() { return entryTime; }
     public BigDecimal getCurrentPrice() { return currentPrice; }
+    public Instant getLastUpdateTime() { return lastUpdateTime; }
     public BigDecimal getExitPrice() { return exitPrice; }
     public Instant getExitTime() { return exitTime; }
     public ExitReason getExitReason() { return exitReason; }
