@@ -41,7 +41,7 @@ public class CandleAggregatorTest {
         CandleEvent candle = candles.get(0);
         assertEquals("BTC/USD", candle.instrument());
         assertEquals(Instant.parse("2026-09-08T10:00:00Z"), candle.openTime());
-        assertEquals(Instant.parse("2026-09-08T10:15:00Z"), candle.closeTime());
+        assertEquals(Instant.parse("2026-09-08T10:14:59.999Z"), candle.closeTime());
         assertEquals(new BigDecimal("100"), candle.open());
         assertEquals(new BigDecimal("110"), candle.high());
         assertEquals(new BigDecimal("90"), candle.low());
@@ -64,7 +64,7 @@ public class CandleAggregatorTest {
         CandleEvent candle = candles.get(1);
         assertEquals("BTC/USD", candle.instrument());
         assertEquals(Instant.parse("2026-09-08T10:15:00Z"), candle.openTime());
-        assertEquals(Instant.parse("2026-09-08T10:30:00Z"), candle.closeTime());
+        assertEquals(Instant.parse("2026-09-08T10:29:59.999Z"), candle.closeTime());
         assertEquals(new BigDecimal("95"), candle.open());
         assertEquals(new BigDecimal("105"), candle.high());
         assertEquals(new BigDecimal("95"), candle.low());
@@ -115,6 +115,69 @@ public class CandleAggregatorTest {
         // the next candle starts clean
         aggregator.onEvent(event("100", "2026-09-08T10:30:00Z", "1", AggressorSide.BUY));
         assertEquals(TradeFlow.Source.TRADES, candles.get(1).flow().source());
+    }
+
+    @Test
+    public void lateTickAfterTimerCloseDoesNotEmitTheCandleAgain() {
+        List<CandleEvent> candles = new ArrayList<>();
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles::add);
+
+        aggregator.onEvent(event("100", "2026-09-08T10:00:30Z", "1"));
+        aggregator.closeExpiredCandle(Instant.parse("2026-09-08T10:01:00.250Z"));
+        assertEquals(1, candles.size());
+
+        // a trade from the window that was just emitted arrives after the timer closed it (issue #74)
+        aggregator.onEvent(event("101", "2026-09-08T10:00:59.900Z", "1"));
+        aggregator.closeExpiredCandle(Instant.parse("2026-09-08T10:02:00.250Z"));
+        aggregator.onEvent(event("102", "2026-09-08T10:02:10Z", "1"));
+        aggregator.onEvent(event("103", "2026-09-08T10:03:10Z", "1"));
+
+        assertEquals(2, candles.size());
+        assertEquals(Instant.parse("2026-09-08T10:00:00Z"), candles.get(0).openTime());
+        assertEquals(Instant.parse("2026-09-08T10:02:00Z"), candles.get(1).openTime());
+        assertEquals(new BigDecimal("102"), candles.get(1).open());
+        assertEquals(1, aggregator.getLateTicksDropped());
+    }
+
+    @Test
+    public void liveCandleHasTheSameCloseTimeAsTheKlineOfThatMinute() {
+        // Binance kline row for the 1m candle opening at 2026-09-08T10:00:00Z: [openTime, ..., closeTime, ...]
+        long klineOpenTime = 1788861600000L;
+        long klineCloseTime = 1788861659999L;
+        List<CandleEvent> candles = new ArrayList<>();
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles::add);
+
+        aggregator.onEvent(event("100", "2026-09-08T10:00:30Z", "1"));
+        aggregator.closeExpiredCandle(Instant.parse("2026-09-08T10:01:00.250Z"));
+        aggregator.onEvent(event("100", "2026-09-08T10:01:30Z", "1"));
+        aggregator.onEvent(event("100", "2026-09-08T10:02:00Z", "1"));   // rollover path
+
+        assertEquals(Instant.ofEpochMilli(klineOpenTime), candles.get(0).openTime());
+        assertEquals(Instant.ofEpochMilli(klineCloseTime), candles.get(0).closeTime());
+        assertEquals(Instant.ofEpochMilli(klineCloseTime + 60_000), candles.get(1).closeTime());
+    }
+
+    @Test
+    public void tickOlderThanTheOpenCandleIsDropped() {
+        List<CandleEvent> candles = new ArrayList<>();
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles::add);
+
+        aggregator.onEvent(event("100", "2026-09-08T10:05:10Z", "1"));
+        aggregator.onEvent(event("90", "2026-09-08T10:04:59Z", "1"));
+        aggregator.onEvent(event("110", "2026-09-08T10:06:00Z", "1"));
+
+        assertEquals(1, candles.size());
+        assertEquals(Instant.parse("2026-09-08T10:05:00Z"), candles.get(0).openTime());
+        assertEquals(new BigDecimal("100"), candles.get(0).low());
+        assertEquals(1, aggregator.getLateTicksDropped());
+    }
+
+    @Test
+    public void timerIsAlignedToTheNextIntervalBoundaryPlusTolerance() {
+        CandleAggregator aggregator = new CandleAggregator(Duration.ofMinutes(1), candles -> { });
+
+        assertEquals(20_250, aggregator.initialTimerDelayMillis(Instant.parse("2026-09-08T10:00:40Z")));
+        assertEquals(60_250, aggregator.initialTimerDelayMillis(Instant.parse("2026-09-08T10:00:00Z")));
     }
 
     @Test

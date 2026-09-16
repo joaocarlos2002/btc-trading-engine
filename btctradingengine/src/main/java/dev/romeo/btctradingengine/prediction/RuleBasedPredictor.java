@@ -74,6 +74,9 @@ public class RuleBasedPredictor implements FeatureEventListener {
     public RuleBasedPredictor(PredictionEventListener listener, double buyThreshold, double sellThreshold,
                               int confirmationSnapshots, MarketRegimeClassifier regimeClassifier,
                               boolean regimeGatingEnabled, EntryGuard entryGuard) {
+        if (confirmationSnapshots < 1) {
+            throw new IllegalArgumentException("confirmationSnapshots must be at least 1: " + confirmationSnapshots);
+        }
         this.entryGuard = entryGuard;
         this.regimeClassifier = regimeClassifier;
         this.regimeGatingEnabled = regimeGatingEnabled;
@@ -208,36 +211,30 @@ public class RuleBasedPredictor implements FeatureEventListener {
         return filterAvg < 0;
     }
 
+    /**
+     * Emits BUY/SELL only after the same candidate was seen confirmationSnapshots candles in a row.
+     * The counter used to start at 1 on a change and still return HOLD there, so N=1 needed two
+     * candles (issue #88); now each BUY/SELL candle counts once and N=1 passes straight through.
+     */
     private Signal applyTemporalConfirmation(Signal candidateSignal) {
-        // Se o sinal mudou, reseta o contador de confirmaÃ§Ã£o
         if (candidateSignal != lastSignal) {
             lastSignal = candidateSignal;
-            signalConfirmationCount = 1;
-
-            // Se Ã© HOLD, aceita imediatamente
-            if (candidateSignal == Signal.HOLD) {
-                return Signal.HOLD;
-            }
-
-            // BUY/SELL candidato: precisa de confirmaÃ§Ã£o
-            logger.debug("Signal candidate: {} (1/{} confirms)", candidateSignal, confirmationSnapshots);
-            return Signal.HOLD; // Retorna HOLD atÃ© ter confirmaÃ§Ãµes
+            signalConfirmationCount = 0;
         }
 
-        // Mesmo sinal, incrementa contador
-        if (candidateSignal != Signal.HOLD) {
-            signalConfirmationCount++;
-            logger.debug("Signal confirmation: {} ({}/{})", candidateSignal, signalConfirmationCount, confirmationSnapshots);
-
-            if (signalConfirmationCount >= confirmationSnapshots) {
-                logger.info("âœ“ Signal CONFIRMED: {} after {} snapshots", candidateSignal, signalConfirmationCount);
-                return candidateSignal;
-            }
-            return Signal.HOLD; // Ainda aguardando confirmaÃ§Ã£o
+        if (candidateSignal == Signal.HOLD) {
+            signalConfirmationCount = 0;
+            return Signal.HOLD;
         }
 
-        // HOLD continua sendo HOLD
-        signalConfirmationCount = 0;
+        signalConfirmationCount++;
+        if (signalConfirmationCount >= confirmationSnapshots) {
+            if (signalConfirmationCount == confirmationSnapshots) {
+                logger.info("Signal CONFIRMED: {} after {} snapshots", candidateSignal, signalConfirmationCount);
+            }
+            return candidateSignal;
+        }
+        logger.debug("Signal confirmation: {} ({}/{})", candidateSignal, signalConfirmationCount, confirmationSnapshots);
         return Signal.HOLD;
     }
 

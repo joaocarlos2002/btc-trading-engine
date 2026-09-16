@@ -24,6 +24,8 @@ public class BollingerBands {
     private final BigDecimal stdDevMultiplier;
     private final Deque<BigDecimal> closes = new ArrayDeque<>();
     private BigDecimal runningSum = BigDecimal.ZERO;
+    /** Sum of close^2 over the window, so the variance needs no rescan (issue #95). */
+    private BigDecimal runningSumOfSquares = BigDecimal.ZERO;
 
     public BollingerBands(int period, BigDecimal stdDevMultiplier) {
         this.period = period;
@@ -32,10 +34,13 @@ public class BollingerBands {
 
     public Optional<BollingerValue> update(BigDecimal close) {
         runningSum = runningSum.add(close);
+        runningSumOfSquares = runningSumOfSquares.add(close.multiply(close));
         closes.addLast(close);
 
         if (closes.size() > period) {
-            runningSum = runningSum.subtract(closes.removeFirst());
+            BigDecimal oldest = closes.removeFirst();
+            runningSum = runningSum.subtract(oldest);
+            runningSumOfSquares = runningSumOfSquares.subtract(oldest.multiply(oldest));
         }
         if (closes.size() < period) {
             return Optional.empty();
@@ -57,11 +62,15 @@ public class BollingerBands {
         ));
     }
 
+    /**
+     * Sum of (close - middle)^2 expanded as sum(c^2) - 2*middle*sum(c) + period*middle^2. BigDecimal
+     * add/subtract/multiply are exact, so this is the very same number the per-close loop produced,
+     * middle's 8-decimal rounding included - there is no floating drift to resync.
+     */
     private BigDecimal standardDeviation(BigDecimal middle) {
-        BigDecimal sumOfSquares = BigDecimal.ZERO;
-        for (BigDecimal close : closes) {
-            sumOfSquares = sumOfSquares.add(close.subtract(middle).pow(2));
-        }
+        BigDecimal sumOfSquares = runningSumOfSquares
+                .subtract(middle.multiply(runningSum).multiply(BigDecimal.TWO))
+                .add(middle.multiply(middle).multiply(BigDecimal.valueOf(period)));
         BigDecimal variance = sumOfSquares.divide(BigDecimal.valueOf(period), 10, RoundingMode.HALF_EVEN);
 
         if (variance.compareTo(BigDecimal.ZERO) <= 0) {

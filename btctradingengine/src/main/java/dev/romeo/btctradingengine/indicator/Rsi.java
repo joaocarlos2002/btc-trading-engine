@@ -10,7 +10,10 @@ public class Rsi {
     private final int n;
     private BigDecimal previousPrice;
     private boolean seeded = false;
-    private Deque<BigDecimal> dts = new ArrayDeque<>();
+    private final Deque<BigDecimal> dts = new ArrayDeque<>();
+    /** Running sums over dts (issue #95): exact BigDecimal add/subtract, so no drift and no rescan. */
+    private BigDecimal sumGain = BigDecimal.ZERO;
+    private BigDecimal sumLoss = BigDecimal.ZERO;
 
     public Rsi(int n) {
         this.n = n;
@@ -26,24 +29,9 @@ public class Rsi {
             previousPrice = p;
 
             dts.addLast(delta);
-            if (dts.size() > n) dts.removeFirst();
+            accumulate(delta, true);
+            if (dts.size() > n) accumulate(dts.removeFirst(), false);
             if (dts.size() < n) return Optional.empty();
-        }
-
-        BigDecimal sumGain = BigDecimal.ZERO;
-        BigDecimal sumLoss = BigDecimal.ZERO;
-
-
-        int count = 0;
-        for (BigDecimal val : dts) {
-
-            if (val.compareTo(BigDecimal.ZERO) >= 0) {
-                sumGain = sumGain.add(val);
-            } else {
-                sumLoss = sumLoss.add(val.abs());
-            }
-
-            count++;
         }
 
         BigDecimal gain = sumGain.divide(BigDecimal.valueOf(n), 8, RoundingMode.HALF_EVEN);
@@ -58,6 +46,15 @@ public class Rsi {
                 .divide(BigDecimal.ONE.add(rs), 8, RoundingMode.HALF_EVEN));
 
         return Optional.of(rsi);
+    }
+
+    private void accumulate(BigDecimal delta, boolean entering) {
+        if (delta.compareTo(BigDecimal.ZERO) >= 0) {
+            sumGain = entering ? sumGain.add(delta) : sumGain.subtract(delta);
+        } else {
+            BigDecimal loss = delta.abs();
+            sumLoss = entering ? sumLoss.add(loss) : sumLoss.subtract(loss);
+        }
     }
 }
 

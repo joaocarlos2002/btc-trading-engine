@@ -8,15 +8,17 @@ import dev.romeo.btctradingengine.prediction.SignalRule;
 import java.math.BigDecimal;
 
 public class SmaMomentumRule implements SignalRule {
+    private final int period;
     private final BigDecimal distanceExtreme;
     private final BigDecimal distanceModerate;
 
     public SmaMomentumRule() {
-        this(Config.getSmaDistanceExtreme(), Config.getSmaDistanceModerate());
+        this(Config.getSmaPeriod(), Config.getSmaDistanceExtreme(), Config.getSmaDistanceModerate());
     }
 
-    /** Allows overriding thresholds without touching global Config - used by on-demand backtests. */
-    public SmaMomentumRule(BigDecimal distanceExtreme, BigDecimal distanceModerate) {
+    /** Allows overriding thresholds without touching global Config - used by on-demand backtests. The period only labels the rule. */
+    public SmaMomentumRule(int period, BigDecimal distanceExtreme, BigDecimal distanceModerate) {
+        this.period = period;
         this.distanceExtreme = distanceExtreme;
         this.distanceModerate = distanceModerate;
     }
@@ -58,7 +60,7 @@ public class SmaMomentumRule implements SignalRule {
 
     @Override
     public String getName() {
-        return "SMA" + Config.getSmaPeriod() + "-Distance";
+        return "SMA" + period + "-Distance";
     }
 }
 

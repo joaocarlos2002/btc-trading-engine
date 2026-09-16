@@ -56,6 +56,35 @@ public class PositionTest {
     }
 
     @Test
+    public void openSellLosingShowsNegativePnL() {
+        Position pos = new Position("POS_2", Signal.SELL, BigDecimal.valueOf(100), Instant.now(),
+                BigDecimal.valueOf(2.0), BigDecimal.valueOf(1.5));
+        pos.updatePrice(BigDecimal.valueOf(101), Instant.now());
+
+        assertEquals(0, pos.getPnL().compareTo(BigDecimal.valueOf(-1)));
+        assertTrue(pos.getPnLPercent().signum() < 0);
+    }
+
+    @Test
+    public void openSellWinningShowsPositivePnL() {
+        Position pos = new Position("POS_3", Signal.SELL, BigDecimal.valueOf(100), Instant.now(),
+                BigDecimal.valueOf(2.0), BigDecimal.valueOf(1.5));
+        pos.updatePrice(BigDecimal.valueOf(98), Instant.now());
+
+        assertEquals(0, pos.getPnL().compareTo(BigDecimal.valueOf(2)));
+    }
+
+    @Test
+    public void openBuyPnLIsCurrentMinusEntry() {
+        Position pos = newPosition();
+        pos.updatePrice(BigDecimal.valueOf(103), Instant.now());
+        assertEquals(0, pos.getPnL().compareTo(BigDecimal.valueOf(3)));
+
+        pos.updatePrice(BigDecimal.valueOf(99), Instant.now());
+        assertEquals(0, pos.getPnL().compareTo(BigDecimal.valueOf(-1)));
+    }
+
+    @Test
     public void remainingQuantityIsZeroWhenNoTargetSet() {
         Position pos = newPosition();
         assertEquals(BigDecimal.ZERO, pos.getRemainingQuantity());

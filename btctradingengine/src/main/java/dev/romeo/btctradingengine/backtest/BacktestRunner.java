@@ -30,17 +30,26 @@ public class BacktestRunner {
 
     public BacktestReport run(List<CandleEvent> candles, BigDecimal initialCapital, BacktestParams params,
                               DerivativesLookup derivatives) {
+        return run(List.of(), candles, initialCapital, params, derivatives);
+    }
+
+    /**
+     * Runs {@code candles} after feeding {@code warmup} through the extractor without trading (issue
+     * #108). The warmup candles only fill the indicators, the same way the live bot warms up from
+     * history before its first prediction: the predictor never sees them, so they can neither open
+     * a trade nor count towards the signal confirmation. A walk-forward test window uses this so its
+     * first candles are not judged on indicators still at their neutral warmup values.
+     */
+    public BacktestReport run(List<CandleEvent> warmup, List<CandleEvent> candles, BigDecimal initialCapital,
+                              BacktestParams params, DerivativesLookup derivatives) {
+        Objects.requireNonNull(warmup, "warmup");
         Objects.requireNonNull(candles, "candles");
         Objects.requireNonNull(initialCapital, "initialCapital");
         Objects.requireNonNull(params, "params");
         Objects.requireNonNull(derivatives, "derivatives");
         if (candles.isEmpty()) {
-            return new BacktestEngine(
-                    Config.getBacktestCommissionRate(),
-                    Config.getTradingTargetPercent(),
-                    Config.getTradingStopLossPercent(),
-                    Config.isShortSellingAllowed()
-            ).generateReport(initialCapital);
+            return new BacktestEngine(params.commissionRate(), params.targetPercent(),
+                    params.stopLossPercent(), params.allowShort()).generateReport(initialCapital);
         }
 
         BacktestEngine engine = new BacktestEngine(params.commissionRate(), params.targetPercent(),
@@ -52,16 +61,19 @@ public class BacktestRunner {
                 new MarketRegimeClassifier(params.adxTrendMin(), params.adxTrendStrong(), params.bollingerSqueezeThreshold()),
                 params.regimeGatingEnabled(),
                 new VpinEntryGuard(params.vpinFilterEnabled(), params.vpinHighThreshold()));
-        predictor.addRule(new RsiRule(params.rsiOversold(), params.rsiNeutralLow(), params.rsiNeutralHigh(), params.rsiOverbought()));
-        predictor.addRule(new SmaMomentumRule(params.smaDistanceExtreme(), params.smaDistanceModerate()));
+        predictor.addRule(new RsiRule(params.rsiPeriod(), params.rsiOversold(), params.rsiNeutralLow(), params.rsiNeutralHigh(), params.rsiOverbought()));
+        predictor.addRule(new SmaMomentumRule(params.smaPeriod(), params.smaDistanceExtreme(), params.smaDistanceModerate()));
         predictor.addRule(new MacdRule(params.macdStrongHistogramAtrRatio()));
-        predictor.addRule(new MfiRule(params.mfiOversold(), params.mfiNeutralLow(), params.mfiNeutralHigh(), params.mfiOverbought()));
+        predictor.addRule(new MfiRule(params.mfiPeriod(), params.mfiOversold(), params.mfiNeutralLow(), params.mfiNeutralHigh(), params.mfiOverbought()));
         predictor.addFilterRule(new AtrRule(params.atrVolatilityLow(), params.atrVolatilityNormal(), params.atrVolatilityHigh()));
         predictor.addFilterRule(new VolatilityRule(params.volatilityRatioHigh()));
         predictor.addFilterRule(new AdxRegimeRule(params.adxTrendMin(), params.bollingerSqueezeThreshold(), params.regimeGatingEnabled()));
 
         FeatureExtractor extractor = new FeatureExtractor(params.indicatorPeriods(), derivatives, predictor::onEvent);
 
+        for (CandleEvent candle : warmup) {
+            extractor.warmUp(candle, features -> { });
+        }
         for (CandleEvent candle : candles) {
             currentCandle[0] = candle;
             extractor.onEvent(candle);

@@ -33,7 +33,7 @@ public class FeatureExtractor implements CandleEventListener {
     /** Neutral RSI/MFI value reported while the oscillator is still warming up. */
     private static final BigDecimal NEUTRAL_OSCILLATOR = BigDecimal.valueOf(50);
 
-    private final FeatureBuffer buffer = new FeatureBuffer();
+    private final FeatureBuffer buffer;
     private final SmaIncremental smaIncremental;
     private final Ema emaIncremental;
     private final Rsi rsiIncremental;
@@ -95,6 +95,8 @@ public class FeatureExtractor implements CandleEventListener {
         this.volatilityShortPeriods = periods.volatilityShort();
         this.volatilityLongPeriods = periods.volatilityLong();
         this.volumeAveragePeriods = periods.volumeAverage();
+        // Sized to the largest window it serves, otherwise those features never leave warmup (issue #71)
+        this.buffer = new FeatureBuffer(Math.max(volatilityShortPeriods, Math.max(volatilityLongPeriods, volumeAveragePeriods)));
         this.listener = listener;
     }
 

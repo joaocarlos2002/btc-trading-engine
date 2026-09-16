@@ -242,6 +242,9 @@ public class Main {
                 }
             }
 
+            // Market data and execution are separate venues (issue #76): mainnet prices, testnet orders by default
+            logger.info("Market data from {} / {}; execution on {}",
+                    Config.getMarketDataWsUrl(), Config.getMarketDataRestUrl(), Config.getBinanceRestUrl());
             BinanceAdapter source = new BinanceAdapter();
             source.setStatusListener(status -> {
                 connectivityGuard.onMarketDataStatus(status);

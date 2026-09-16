@@ -104,17 +104,18 @@ public class BacktestEngineTest {
 
         BacktestReport report = engine.generateReport(new BigDecimal("1000"));
 
-        // Gross P&L 10 - (100 + 110) * 0.001 = 9.79
-        assertEquals(new BigDecimal("9.79"), report.getTotalPnL().setScale(2, java.math.RoundingMode.HALF_UP));
+        // Net return (10 - (100 + 110) * 0.001) / 100 = 9.79% of the 1000 capital
+        assertEquals(new BigDecimal("97.90"), report.getTotalPnL().setScale(2, java.math.RoundingMode.HALF_UP));
+        assertEquals(new BigDecimal("9.79"), report.getReturnPercent().setScale(2, java.math.RoundingMode.HALF_UP));
     }
 
     @Test
     public void calculateProfitFactor() {
-        // 2 winning trades: +10, +5
+        // 2 winning trades: +10%, +2.5%
         Trade firstWin = createAndCloseTrade(Signal.BUY, "100", "110", 0, 1);
         Trade secondWin = createAndCloseTrade(Signal.BUY, "200", "205", 2, 3);
 
-        // 1 losing trade: -20
+        // 1 losing trade: -6.67%
         Trade loss = createAndCloseTrade(Signal.BUY, "300", "280", 4, 5);
 
         BacktestReport report = new BacktestReport(
@@ -122,8 +123,36 @@ public class BacktestEngineTest {
             new BigDecimal("1000"),
             new BigDecimal("0.0"));
 
-        // Profit factor = 15 / 20 = 0.75
-        assertEquals(new BigDecimal("0.75"), report.getProfitFactor().setScale(2, java.math.RoundingMode.HALF_UP));
+        // Profit factor on returns = 12.5% / 6.667% = 1.875, not 15 / 20 in USDT per BTC
+        assertEquals(new BigDecimal("1.88"), report.getProfitFactor().setScale(2, java.math.RoundingMode.HALF_UP));
+    }
+
+    @Test
+    public void compoundsReturnsAndDrawdownOnTheCapitalNotOnPricePoints() {
+        // +2% then -1% at a BTC-like price level against a 100 USDT capital
+        Trade win = createAndCloseTrade(Signal.BUY, "90000", "91800", 0, 1);
+        Trade loss = createAndCloseTrade(Signal.BUY, "91800", "90882", 2, 3);
+
+        BacktestReport report = new BacktestReport(java.util.List.of(win, loss),
+                new BigDecimal("100"), BigDecimal.ZERO);
+
+        // 1.02 * 0.99 = 1.0098 -> +0.98%, and the fall from the 102 peak is 1%
+        assertEquals(new BigDecimal("0.98"), report.getReturnPercent().setScale(2, java.math.RoundingMode.HALF_UP));
+        assertEquals(new BigDecimal("0.98"), report.getTotalPnL().setScale(2, java.math.RoundingMode.HALF_UP));
+        assertEquals(new BigDecimal("1.00"), report.getMaxDrawdown().setScale(2, java.math.RoundingMode.HALF_UP));
+        assertEquals(new BigDecimal("0.50"), report.getAverageReturnPercent().setScale(2, java.math.RoundingMode.HALF_UP));
+    }
+
+    @Test
+    public void drawdownIncludesCommission() {
+        Trade flat = createAndCloseTrade(Signal.BUY, "100", "100", 0, 1);
+
+        BacktestReport report = new BacktestReport(java.util.List.of(flat),
+                new BigDecimal("100"), new BigDecimal("0.001"));
+
+        // A flat trade still pays 0.1% on each leg
+        assertEquals(new BigDecimal("0.20"), report.getMaxDrawdown().setScale(2, java.math.RoundingMode.HALF_UP));
+        assertEquals(0, report.getWinTrades());
     }
 
     @Test

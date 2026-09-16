@@ -5,6 +5,8 @@ import dev.romeo.btctradingengine.model.AggressorSide;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.model.NormalizedPriceEvent;
 import dev.romeo.btctradingengine.model.TradeFlow;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -13,8 +15,13 @@ import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class CandleAggregator implements PriceEventListener {
+    private static final Logger logger = LoggerFactory.getLogger(CandleAggregator.class);
+
+    /** The timer fires this long after each interval boundary so trades stamped just before it still arrive (issue #74). */
+    static final Duration CLOSE_TOLERANCE = Duration.ofMillis(250);
 
     private final Duration interval;
     private final long intervalMillis;
@@ -42,6 +49,14 @@ public class CandleAggregator implements PriceEventListener {
     /** A single trade with an unknown side makes the candle's split unreliable, so it reports no flow. */
     private boolean sideUnknown;
 
+    /**
+     * Open time of the last candle handed to the listener. A late tick from that window (or an older
+     * one) would reopen a candle that was already emitted and emit it a second time with the same
+     * openTime, so it is dropped instead (issue #74).
+     */
+    private Instant lastEmittedBucket;
+    private final AtomicLong lateTicksDropped = new AtomicLong();
+
     public CandleAggregator(Duration interval, CandleEventListener listener) {
         this(interval, listener, Config.getLargeTradeNotional());
     }
@@ -60,7 +75,20 @@ public class CandleAggregator implements PriceEventListener {
     }
 
     public void start() {
-        scheduler.scheduleAtFixedRate(this::closeExpiredCandle, interval.toMillis(), interval.toMillis(), TimeUnit.MILLISECONDS);
+        // Aligned to the next interval boundary plus a tolerance, not to whenever start() ran (issue #74).
+        scheduler.scheduleAtFixedRate(this::closeExpiredCandle, initialTimerDelayMillis(Instant.now()),
+                intervalMillis, TimeUnit.MILLISECONDS);
+    }
+
+    /** Milliseconds from now until the next interval boundary plus CLOSE_TOLERANCE. */
+    long initialTimerDelayMillis(Instant now) {
+        Instant nextBoundary = bucketStart(now).plus(interval);
+        return Duration.between(now, nextBoundary).plus(CLOSE_TOLERANCE).toMillis();
+    }
+
+    /** Ticks dropped because their window was already emitted (issue #74). */
+    public long getLateTicksDropped() {
+        return lateTicksDropped.get();
     }
 
     public void stop() {
@@ -71,13 +99,35 @@ public class CandleAggregator implements PriceEventListener {
     public synchronized void onEvent(NormalizedPriceEvent event) {
         Instant bucket = bucketStart(event.eventTimestamp());
 
+        if (isLate(bucket)) {
+            dropLateTick(event, bucket);
+            return;
+        }
+
         if (bucketStart == null) {
             openCandle(event, bucket);
         } else if (bucket.equals(bucketStart)) {
             updateCandle(event);
         } else {
-            listener.onEvent(buildCandle(bucketStart.plus(interval)));
+            emitCurrentCandle();
             openCandle(event, bucket);
+        }
+    }
+
+    /** A tick is late when its window was already emitted or is older than the candle being built. */
+    private boolean isLate(Instant bucket) {
+        return (lastEmittedBucket != null && !bucket.isAfter(lastEmittedBucket))
+                || (bucketStart != null && bucket.isBefore(bucketStart));
+    }
+
+    private void dropLateTick(NormalizedPriceEvent event, Instant bucket) {
+        long dropped = lateTicksDropped.incrementAndGet();
+        if (dropped == 1 || dropped % 1000 == 0) {
+            logger.warn("Dropped late tick for already emitted window {} (event time {}); {} late ticks dropped so far",
+                    bucket, event.eventTimestamp(), dropped);
+        } else {
+            logger.debug("Dropped late tick for already emitted window {} (event time {})",
+                    bucket, event.eventTimestamp());
         }
     }
 
@@ -147,14 +197,26 @@ public class CandleAggregator implements PriceEventListener {
         return new CandleEvent(instrument, bucketStart, closeTime, open, high, low, close, volume, tickCount, flow);
     }
 
-    private synchronized void closeExpiredCandle() {
+    /**
+     * closeTime is the last millisecond of the window, the same convention as Binance klines, so a live
+     * candle and the kline of the same minute agree (issue #75).
+     */
+    private void emitCurrentCandle() {
+        listener.onEvent(buildCandle(bucketStart.plus(interval).minusMillis(1)));
+        lastEmittedBucket = bucketStart;
+    }
+
+    private void closeExpiredCandle() {
+        closeExpiredCandle(Instant.now());
+    }
+
+    synchronized void closeExpiredCandle(Instant now) {
         if (bucketStart == null) {
             return;
         }
-        Instant now = Instant.now();
         Instant nextBucketStart = bucketStart.plus(interval);
-        if (now.isAfter(nextBucketStart) || now.equals(nextBucketStart)) {
-            listener.onEvent(buildCandle(nextBucketStart));
+        if (!now.isBefore(nextBucketStart)) {
+            emitCurrentCandle();
             bucketStart = null;
         }
     }

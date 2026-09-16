@@ -59,7 +59,7 @@ public class MfiRuleTest {
     @Test
     public void honoursOverriddenThresholds() {
         // Backtest constructor: with oversold at 45, an MFI of 40 becomes a strong BUY
-        MfiRule rule = new MfiRule(
+        MfiRule rule = new MfiRule(14,
                 new BigDecimal("45"), new BigDecimal("50"), new BigDecimal("55"), new BigDecimal("60"));
 
         assertTrue(rule.evaluate(features("40")) > 0.5);

@@ -36,13 +36,13 @@ public class BinanceKlineClient {
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
     private final HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
 
-    /** null = Config.getBinanceRestUrl(), which may point at testnet for live trading. */
+    /** Live warmup candles: market.data.rest.url, never the execution URL, which may be the testnet (issue #76). */
     private final String liveBaseUrl;
     private final String historyBaseUrl;
     private final String klinesPath;
 
     public BinanceKlineClient() {
-        this(null, MAINNET_REST_URL, "/api/v3/klines");
+        this(Config.getMarketDataRestUrl(), MAINNET_REST_URL, "/api/v3/klines");
     }
 
     private BinanceKlineClient(String liveBaseUrl, String historyBaseUrl, String klinesPath) {
@@ -57,9 +57,12 @@ public class BinanceKlineClient {
         return new BinanceKlineClient(futuresUrl, futuresUrl, "/fapi/v1/klines");
     }
 
+    String liveBaseUrl() {
+        return liveBaseUrl;
+    }
+
     public List<CandleEvent> loadClosedCandles(String symbol, String interval, int limit) throws Exception {
-        String baseUrl = liveBaseUrl != null ? liveBaseUrl : Config.getBinanceRestUrl();
-        return fetchPage(baseUrl, symbol, interval, Math.min(Math.max(limit, 1), 1000), null);
+        return fetchPage(liveBaseUrl, symbol, interval, Math.min(Math.max(limit, 1), 1000), null);
     }
 
     /**
@@ -77,7 +80,9 @@ public class BinanceKlineClient {
             return cached.candles();
         }
 
-        List<CandleEvent> all = new ArrayList<>();
+        // Pages arrive newest first; prepending each one to a single list was O(n^2), so they are
+        // collected here and joined oldest first once the loop is done (issue #95).
+        List<List<CandleEvent>> pages = new ArrayList<>();
         long endTime = System.currentTimeMillis();
         long targetStart = endTime - Duration.ofDays(days).toMillis();
 
@@ -86,7 +91,7 @@ public class BinanceKlineClient {
             if (page.isEmpty()) {
                 break;
             }
-            all.addAll(0, page);
+            pages.add(page);
             long firstOpenTime = page.get(0).openTime().toEpochMilli();
             if (firstOpenTime >= endTime) {
                 break;
@@ -100,6 +105,10 @@ public class BinanceKlineClient {
             }
         }
 
+        List<CandleEvent> all = new ArrayList<>();
+        for (int i = pages.size() - 1; i >= 0; i--) {
+            all.addAll(pages.get(i));
+        }
         all.removeIf(c -> c.openTime().toEpochMilli() < targetStart);
         cache.put(key, new CacheEntry(all, Instant.now()));
         return all;

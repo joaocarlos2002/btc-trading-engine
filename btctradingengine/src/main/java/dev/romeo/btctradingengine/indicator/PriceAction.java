@@ -29,8 +29,8 @@ public class PriceAction {
     private final int swingStrength;
 
     /** High/low of the lookback candles BEFORE the current one, so a breakout can be measured. */
-    private final Deque<BigDecimal> priorHighs = new ArrayDeque<>();
-    private final Deque<BigDecimal> priorLows = new ArrayDeque<>();
+    private final RollingExtremum priorHighs;
+    private final RollingExtremum priorLows;
     /** The last 2*swingStrength+1 candles; the one in the middle is the pivot candidate. */
     private final Deque<CandleEvent> pivotWindow = new ArrayDeque<>();
     /** Confirmed pivots still inside the lookback window, oldest first. */
@@ -43,6 +43,8 @@ public class PriceAction {
     public PriceAction(int lookback, int swingStrength) {
         this.lookback = lookback;
         this.swingStrength = swingStrength;
+        this.priorHighs = RollingExtremum.max(lookback);
+        this.priorLows = RollingExtremum.min(lookback);
     }
 
     public PriceActionValue update(CandleEvent candle) {
@@ -55,8 +57,8 @@ public class PriceAction {
         BigDecimal recentHighDistance = BigDecimal.ZERO;
         BigDecimal recentLowDistance = BigDecimal.ZERO;
         if (priorHighs.size() == lookback) {
-            recentHighDistance = percentFromClose(close, max(priorHighs));
-            recentLowDistance = percentFromClose(close, min(priorLows));
+            recentHighDistance = percentFromClose(close, priorHighs.value());
+            recentLowDistance = percentFromClose(close, priorLows.value());
         }
 
         detectPivot(candle);
@@ -203,12 +205,8 @@ public class PriceAction {
 
     private void remember(CandleEvent candle) {
         previous = candle;
-        priorHighs.addLast(candle.high());
-        priorLows.addLast(candle.low());
-        if (priorHighs.size() > lookback) {
-            priorHighs.removeFirst();
-            priorLows.removeFirst();
-        }
+        priorHighs.add(candle.high());
+        priorLows.add(candle.low());
     }
 
     /** (close - level) / close * 100, the same convention as smaDistance. */
@@ -219,22 +217,6 @@ public class PriceAction {
         return close.subtract(level)
                 .divide(close, SCALE, RoundingMode.HALF_EVEN)
                 .multiply(HUNDRED);
-    }
-
-    private static BigDecimal max(Deque<BigDecimal> values) {
-        BigDecimal result = null;
-        for (BigDecimal value : values) {
-            result = result == null ? value : result.max(value);
-        }
-        return result;
-    }
-
-    private static BigDecimal min(Deque<BigDecimal> values) {
-        BigDecimal result = null;
-        for (BigDecimal value : values) {
-            result = result == null ? value : result.min(value);
-        }
-        return result;
     }
 
     private record SwingPoint(long index, BigDecimal price, boolean high) {}

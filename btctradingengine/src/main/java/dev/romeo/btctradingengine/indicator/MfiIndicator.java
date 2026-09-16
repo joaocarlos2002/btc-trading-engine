@@ -27,6 +27,10 @@ public class MfiIndicator {
     private final Deque<BigDecimal> positiveFlows = new ArrayDeque<>();
     private final Deque<BigDecimal> negativeFlows = new ArrayDeque<>();
 
+    /** Running sums over the two deques (issue #95), kept exact in BigDecimal instead of re-summed. */
+    private BigDecimal positiveSum = BigDecimal.ZERO;
+    private BigDecimal negativeSum = BigDecimal.ZERO;
+
     private BigDecimal previousTypicalPrice;
     private boolean seeded = false;
 
@@ -47,18 +51,22 @@ public class MfiIndicator {
         int direction = typicalPrice.compareTo(previousTypicalPrice);
         previousTypicalPrice = typicalPrice;
 
-        positiveFlows.addLast(direction > 0 ? rawMoneyFlow : BigDecimal.ZERO);
-        negativeFlows.addLast(direction < 0 ? rawMoneyFlow : BigDecimal.ZERO);
+        BigDecimal positiveFlow = direction > 0 ? rawMoneyFlow : BigDecimal.ZERO;
+        BigDecimal negativeFlow = direction < 0 ? rawMoneyFlow : BigDecimal.ZERO;
+        positiveFlows.addLast(positiveFlow);
+        negativeFlows.addLast(negativeFlow);
+        positiveSum = positiveSum.add(positiveFlow);
+        negativeSum = negativeSum.add(negativeFlow);
 
         if (positiveFlows.size() > period) {
-            positiveFlows.removeFirst();
-            negativeFlows.removeFirst();
+            positiveSum = positiveSum.subtract(positiveFlows.removeFirst());
+            negativeSum = negativeSum.subtract(negativeFlows.removeFirst());
         }
         if (positiveFlows.size() < period) {
             return Optional.empty();
         }
 
-        return Optional.of(moneyFlowIndex(sum(positiveFlows), sum(negativeFlows)));
+        return Optional.of(moneyFlowIndex(positiveSum, negativeSum));
     }
 
     private BigDecimal moneyFlowIndex(BigDecimal positiveSum, BigDecimal negativeSum) {
@@ -77,14 +85,6 @@ public class MfiIndicator {
 
         return BigDecimal.valueOf(100).subtract(BigDecimal.valueOf(100)
                 .divide(BigDecimal.ONE.add(moneyRatio), 8, RoundingMode.HALF_EVEN));
-    }
-
-    private BigDecimal sum(Deque<BigDecimal> flows) {
-        BigDecimal total = BigDecimal.ZERO;
-        for (BigDecimal flow : flows) {
-            total = total.add(flow);
-        }
-        return total;
     }
 
     private BigDecimal typicalPrice(CandleEvent candle) {
