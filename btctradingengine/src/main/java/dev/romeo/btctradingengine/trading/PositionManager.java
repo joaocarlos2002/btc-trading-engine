@@ -9,11 +9,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 public class PositionManager {
     private static final Logger logger = LoggerFactory.getLogger(PositionManager.class);
@@ -38,6 +41,15 @@ public class PositionManager {
     private boolean simulationMode = true;
     private boolean allowShort = false;
     private volatile boolean reconciliationComplete = true;
+
+    // Exit retry backoff (issue #68): a failed exit must not resend an order on every tick
+    static final Duration EXIT_RETRY_INITIAL_DELAY = Duration.ofSeconds(1);
+    static final Duration EXIT_RETRY_MAX_DELAY = Duration.ofSeconds(60);
+    static final int EXIT_FAILURE_ALERT_EVERY = 10;
+    private Supplier<Instant> clock = Instant::now;
+    private int exitFailureCount = 0;
+    private Instant nextExitAttemptAt = null;
+    private BigDecimal cachedStepSize = null;
 
     public PositionManager(BigDecimal targetPercent, BigDecimal stopLossPercent) {
         this(targetPercent, stopLossPercent, position -> {}, event -> {});
@@ -104,6 +116,11 @@ public class PositionManager {
 
     public void setAlertNotifier(AlertNotifier notifier) {
         this.alertNotifier = Optional.of(notifier);
+    }
+
+    /** Time source for the exit retry backoff; tests advance it instead of sleeping. */
+    synchronized void setClock(Supplier<Instant> clock) {
+        this.clock = clock;
     }
 
     // synchronized: confirmations come from the User Data Stream and timeout threads
@@ -209,11 +226,15 @@ public class PositionManager {
         pos.updatePrice(event.price(), event.eventTimestamp());
 
         if (pos.hasHitTarget()) {
-            closePosition(pos, event.price(), event.eventTimestamp(), ExitReason.TARGET_HIT);
+            if (!closePosition(pos, event.price(), event.eventTimestamp(), ExitReason.TARGET_HIT)) {
+                return;
+            }
             logger.info("âœ“ TARGET HIT on tick: {} closed at {} (P&L: {}%)",
                     pos.getPositionId(), event.price(), pos.getPnLPercent());
         } else if (pos.hasHitStopLoss()) {
-            closePosition(pos, event.price(), event.eventTimestamp(), ExitReason.STOP_LOSS);
+            if (!closePosition(pos, event.price(), event.eventTimestamp(), ExitReason.STOP_LOSS)) {
+                return;
+            }
             logger.warn("âœ— STOP LOSS on tick: {} closed at {} (P&L: {}%)",
                     pos.getPositionId(), event.price(), pos.getPnLPercent());
         }
@@ -270,6 +291,7 @@ public class PositionManager {
         }
 
         openPosition = Optional.of(position);
+        resetExitBackoff();
         String id = position.getPositionId();
         if (id.startsWith("POS_")) {
             try {
@@ -301,7 +323,8 @@ public class PositionManager {
             return false;
         }
 
-        return closePosition(openPosition.get(), price, time, ExitReason.MANUAL_CLOSE);
+        // An explicit user request skips the backoff wait; failures still count
+        return closePosition(openPosition.get(), price, time, ExitReason.MANUAL_CLOSE, false);
     }
 
     private boolean shouldReversePosition(Position pos, PredictionVector pred) {
@@ -328,6 +351,7 @@ public class PositionManager {
                 stopLossPercent
         );
         openPosition = Optional.of(pos);
+        resetExitBackoff();
 
         ExecutionEvent event = new ExecutionEvent(
                 pos.getPositionId(),
@@ -423,13 +447,31 @@ public class PositionManager {
     }
 
     private boolean closePosition(Position pos, BigDecimal exitPrice, java.time.Instant exitTime, ExitReason reason) {
+        return closePosition(pos, exitPrice, exitTime, reason, true);
+    }
+
+    private boolean closePosition(Position pos, BigDecimal exitPrice, java.time.Instant exitTime, ExitReason reason,
+                                  boolean respectBackoff) {
         if (!simulationMode && pos.getQuantity().compareTo(BigDecimal.ZERO) > 0) {
+            Instant now = clock.get();
+            if (respectBackoff && nextExitAttemptAt != null && now.isBefore(nextExitAttemptAt)) {
+                return false;
+            }
             Optional<BinanceOrderExecutor.OrderResult> result = closeRealPosition(pos);
             if (result.isEmpty()) {
+                exitFailureCount++;
+                Duration delay = exitRetryDelay(exitFailureCount);
+                nextExitAttemptAt = now.plus(delay);
                 logger.error("âœ— Position {} remains open locally because the real exit order failed", pos.getPositionId());
-                alertNotifier.ifPresent(a -> a.alert(String.format(
-                        "CRITICAL: exit order failed for position %s (reason: %s) - position remains OPEN and unmanaged, manual intervention required",
-                        pos.getPositionId(), reason)));
+                logger.error("Exit attempt {} failed for {}; next attempt in {}s",
+                        exitFailureCount, pos.getPositionId(), delay.toSeconds());
+                // Alert on the first failure and every 10th, not on every retry
+                if (exitFailureCount == 1 || exitFailureCount % EXIT_FAILURE_ALERT_EVERY == 0) {
+                    int failures = exitFailureCount;
+                    alertNotifier.ifPresent(a -> a.alert(String.format(
+                            "CRITICAL: exit order failed for position %s (reason: %s, %d failed attempts) - position remains OPEN and unmanaged, manual intervention required",
+                            pos.getPositionId(), reason, failures)));
+                }
                 return false;
             }
             if (result.get().averagePrice().compareTo(BigDecimal.ZERO) > 0) {
@@ -437,6 +479,7 @@ public class PositionManager {
             }
         }
 
+        resetExitBackoff();
         pos.close(exitPrice, exitTime, reason);
         closedPositions.add(pos);
         openPosition = Optional.empty();
@@ -455,14 +498,89 @@ public class PositionManager {
         return true;
     }
 
+    /** 1s, 2s, 4s ... capped at 60s. */
+    static Duration exitRetryDelay(int failures) {
+        int shift = Math.min(Math.max(failures - 1, 0), 16);
+        Duration delay = EXIT_RETRY_INITIAL_DELAY.multipliedBy(1L << shift);
+        return delay.compareTo(EXIT_RETRY_MAX_DELAY) > 0 ? EXIT_RETRY_MAX_DELAY : delay;
+    }
+
+    private void resetExitBackoff() {
+        exitFailureCount = 0;
+        nextExitAttemptAt = null;
+    }
+
+    private String exitClientOrderId(Position pos) {
+        return "btce-" + symbol + "-" + pos.getPositionId() + "-exit";
+    }
+
+    /**
+     * Quantity to sell when closing a BUY (issue #69): without BNB fees Binance takes the buy
+     * commission from the base asset, so the free balance can be below the filled quantity.
+     * Uses min(position qty, free base balance), rounded down to the LOT_SIZE step.
+     */
+    BigDecimal sellableExitQuantity(Position pos) {
+        BinanceOrderExecutor executor = orderExecutor.get();
+        BigDecimal quantity = pos.getQuantity();
+
+        String baseAsset = symbol.endsWith("USDT") ? symbol.substring(0, symbol.length() - 4) : symbol;
+        BinanceOrderExecutor.BalanceResult balance = executor.getBalance(baseAsset);
+        if (balance != null && balance.success()) {
+            if (balance.free().compareTo(quantity) < 0) {
+                logger.warn("Free {} balance {} is below position {} qty {}; selling the free balance",
+                        baseAsset, balance.free(), pos.getPositionId(), quantity);
+                quantity = balance.free();
+            }
+        } else {
+            logger.warn("Could not fetch free {} balance before exit ({}); using position qty {}",
+                    baseAsset, balance == null ? "no response" : balance.error(), quantity);
+        }
+
+        BigDecimal stepSize = exitStepSize();
+        if (stepSize == null) {
+            logger.warn("Could not fetch LOT_SIZE step for {}; exit qty {} not rounded", symbol, quantity);
+            return quantity;
+        }
+        return quantity.divide(stepSize, 0, java.math.RoundingMode.DOWN).multiply(stepSize).stripTrailingZeros();
+    }
+
+    // Cached on success: the step rarely changes and exits run inside this lock
+    private BigDecimal exitStepSize() {
+        if (cachedStepSize == null) {
+            BinanceOrderExecutor.SymbolFilters filters = orderExecutor.get().getSymbolFilters(symbol);
+            if (filters != null && filters.stepSize() != null && filters.stepSize().compareTo(BigDecimal.ZERO) > 0) {
+                cachedStepSize = filters.stepSize();
+            }
+        }
+        return cachedStepSize;
+    }
+
     private Optional<BinanceOrderExecutor.OrderResult> closeRealPosition(Position pos) {
         try {
             BinanceOrderExecutor executor = orderExecutor.get();
-            BinanceOrderExecutor.OrderResult result = pos.getSignal() == Signal.BUY
-                    ? executor.executeSellMarket(symbol, pos.getQuantity())
-                    : executor.executeBuyMarket(symbol, pos.getQuantity());
+            String clientOrderId = exitClientOrderId(pos);
+            BinanceOrderExecutor.OrderResult result;
+            if (pos.getSignal() == Signal.BUY) {
+                BigDecimal quantity = sellableExitQuantity(pos);
+                if (quantity.compareTo(BigDecimal.ZERO) <= 0) {
+                    logger.error("No sellable quantity for {} (position qty={})", pos.getPositionId(), pos.getQuantity());
+                    return Optional.empty();
+                }
+                result = executor.executeSellMarket(symbol, quantity, clientOrderId);
+            } else {
+                result = executor.executeBuyMarket(symbol, pos.getQuantity(), clientOrderId);
+            }
 
             if (!result.success()) {
+                // The error may be ambiguous (e.g. a timeout after Binance accepted the order)
+                Optional<BinanceOrderExecutor.QueriedOrder> sent = executor.queryOrder(symbol, clientOrderId);
+                if (sent.isPresent() && "FILLED".equals(sent.get().status())) {
+                    BinanceOrderExecutor.QueriedOrder order = sent.get();
+                    logger.warn("Exit order {} reported an error but is FILLED on Binance: {}", clientOrderId, result.error());
+                    syncPortfolioBalance();
+                    return Optional.of(new BinanceOrderExecutor.OrderResult(true, String.valueOf(order.orderId()),
+                            order.executedQuantity(), order.averagePrice(), null));
+                }
                 logger.error("âœ— Real exit order failed for {}: {}", pos.getPositionId(), result.error());
                 return Optional.empty();
             }
