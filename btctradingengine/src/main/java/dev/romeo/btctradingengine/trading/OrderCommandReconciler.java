@@ -1,5 +1,6 @@
 package dev.romeo.btctradingengine.trading;
 
+import dev.romeo.btctradingengine.port.ExecutionPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,10 +20,10 @@ public class OrderCommandReconciler {
     private static final Logger logger = LoggerFactory.getLogger(OrderCommandReconciler.class);
     private static final Set<String> WORKING = Set.of("NEW", "PARTIALLY_FILLED", "PENDING_NEW");
 
-    private final BinanceOrderExecutor executor;
+    private final ExecutionPort executor;
     private final OrderCommandStore store;
 
-    public OrderCommandReconciler(BinanceOrderExecutor executor, OrderCommandStore store) {
+    public OrderCommandReconciler(ExecutionPort executor, OrderCommandStore store) {
         this.executor = executor;
         this.store = store;
     }

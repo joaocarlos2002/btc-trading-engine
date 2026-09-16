@@ -3,6 +3,7 @@ package dev.romeo.btctradingengine.trading;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.port.ExecutionPort;
 
 import java.math.BigDecimal;
 import java.net.URI;
@@ -22,7 +23,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
 
-public class BinanceOrderExecutor {
+public class BinanceOrderExecutor implements ExecutionPort {
     private static final Logger logger = LoggerFactory.getLogger(BinanceOrderExecutor.class);
     private static final int HTTP_TOO_MANY_REQUESTS = 429;
     private static final int HTTP_IP_BANNED = 418;

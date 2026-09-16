@@ -1,5 +1,7 @@
 package dev.romeo.btctradingengine.trading;
 
+import dev.romeo.btctradingengine.port.ClockPort;
+
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -7,26 +9,25 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Supplier;
 
 /** Outbox kept in memory: tests, and replays that must not touch the database. */
 public class InMemoryOrderCommandStore implements OrderCommandStore {
     private final Map<String, OrderCommand> commands = new LinkedHashMap<>();
-    private final Supplier<Instant> clock;
+    private final ClockPort clock;
     private long nextId = 1;
 
     public InMemoryOrderCommandStore() {
-        this(Instant::now);
+        this(ClockPort.system());
     }
 
-    public InMemoryOrderCommandStore(Supplier<Instant> clock) {
+    public InMemoryOrderCommandStore(ClockPort clock) {
         this.clock = clock;
     }
 
     @Override
     public synchronized void record(String clientOrderId, String positionId, OrderCommand.Type type,
                                     Map<String, String> payload) {
-        Instant now = clock.get();
+        Instant now = clock.now();
         OrderCommand existing = commands.get(clientOrderId);
         if (existing == null) {
             commands.put(clientOrderId, new OrderCommand(nextId++, clientOrderId, positionId, type, payload,
@@ -55,7 +56,7 @@ public class InMemoryOrderCommandStore implements OrderCommandStore {
     private synchronized void update(String clientOrderId, OrderCommand.Status status, String error) {
         OrderCommand existing = commands.get(clientOrderId);
         if (existing != null) {
-            commands.put(clientOrderId, existing.withStatus(status, clock.get(), error));
+            commands.put(clientOrderId, existing.withStatus(status, clock.now(), error));
         }
     }
 

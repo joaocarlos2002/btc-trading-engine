@@ -1,5 +1,6 @@
 package dev.romeo.btctradingengine.trading;
 
+import dev.romeo.btctradingengine.port.ExecutionPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import dev.romeo.btctradingengine.alerting.AlertNotifier;
@@ -17,7 +18,7 @@ public class BinanceReconciliationService {
     private static final BigDecimal BALANCE_TOLERANCE = new BigDecimal("0.99");
     private static final Logger logger = LoggerFactory.getLogger(BinanceReconciliationService.class);
 
-    private final BinanceOrderExecutor orderExecutor;
+    private final ExecutionPort orderExecutor;
     private final PositionManager positionManager;
     private final BigDecimal targetPercent;
     private final BigDecimal stopLossPercent;
@@ -44,7 +45,7 @@ public class BinanceReconciliationService {
     }
 
     public BinanceReconciliationService(
-            BinanceOrderExecutor orderExecutor,
+            ExecutionPort orderExecutor,
             PositionManager positionManager,
             BigDecimal targetPercent,
             BigDecimal stopLossPercent) {
@@ -52,7 +53,7 @@ public class BinanceReconciliationService {
     }
 
     public BinanceReconciliationService(
-            BinanceOrderExecutor orderExecutor,
+            ExecutionPort orderExecutor,
             PositionManager positionManager,
             BigDecimal targetPercent,
             BigDecimal stopLossPercent,
