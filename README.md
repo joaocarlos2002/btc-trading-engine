@@ -89,31 +89,17 @@ Fluxo resumido:
 ├── qodana.yaml                   # Análise estática (JetBrains Qodana)
 ├── .github/workflows/            # build.yml, test.yml, qodana_code_quality.yml
 ├── docs/                         # Documentação detalhada (ver índice abaixo)
-└── btctradingengine/
-    ├── pom.xml
-    └── src/
-        ├── main/java/dev/romeo/btctradingengine/
-        │   ├── Main.java         # Ponto de entrada: monta e liga todo o pipeline
-        │   ├── adapter/          # WebSocket aggTrade, klines REST, dumps aggTrades, agregador de candles, event bus
-        │   ├── alerting/         # Alertas (Discord webhook)
-        │   ├── backtest/         # BacktestEngine, BacktestRunner, BacktestParams, BacktestReport
-        │   ├── config/           # Config: leitura estática de application.properties + validação
-        │   ├── dashboard/        # Spring Boot: REST (/api), WebSocket (/ws/live), estado do dashboard
-        │   ├── derivatives/      # Funding, open interest, long/short, basis (REST + dumps de métricas)
-        │   ├── feature/          # FeatureExtractor e os grupos do FeatureVector
-        │   ├── indicator/        # SMA, EMA, RSI, ATR, MACD, ADX, Bollinger, VWAP, MFI, Donchian, CVD, VPIN, absorção, price action
-        │   ├── marketstate/      # (não usado)
-        │   ├── model/            # Eventos: NormalizedPriceEvent, CandleEvent, TradeFlow, AggressorSide
-        │   ├── orderbook/        # Polling de profundidade e imbalance por candle
-        │   ├── persistence/      # HikariCP, schema, writers assíncronos e leitor de candles
-        │   ├── prediction/       # RuleBasedPredictor, regime, guardas de entrada
-        │   │   └── rules/        # RSI, SMA distance, MACD, MFI, ATR, Volatility, ADX regime
-        │   └── trading/          # Posições, execução Binance, reconciliação, confirmação, portfólio, conectividade
-        ├── main/resources/
-        │   ├── application.properties
-        │   ├── db-schema.sql
-        │   └── static/           # index.html (dashboard), backtest.html
-        └── test/java/...         # JUnit 5 (indicadores, regras, backtest, clientes, trading)
+└── btctradingengine/              # Raiz do reactor Maven (issue #133)
+    ├── pom.xml                   # packaging pom, ${revision}, BOM do Spring Boot
+    ├── engine-core/              # Sem Spring, JDBC ou HTTP: model, indicator, feature, prediction (+ rules), port, marketstate
+    ├── engine-data/              # adapter (WebSocket, klines, event bus, agregador), derivatives, orderbook,
+    │                             # persistence (writers, leitores, retenção de ticks), alerting; db-schema.sql
+    ├── engine-trading/           # trading (posições, execução, reconciliação, guardas, TradeJournal),
+    │                             # replay determinístico, JdbcOrderCommandStore
+    ├── engine-backtest/          # BacktestEngine, BacktestRunner, BacktestParams, sweep, walk-forward, BacktestService
+    └── engine-app/               # Spring Boot: Main, LivePipeline, config/ (*Properties validados), dashboard/,
+                                  # BinanceBacktestDataLoader, ReplayRunner; application*.properties, static/
+                                  # Único módulo com spring-boot-maven-plugin: gera o jar executável
 ```
 
 ## Tecnologias
@@ -165,7 +151,7 @@ healthcheck:
   test: ["CMD-SHELL", "pg_isready -U polymarket -d polymarket_btc"]
 ```
 
-Opção B, sobrescrever `db.url`, `db.user` e `db.password` em `btctradingengine/src/main/resources/application.properties`.
+Opção B, sobrescrever `db.url`, `db.user` e `db.password` em `btctradingengine/engine-app/src/main/resources/application.properties`.
 
 Variáveis de ambiente lidas pelo código (têm precedência sobre o arquivo):
 
@@ -193,25 +179,30 @@ As tabelas são criadas na partida (`db-schema.sql` + `TradeJournal`). Não há 
 
 ```bash
 cd btctradingengine
-mvn spring-boot:run -Dspring-boot.run.main-class=dev.romeo.btctradingengine.Main
+mvn -B package -DskipTests
+java -jar engine-app/target/engine-app-*.jar
+# ou, sem gerar o jar:
+mvn install -DskipTests && mvn -pl engine-app spring-boot:run
 ```
+
+Perfis opcionais: `SPRING_PROFILES_ACTIVE=testnet` ou `mainnet` (só apontam a execução; `trading.confirm.mainnet=true` continua obrigatório para operar na Mainnet). `engine.pipeline.enabled=false` sobe só o dashboard e os backtests.
 
 - Dashboard: <http://localhost:8080>
 - Backtest: <http://localhost:8080/backtest.html>
 - API REST: <http://localhost:8080/api/...>
 
-> Não use `java -jar target/*.jar` por enquanto. O `spring-boot-maven-plugin` não declara `mainClass`, e o único `public static void main` do projeto é o de `DashboardApplication`: o jar sobe só o dashboard, sem o pipeline de dados.
+> O jar tem um único ponto de entrada (`Main`, declarado no `spring-boot-maven-plugin` do `engine-app`) e sobe o pipeline completo junto com o dashboard (issue #77).
 
 ### Sequência de partida
 
-1. `Config.validate()`: aborta com a propriedade inválida no erro.
+1. Binding e validação dos records `@ConfigurationProperties` (Bean Validation + `StartupSettingsValidator`): aborta com a propriedade inválida no erro.
 2. Sobe o Spring (porta 8080) e cria/atualiza as tabelas.
 3. Restaura a posição aberta e as últimas 500 fechadas do banco.
 4. Em modo real: valida saldo USDT > 0 e filtros do símbolo, reconcilia com a Binance e conecta o User Data Stream.
 5. Carrega derivativos e 1000 candles para aquecer os indicadores.
 6. Inicia os pollers de derivativos e order book, o agregador e o WebSocket.
 
-`Ctrl+C` dispara o shutdown hook: para o stream, esvazia a fila do banco e grava os trades.
+`Ctrl+C` fecha o contexto Spring, e `LivePipeline.close()` para o stream, esvazia a fila do banco e grava os trades.
 
 ### Backtest pela linha de comando
 
@@ -236,14 +227,15 @@ Para operar de verdade:
 
 ```bash
 cd btctradingengine
-mvn test
+mvn test                    # todos os módulos
+mvn -pl engine-core test    # indicadores, features e regras, sem banco nem rede
 ```
 
-GitHub Actions em PRs para `main` e `dev`: `build.yml` (`mvn clean package -DskipTests`) e `test.yml` (`mvn test`), ambos com Temurin 25. O `qodana_code_quality.yml` roda em PRs e em pushes para `main`/`develop`.
+GitHub Actions em PRs para `main` e `dev`: `build.yml` (`mvn clean package -DskipTests`, na raiz do reactor) e `test.yml` (`mvn test`), ambos com Temurin 25. O `qodana_code_quality.yml` roda em PRs e em pushes para `main`/`develop`.
 
 ## Limitações conhecidas
 
-- **Um símbolo por processo.** `Config` é estático, e vários componentes leem o símbolo global.
+- **Um símbolo por processo.** Os componentes recebem `market.symbol` por construtor, mas o contexto monta um único pipeline.
 - **Sem venda a descoberto real.** O sinal SELL abre "short" na simulação, mas o mercado spot não permite isso.
 - **Order book só ao vivo.** Não há histórico gratuito, e o guarda de order book não pode ser validado em backtest.
 - **Filtros novos não calibrados.** Regime, VPIN e order book vêm desligados, com limites provisórios.
