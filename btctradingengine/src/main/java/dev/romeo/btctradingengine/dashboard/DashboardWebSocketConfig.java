@@ -1,5 +1,6 @@
 package dev.romeo.btctradingengine.dashboard;
 
+import dev.romeo.btctradingengine.config.Config;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
@@ -15,6 +16,11 @@ public class DashboardWebSocketConfig implements WebSocketConfigurer {
         this.state = state;
     }
 
+    /**
+     * Only the origins in {@code dashboard.allowed.origins} may open the live feed: it streams the
+     * open position, the signals and the P&L, which a third-party site used to be able to read with
+     * the previous wildcard (issue #66).
+     */
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry.addHandler(new TextWebSocketHandler() {
@@ -28,6 +34,6 @@ public class DashboardWebSocketConfig implements WebSocketConfigurer {
                                               org.springframework.web.socket.CloseStatus status) {
                 state.removeSession(session);
             }
-        }, "/ws/live").setAllowedOriginPatterns("*");
+        }, "/ws/live").setAllowedOrigins(Config.getDashboardAllowedOrigins().toArray(new String[0]));
     }
 }

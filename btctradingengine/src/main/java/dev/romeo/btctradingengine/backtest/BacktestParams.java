@@ -71,6 +71,7 @@ public record BacktestParams(
         double sellThreshold,
         int confirmationSnapshots,
 
+        boolean allowShort,
         BigDecimal targetPercent,
         BigDecimal stopLossPercent,
         BigDecimal commissionRate
@@ -131,6 +132,7 @@ public record BacktestParams(
                 Config.getSellThreshold(),
                 Config.getConfirmationSnapshots(),
 
+                Config.isShortSellingAllowed(),
                 Config.getTradingTargetPercent(),
                 Config.getTradingStopLossPercent(),
                 Config.getBacktestCommissionRate()

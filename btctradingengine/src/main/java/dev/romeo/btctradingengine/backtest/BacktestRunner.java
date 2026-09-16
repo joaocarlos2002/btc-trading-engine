@@ -38,11 +38,13 @@ public class BacktestRunner {
             return new BacktestEngine(
                     Config.getBacktestCommissionRate(),
                     Config.getTradingTargetPercent(),
-                    Config.getTradingStopLossPercent()
+                    Config.getTradingStopLossPercent(),
+                    Config.isShortSellingAllowed()
             ).generateReport(initialCapital);
         }
 
-        BacktestEngine engine = new BacktestEngine(params.commissionRate(), params.targetPercent(), params.stopLossPercent());
+        BacktestEngine engine = new BacktestEngine(params.commissionRate(), params.targetPercent(),
+                params.stopLossPercent(), params.allowShort());
         CandleEvent[] currentCandle = new CandleEvent[1];
         RuleBasedPredictor predictor = new RuleBasedPredictor(
                 prediction -> engine.processPrediction(prediction, currentCandle[0]),

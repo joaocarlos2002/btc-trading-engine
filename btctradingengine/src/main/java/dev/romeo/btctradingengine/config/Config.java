@@ -11,7 +11,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
@@ -172,6 +174,7 @@ public class Config {
     public static boolean isMainnetTradingConfirmed() { return Boolean.parseBoolean(getProperty("trading.confirm.mainnet", "false")); }
     public static BigDecimal getTradingInitialCapital() { return getDecimal("trading.initial.capital.usdt", "100"); }
     public static BigDecimal getTradingMaxDrawdownPercent() { return getDecimal("trading.max.drawdown.percent", "5"); }
+    public static boolean isShortSellingAllowed() { return Boolean.parseBoolean(getProperty("trading.allow.short", "false")); }
     public static long getMaxDataStalenessSeconds() { return Long.parseLong(getProperty("trading.max.data.staleness.seconds", "60")); }
     public static BigDecimal getBacktestCommissionRate() { return getDecimal("backtest.commission.rate", "0.001"); }
     public static String getAlertDiscordWebhookUrl() {
@@ -358,6 +361,15 @@ public class Config {
 
     public static String getBinanceApiSecret() {
         return getEnvironmentOrProperty("BTC_ENGINE_BINANCE_API_SECRET", "binance.api.secret", "");
+    }
+
+    /** Origins allowed to open the /ws/live WebSocket. */
+    public static List<String> getDashboardAllowedOrigins() {
+        return Arrays.stream(getProperty("dashboard.allowed.origins",
+                        "http://localhost:8080,http://127.0.0.1:8080").split(","))
+                .map(String::trim)
+                .filter(origin -> !origin.isEmpty())
+                .toList();
     }
 
     public static int getDbPoolSize() {

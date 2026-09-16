@@ -36,6 +36,7 @@ public class PositionManager {
     private Optional<AlertNotifier> alertNotifier = Optional.empty();
     private String symbol = "BTCUSDT";
     private boolean simulationMode = true;
+    private boolean allowShort = false;
     private volatile boolean reconciliationComplete = true;
 
     public PositionManager(BigDecimal targetPercent, BigDecimal stopLossPercent) {
@@ -64,6 +65,29 @@ public class PositionManager {
         this.simulationMode = false;
         this.reconciliationComplete = false;
         logger.info("âœ“ Real trading mode ENABLED: {} with executor and portfolio manager", symbol);
+        if (allowShort) {
+            logger.warn("trading.allow.short is on, but the spot market has no short selling: "
+                    + "SELL signals will only close an open BUY, never open a position");
+        }
+    }
+
+    /**
+     * Whether a SELL signal may OPEN a position. Simulation only: real spot trading never opens a
+     * short (issue #67), so this exists to keep simulated results comparable with what is executable.
+     */
+    public void setAllowShort(boolean allowShort) {
+        this.allowShort = allowShort;
+    }
+
+    /**
+     * The spot market has no short selling. With no open position, a SELL would send a SELL MARKET
+     * order for BTC the bot never bought: rejected for insufficient balance, or - if the account
+     * happens to hold BTC - selling the user's own coins to buy them back later (issue #67).
+     *
+     * <p>Only blocks OPENING a position: a SELL still closes an open BUY through the reversal above.
+     */
+    private boolean shortEntryAllowed() {
+        return simulationMode && allowShort;
     }
 
     public void setOrderConfirmationManager(OrderConfirmationManager manager) {
@@ -141,6 +165,12 @@ public class PositionManager {
         }
 
         if (!openPosition.isPresent() && prediction.signal() != Signal.HOLD) {
+            if (prediction.signal() == Signal.SELL && !shortEntryAllowed()) {
+                logger.info(simulationMode
+                        ? "SELL signal does not open a short (trading.allow.short=false)"
+                        : "SELL signal does not open a position: the spot market has no short selling");
+                return;
+            }
             if (!simulationMode && !reconciliationComplete) {
                 logger.warn("Ignoring entry: Binance reconciliation is not complete");
                 return;

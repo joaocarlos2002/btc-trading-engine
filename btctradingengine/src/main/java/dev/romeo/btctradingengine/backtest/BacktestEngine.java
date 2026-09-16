@@ -22,15 +22,27 @@ public class BacktestEngine {
     private final BigDecimal commissionRate; // ex: 0.001 = 0.1%
     private final BigDecimal targetPercent;
     private final BigDecimal stopLossPercent;
+    private final boolean allowShort;
 
     public BacktestEngine(BigDecimal commissionRate) {
         this(commissionRate, BigDecimal.ZERO, BigDecimal.ZERO);
     }
 
     public BacktestEngine(BigDecimal commissionRate, BigDecimal targetPercent, BigDecimal stopLossPercent) {
+        this(commissionRate, targetPercent, stopLossPercent, false);
+    }
+
+    /**
+     * @param allowShort whether a SELL signal may OPEN a trade. Off by default because the spot market
+     *                   has no short selling (issue #67): counting shorts would report an edge that
+     *                   cannot be traded. A SELL always still closes an open BUY.
+     */
+    public BacktestEngine(BigDecimal commissionRate, BigDecimal targetPercent, BigDecimal stopLossPercent,
+                          boolean allowShort) {
         this.commissionRate = commissionRate;
         this.targetPercent = targetPercent;
         this.stopLossPercent = stopLossPercent;
+        this.allowShort = allowShort;
     }
 
     public static BacktestEngine configured() {
@@ -38,7 +50,8 @@ public class BacktestEngine {
         return new BacktestEngine(
                 Config.getBacktestCommissionRate(),
                 Config.getTradingTargetPercent(),
-                Config.getTradingStopLossPercent());
+                Config.getTradingStopLossPercent(),
+                Config.isShortSellingAllowed());
     }
 
     public void processPrediction(PredictionVector prediction, CandleEvent candle) {
@@ -76,7 +89,8 @@ public class BacktestEngine {
             openTrade = Optional.of(trade);
             logger.debug("BUY signal: entered at {}", candle.close());
 
-        } else if (!closedByRisk && signal == Signal.SELL && !openTrade.isPresent() && prediction.entryAllowed()) {
+        } else if (!closedByRisk && signal == Signal.SELL && allowShort
+                && !openTrade.isPresent() && prediction.entryAllowed()) {
             Trade trade = new Trade(
                     String.format("TRADE_%d", tradeCounter.incrementAndGet()),
                     Signal.SELL,

@@ -12,9 +12,14 @@ import static org.junit.jupiter.api.Assertions.*;
 
 public class BacktestEngineTest {
 
+    /** Shorts are off by default (issue #67); the tests below that exercise them opt in explicitly. */
+    private static BacktestEngine shortingEngine(String commissionRate) {
+        return new BacktestEngine(new BigDecimal(commissionRate), BigDecimal.ZERO, BigDecimal.ZERO, true);
+    }
+
     @Test
     public void openAndCloseBuyTrade() {
-        BacktestEngine engine = new BacktestEngine(new BigDecimal("0.001"));
+        BacktestEngine engine = shortingEngine("0.001");
 
         // Candle 1: BUY signal at 100
         CandleEvent candle1 = createCandle("100", 0);
@@ -48,7 +53,7 @@ public class BacktestEngineTest {
 
     @Test
     public void reversePositionFromBuyToSell() {
-        BacktestEngine engine = new BacktestEngine(new BigDecimal("0.001"));
+        BacktestEngine engine = shortingEngine("0.001");
 
         // Open BUY
         CandleEvent candle1 = createCandle("100", 0);
@@ -142,8 +147,7 @@ public class BacktestEngineTest {
     }
 
     private Trade createAndCloseTrade(Signal signal, String entry, String exit, int entryBar, int exitBar) {
-        BacktestEngine engine = new BacktestEngine(new BigDecimal("0.0"));
-        return createAndCloseTrade(engine, signal, entry, exit, entryBar, exitBar);
+        return createAndCloseTrade(shortingEngine("0.0"), signal, entry, exit, entryBar, exitBar);
     }
 
     private Trade createAndCloseTrade(BacktestEngine engine, Signal signal,
