@@ -288,6 +288,11 @@ public class Config {
                     + "accidentally trading with real funds - set trading.confirm.mainnet=true only when "
                     + "you deliberately intend to go live on mainnet.");
         }
+        String marketDataWarning = marketDataTestnetWarning(getMarketDataWsUrl(), getMarketDataRestUrl(),
+                isDerivativesEnabled(), isOrderBookEnabled());
+        if (marketDataWarning != null) {
+            logger.warn(marketDataWarning);
+        }
         if (getBacktestCommissionRate().compareTo(BigDecimal.ZERO) < 0) {
             throw new IllegalArgumentException("backtest.commission.rate cannot be negative");
         }
@@ -305,6 +310,35 @@ public class Config {
 
     public static String getBinanceRestUrl() {
         return getProperty("binance.rest.url", "https://testnet.binance.vision");
+    }
+
+    // Market data (issue #76): ticks, warmup candles and indicators come from these URLs, which are
+    // mainnet by default even when binance.ws.url / binance.rest.url (execution) point at the testnet.
+    // The testnet price and volume are synthetic, so mixing them with the mainnet derivatives and order
+    // book would compare a fake spot with the real perpetual and make live flow unlike the backtest.
+    public static String getMarketDataWsUrl() {
+        return getProperty("market.data.ws.url", "wss://stream.binance.com:9443/ws/");
+    }
+
+    public static String getMarketDataRestUrl() {
+        return getProperty("market.data.rest.url", "https://api.binance.com");
+    }
+
+    public static boolean isMarketDataTestnetEndpoint() {
+        return getMarketDataWsUrl().toLowerCase().contains("testnet")
+                || getMarketDataRestUrl().toLowerCase().contains("testnet");
+    }
+
+    /** Null when fine; otherwise why a testnet market data feed breaks the mainnet-only features (issue #76). */
+    static String marketDataTestnetWarning(String wsUrl, String restUrl, boolean derivativesEnabled, boolean orderBookEnabled) {
+        boolean testnetFeed = wsUrl.toLowerCase().contains("testnet") || restUrl.toLowerCase().contains("testnet");
+        if (!testnetFeed || !(derivativesEnabled || orderBookEnabled)) {
+            return null;
+        }
+        return "Market data comes from a testnet (market.data.ws.url=" + wsUrl + ", market.data.rest.url=" + restUrl
+                + ") while derivatives.enabled=" + derivativesEnabled + " and orderbook.enabled=" + orderBookEnabled
+                + " read mainnet: the testnet price and volume are synthetic, so basisPercent, order book, VPIN and "
+                + "CVD are not comparable with the real market or the backtest. Point market.data.* at mainnet.";
     }
 
     public static int getBinanceMaxRetries() {
