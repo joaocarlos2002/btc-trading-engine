@@ -1,5 +1,6 @@
 package dev.romeo.btctradingengine.trading;
 
+import dev.romeo.btctradingengine.port.ExecutionPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import dev.romeo.btctradingengine.alerting.AlertNotifier;
@@ -17,14 +18,34 @@ public class BinanceReconciliationService {
     private static final BigDecimal BALANCE_TOLERANCE = new BigDecimal("0.99");
     private static final Logger logger = LoggerFactory.getLogger(BinanceReconciliationService.class);
 
-    private final BinanceOrderExecutor orderExecutor;
+    private final ExecutionPort orderExecutor;
     private final PositionManager positionManager;
     private final BigDecimal targetPercent;
     private final BigDecimal stopLossPercent;
     private final AlertNotifier alertNotifier;
+    private OrderCommandStore orderCommands = null;
+
+    /** Enables the outbox step: commands left PENDING/SENT by a crash are resolved first. */
+    public void setOrderCommandStore(OrderCommandStore store) {
+        this.orderCommands = store;
+    }
+
+    /** Looks up, never re-sends, each unresolved command; an exit Binance filled closes the position. */
+    private void resolveOutbox(String symbol) {
+        if (orderCommands == null) {
+            return;
+        }
+        List<OrderCommandReconciler.Resolution> resolutions =
+                new OrderCommandReconciler(orderExecutor, orderCommands).resolve(symbol);
+        positionManager.applyReconciledCommands(resolutions);
+        resolutions.stream()
+                .filter(r -> r.outcome() == OrderCommandReconciler.Outcome.UNRESOLVED)
+                .forEach(r -> alert(String.format("Order %s %s of position %s is still unresolved (%s); check it on Binance",
+                        r.command().type(), r.command().clientOrderId(), r.command().positionId(), r.detail())));
+    }
 
     public BinanceReconciliationService(
-            BinanceOrderExecutor orderExecutor,
+            ExecutionPort orderExecutor,
             PositionManager positionManager,
             BigDecimal targetPercent,
             BigDecimal stopLossPercent) {
@@ -32,7 +53,7 @@ public class BinanceReconciliationService {
     }
 
     public BinanceReconciliationService(
-            BinanceOrderExecutor orderExecutor,
+            ExecutionPort orderExecutor,
             PositionManager positionManager,
             BigDecimal targetPercent,
             BigDecimal stopLossPercent,
@@ -46,6 +67,7 @@ public class BinanceReconciliationService {
 
     public ReconciliationResult reconcile(String symbol) {
         logger.info("Starting Binance reconciliation for {}", symbol);
+        resolveOutbox(symbol);
 
         List<BinanceOrderExecutor.OpenOrder> openOrders = orderExecutor.getOpenOrders(symbol);
 
@@ -141,7 +163,7 @@ public class BinanceReconciliationService {
      * quantity persisted in the journal is kept.
      */
     private ReconciliationResult reconcilePersistedPosition(String symbol, Position localPosition, int ordersFound) {
-        String clientOrderId = CLIENT_ORDER_PREFIX + symbol + "-" + localPosition.getPositionId() + "-entry";
+        String clientOrderId = OcoOrderIds.entry(symbol, localPosition.getPositionId());
         orderExecutor.findOrderByClientOrderId(symbol, clientOrderId).ifPresentOrElse(result -> {
             if (result.executedQuantity().compareTo(BigDecimal.ZERO) > 0) {
                 localPosition.setQuantity(result.executedQuantity());

@@ -22,8 +22,8 @@ import dev.romeo.btctradingengine.persistence.DataSourceManager;
 import dev.romeo.btctradingengine.persistence.DatabaseCandleReader;
 import dev.romeo.btctradingengine.persistence.DatabaseInitializer;
 import dev.romeo.btctradingengine.persistence.DatabaseWriter;
+import dev.romeo.btctradingengine.persistence.JdbcOrderCommandStore;
 import dev.romeo.btctradingengine.prediction.RuleBasedPredictor;
-import dev.romeo.btctradingengine.prediction.rules.*;
 import dev.romeo.btctradingengine.trading.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,6 +49,8 @@ public class Main {
             TradeJournal tradeJournal = new TradeJournal();
             tradeJournal.createTableIfNotExists();
             tradeJournal.createExecutionLogTableIfNotExists();
+            JdbcOrderCommandStore orderCommands = new JdbcOrderCommandStore();
+            orderCommands.createTableIfNotExists();
 
             PositionManager positionManager = new PositionManager(
                     Config.getTradingTargetPercent(),
@@ -57,6 +59,7 @@ public class Main {
                     event -> tradeJournal.recordExecutionLog(event, Config.getMarketSymbol())
             );
             positionManager.setAllowShort(Config.isShortSellingAllowed());
+            positionManager.setPositionSizing(Config.getPositionSizingStrategy());
             dashboardState.attachPositionManager(positionManager);
 
             ConnectivityGuard connectivityGuard = new ConnectivityGuard(
@@ -110,6 +113,7 @@ public class Main {
                     Config.getMarketSymbol());
                 // Before reconciliation, which checks or re-places the OCO of a persisted position
                 positionManager.setOcoProtection(Config.isOcoProtectionEnabled(), Config.getOcoStopLimitOffsetPercent());
+                positionManager.setOrderCommandStore(orderCommands);
                 logger.warn("REAL TRADING ENABLED for {} with validated USDT balance={}",
                     Config.getMarketSymbol(), balance.total());
                 if (!Config.isBinanceTestnetEndpoint()) {
@@ -123,6 +127,7 @@ public class Main {
                     Config.getTradingTargetPercent(),
                     Config.getTradingStopLossPercent(),
                     alertNotifier);
+                reconciliation.setOrderCommandStore(orderCommands);
                 var reconcileResult = reconciliation.reconcile(Config.getMarketSymbol());
                 logger.info("Reconciliation result: {} | orders_found={} | position_restored={}",
                     reconcileResult.message(),
@@ -161,7 +166,7 @@ public class Main {
 
             var lastCandle = new Object() { dev.romeo.btctradingengine.model.CandleEvent value = null; };
 
-            RuleBasedPredictor predictor = new RuleBasedPredictor(
+            RuleBasedPredictor predictor = RuleBasedPredictor.withLiveRules(
                     prediction -> {
                         logger.info("SIGNAL: {} | prob_up={} | confidence={} | price={} | scores={}",
                                 prediction.signal(),
@@ -176,13 +181,6 @@ public class Main {
                         }
                     }
             );
-            predictor.addRule(new RsiRule());
-            predictor.addRule(new SmaMomentumRule());
-            predictor.addRule(new MacdRule());
-            predictor.addRule(new MfiRule());
-            predictor.addFilterRule(new AtrRule());
-            predictor.addFilterRule(new VolatilityRule());
-            predictor.addFilterRule(new AdxRegimeRule());
 
             DerivativesHistory derivativesHistory = Config.isDerivativesEnabled() ? DerivativesHistory.forLive() : null;
             DerivativesPoller derivativesPoller = derivativesHistory == null ? null : new DerivativesPoller(
@@ -213,6 +211,7 @@ public class Main {
                     orderBookHistory != null ? orderBookHistory : OrderBookLookup.NONE,
                     features -> {
                         dashboardState.onFeatures(features);
+                        positionManager.updateAtr(features.atrValue());
                         predictor.onEvent(features);
                     }
             );

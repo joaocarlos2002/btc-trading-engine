@@ -7,12 +7,14 @@ import java.util.HexFormat;
 import java.util.Optional;
 
 /**
- * Deterministic clientOrderIds of a position's OCO (issue #99): derived from the position id, so a
- * restart finds the protection on Binance without persisting anything.
+ * Deterministic clientOrderIds of a position (issues #99, #111): entry, exit and OCO ids are derived
+ * from the position id, so a restart finds its orders on Binance without persisting anything.
  */
 final class OcoOrderIds {
     static final int MAX_CLIENT_ORDER_ID_LENGTH = 36;
     private static final String LIST_SUFFIX = "-oco";
+    private static final String ENTRY_SUFFIX = "-entry";
+    private static final String EXIT_SUFFIX = "-exit";
     private static final String TARGET_SUFFIX = "-tp";
     private static final String STOP_SUFFIX = "-sl";
 
@@ -44,13 +46,27 @@ final class OcoOrderIds {
         return Optional.of(clientOrderId.substring(0, clientOrderId.length() - TARGET_SUFFIX.length()) + LIST_SUFFIX);
     }
 
+    /** MARKET entry of a position; a hash keeps long position ids within Binance's 36 characters. */
+    static String entry(String symbol, String positionId) {
+        return base(symbol, positionId, ENTRY_SUFFIX) + ENTRY_SUFFIX;
+    }
+
+    /** MARKET exit of a position; retries reuse it, so Binance never holds two exits of one position. */
+    static String exit(String symbol, String positionId) {
+        return base(symbol, positionId, ENTRY_SUFFIX) + EXIT_SUFFIX;
+    }
+
     /**
      * "btce-SYMBOL-POSITION" while the longest id still fits Binance's 36 characters; beyond that
      * (e.g. BINANCE_&lt;orderId&gt; positions) a hash of symbol and position keeps it short and stable.
      */
     private static String base(String symbol, String positionId) {
+        return base(symbol, positionId, LIST_SUFFIX);
+    }
+
+    private static String base(String symbol, String positionId, String longestSuffix) {
         String base = "btce-" + symbol + "-" + positionId;
-        if (base.length() + LIST_SUFFIX.length() <= MAX_CLIENT_ORDER_ID_LENGTH) {
+        if (base.length() + longestSuffix.length() <= MAX_CLIENT_ORDER_ID_LENGTH) {
             return base;
         }
         try {

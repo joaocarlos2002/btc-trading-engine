@@ -1,5 +1,6 @@
 package dev.romeo.btctradingengine.trading;
 
+import dev.romeo.btctradingengine.port.ExecutionPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -11,10 +12,10 @@ import java.util.concurrent.ConcurrentHashMap;
 public class BinanceSymbolValidationService {
     private static final Logger logger = LoggerFactory.getLogger(BinanceSymbolValidationService.class);
 
-    private final BinanceOrderExecutor orderExecutor;
+    private final ExecutionPort orderExecutor;
     private final ConcurrentHashMap<String, BinanceOrderExecutor.SymbolFilters> filterCache = new ConcurrentHashMap<>();
 
-    public BinanceSymbolValidationService(BinanceOrderExecutor orderExecutor) {
+    public BinanceSymbolValidationService(ExecutionPort orderExecutor) {
         this.orderExecutor = orderExecutor;
     }
 

@@ -3,6 +3,7 @@ package dev.romeo.btctradingengine.trading;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.port.ExecutionPort;
 
 import java.math.BigDecimal;
 import java.net.URI;
@@ -22,7 +23,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
 
-public class BinanceOrderExecutor {
+public class BinanceOrderExecutor implements ExecutionPort {
     private static final Logger logger = LoggerFactory.getLogger(BinanceOrderExecutor.class);
     private static final int HTTP_TOO_MANY_REQUESTS = 429;
     private static final int HTTP_IP_BANNED = 418;
@@ -438,16 +439,42 @@ public class BinanceOrderExecutor {
      * order - which is not the same as "filled", so callers must not assume a fill from it.
      */
     public Optional<QueriedOrder> queryOrder(String symbol, String clientOrderId) {
+        return lookupOrder(symbol, clientOrderId).order();
+    }
+
+    /**
+     * Like {@link #queryOrder} but tells "Binance does not know this order" (-2013) apart from "could
+     * not ask": only the first proves an order was never accepted (issue #111 outbox reconciliation).
+     */
+    public OrderLookup lookupOrder(String symbol, String clientOrderId) {
         try {
             HttpResponse<String> response = send(() -> signedRequest("GET", "/api/v3/order",
                     Map.of("symbol", symbol, "origClientOrderId", clientOrderId)), true);
-            if (response.statusCode() != 200) return Optional.empty();
+            if (response.statusCode() != 200) {
+                String body = response.body();
+                boolean notFound = response.statusCode() == 400 && body != null && body.contains("-2013");
+                return notFound ? OrderLookup.notFound() : OrderLookup.error(body);
+            }
             JsonNode json = mapper.readTree(response.body());
             OrderResult parsed = parseOrderResult(json);
-            return Optional.of(new QueriedOrder(json.path("orderId").asLong(), clientOrderId,
+            return OrderLookup.found(new QueriedOrder(json.path("orderId").asLong(), clientOrderId,
                     json.path("status").asText(""), parsed.executedQuantity(), parsed.averagePrice()));
-        } catch (Exception ignored) {
-            return Optional.empty();
+        } catch (Exception e) {
+            return OrderLookup.error(e.getMessage());
+        }
+    }
+
+    public record OrderLookup(OrderListQuery.State state, Optional<QueriedOrder> order, String error) {
+        public static OrderLookup found(QueriedOrder order) {
+            return new OrderLookup(OrderListQuery.State.FOUND, Optional.of(order), null);
+        }
+
+        public static OrderLookup notFound() {
+            return new OrderLookup(OrderListQuery.State.NOT_FOUND, Optional.empty(), null);
+        }
+
+        public static OrderLookup error(String error) {
+            return new OrderLookup(OrderListQuery.State.ERROR, Optional.empty(), error);
         }
     }
 

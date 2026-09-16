@@ -1,5 +1,6 @@
 package dev.romeo.btctradingengine.trading;
 
+import dev.romeo.btctradingengine.port.ExecutionPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,15 +34,15 @@ public class OrderConfirmationManager {
         thread.setDaemon(true);
         return thread;
     });
-    private final BinanceOrderExecutor binanceExecutor;
+    private final ExecutionPort binanceExecutor;
     private volatile Consumer<OrderConfirmation> confirmationListener;
 
-    public OrderConfirmationManager(BinanceOrderExecutor binanceExecutor) {
+    public OrderConfirmationManager(ExecutionPort binanceExecutor) {
         this(binanceExecutor, true);
     }
 
     // Visible for testing: without the scheduler, the test drives checkTimeouts itself.
-    OrderConfirmationManager(BinanceOrderExecutor binanceExecutor, boolean scheduleTimeoutChecks) {
+    OrderConfirmationManager(ExecutionPort binanceExecutor, boolean scheduleTimeoutChecks) {
         this.binanceExecutor = binanceExecutor;
         if (scheduleTimeoutChecks) {
             executor.scheduleAtFixedRate(this::runTimeoutCheck,

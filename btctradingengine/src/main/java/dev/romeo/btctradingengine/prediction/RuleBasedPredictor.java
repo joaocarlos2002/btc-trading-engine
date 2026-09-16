@@ -3,6 +3,13 @@ package dev.romeo.btctradingengine.prediction;
 import dev.romeo.btctradingengine.feature.FeatureVector;
 import dev.romeo.btctradingengine.feature.FeatureEventListener;
 import dev.romeo.btctradingengine.config.Config;
+import dev.romeo.btctradingengine.prediction.rules.AdxRegimeRule;
+import dev.romeo.btctradingengine.prediction.rules.AtrRule;
+import dev.romeo.btctradingengine.prediction.rules.MacdRule;
+import dev.romeo.btctradingengine.prediction.rules.MfiRule;
+import dev.romeo.btctradingengine.prediction.rules.RsiRule;
+import dev.romeo.btctradingengine.prediction.rules.SmaMomentumRule;
+import dev.romeo.btctradingengine.prediction.rules.VolatilityRule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -76,6 +83,22 @@ public class RuleBasedPredictor implements FeatureEventListener {
         this.buyThreshold = buyThreshold;
         this.sellThreshold = sellThreshold;
         this.confirmationSnapshots = confirmationSnapshots;
+    }
+
+    /**
+     * The predictor the live bot runs: default thresholds from Config and its rule set. Shared with the
+     * deterministic replay (issue #111) so both make decisions with exactly the same rules.
+     */
+    public static RuleBasedPredictor withLiveRules(PredictionEventListener listener) {
+        RuleBasedPredictor predictor = new RuleBasedPredictor(listener);
+        predictor.addRule(new RsiRule());
+        predictor.addRule(new SmaMomentumRule());
+        predictor.addRule(new MacdRule());
+        predictor.addRule(new MfiRule());
+        predictor.addFilterRule(new AtrRule());
+        predictor.addFilterRule(new VolatilityRule());
+        predictor.addFilterRule(new AdxRegimeRule());
+        return predictor;
     }
 
     public void addRule(SignalRule rule) {
