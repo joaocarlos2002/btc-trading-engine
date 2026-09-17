@@ -107,16 +107,16 @@ Fluxo resumido:
 | Camada | Tecnologia | Uso |
 | :--- | :--- | :--- |
 | Linguagem | Java 25 | Records, pattern matching, `main` não público (JEP 512) |
-| Build | Maven, Spotless (google-java-format, sem check no CI) | Compilação e empacotamento |
+| Build | Maven Wrapper (Maven 3.9.16), Spotless (google-java-format), Docker multi-stage | Compilação e empacotamento |
 | Web | Spring Boot 3.5.5 (`starter-web`, `starter-websocket`) | REST, WebSocket e arquivos estáticos |
 | JSON | Jackson | Parsing de mensagens da Binance e serialização |
 | HTTP/WS cliente | `java.net.http.HttpClient` | REST e WebSocket da Binance |
 | Banco | PostgreSQL 16, JDBC, HikariCP 5.1 | Persistência |
-| Front-end | HTML/JS puro, Chart.js 4.4.4 (CDN), Google Fonts | Dashboard e tela de backtest |
+| Front-end | HTML/JS puro, Chart.js 4.4.4 (local, com SRI), Google Fonts | Dashboard e tela de backtest |
 | Alertas | Discord Webhook | Notificações críticas |
 | Testes | JUnit Jupiter 5.11 | Testes unitários |
-| Qualidade | GitHub Actions, JetBrains Qodana | Build, testes, análise estática |
-| Infra local | Docker Compose | PostgreSQL |
+| Qualidade | GitHub Actions, Checkstyle, JaCoCo, ArchUnit, SpotBugs + find-sec-bugs, Error Prone + NullAway, OWASP Dependency-Check, Dependabot, JMH, Qodana | Build, testes, análise estática |
+| Infra local | Docker Compose | PostgreSQL e a aplicação (`app`) |
 
 APIs externas: Binance Spot (WS/REST, Testnet e Mainnet), Binance USD-M Futures (`fapi.binance.com`), `data.binance.vision` (dumps diários de aggTrades e métricas).
 
@@ -125,7 +125,7 @@ APIs externas: Binance Spot (WS/REST, Testnet e Mainnet), Binance USD-M Futures 
 ### Pré-requisitos
 
 - **JDK 25** (Temurin ou equivalente). Com um JDK mais antigo a compilação falha com `release version 25 not supported`.
-- **Maven 3.9+**
+- Maven não é necessário: use `./mvnw` (ou `mvnw.cmd` no Windows) em `btctradingengine/`, que baixa o Maven 3.9.16 com checksum verificado.
 - **Docker** e **Docker Compose**
 - Acesso de rede a `*.binance.com`, `*.binance.vision` e `fapi.binance.com` (quando bloqueado, desligue `derivatives.enabled` e `orderbook.enabled`)
 
@@ -179,11 +179,22 @@ O schema é versionado com Flyway (issue #102): as migrações ficam em `engine-
 
 ```bash
 cd btctradingengine
-mvn -B package -DskipTests
+./mvnw -B package -DskipTests
 java -jar engine-app/target/engine-app-*.jar
 # ou, sem gerar o jar:
-mvn install -DskipTests && mvn -pl engine-app spring-boot:run
+./mvnw install -DskipTests && ./mvnw -pl engine-app spring-boot:run
 ```
+
+### Docker (issue #105)
+
+```bash
+docker compose up -d --build    # postgres + app; o app só sobe com o postgres "healthy"
+docker compose logs -f app      # aguarde "Started Main"
+```
+
+O `btctradingengine/Dockerfile` compila com o wrapper numa imagem Temurin 25 JDK e roda num Temurin 25 JRE como usuário não-root (uid 10001), com as camadas do Spring Boot extraídas (`-Djarmode=tools extract --layers`). As variáveis vêm do `.env` (`BTC_ENGINE_*`, `DASHBOARD_AUTH_PASSWORD`); o compose aponta `DB_URL` para o serviço `postgres`. Dentro do container o servidor escuta em `0.0.0.0` (necessário para o Prometheus do perfil `observability` alcançar `app:8080`), mas a porta é publicada só em `127.0.0.1:8080` do host. O `HEALTHCHECK` consulta `/actuator/health`, que fica DOWN enquanto o feed de mercado está parado.
+
+`spring.threads.virtual.enabled=true`: Tomcat e os executores do Spring usam threads virtuais. Não há `ThreadLocal` no código do engine e, desde o Java 24 (JEP 491), `synchronized` não prende a thread portadora.
 
 Perfis opcionais: `SPRING_PROFILES_ACTIVE=testnet` ou `mainnet` (só apontam a execução; `trading.confirm.mainnet=true` continua obrigatório para operar na Mainnet). `engine.pipeline.enabled=false` sobe só o dashboard e os backtests.
 
@@ -227,11 +238,37 @@ Para operar de verdade:
 
 ```bash
 cd btctradingengine
-mvn test                    # todos os módulos
-mvn -pl engine-core test    # indicadores, features e regras, sem banco nem rede
+./mvnw -B verify                 # o mesmo que o CI: Checkstyle, testes, ArchUnit, JaCoCo (mínimos) e o jar
+./mvnw -pl engine-core test      # indicadores, features e regras, sem banco nem rede
+./mvnw spotless:apply            # formata os arquivos alterados desde origin/main (ratchetFrom)
+./mvnw -Pstrict test-compile     # Error Prone + NullAway
+./mvnw -Pspotbugs verify -DskipTests   # SpotBugs + find-sec-bugs (relatório em */target/spotbugsXml.xml)
+./mvnw -Pbenchmarks -pl engine-benchmarks -am package -DskipTests \
+  && java -jar engine-benchmarks/target/benchmarks.jar FeatureExtractorBenchmark   # JMH, fora do build padrão
 ```
 
-GitHub Actions em PRs para `main` e `dev`: `build.yml` (`mvn clean package -DskipTests`, na raiz do reactor) e `test.yml` (`mvn test`), ambos com Temurin 25. O `qodana_code_quality.yml` roda em PRs e em pushes para `main`/`develop`.
+GitHub Actions (`.github/workflows/ci.yml`) em PRs e pushes para `main` e `dev`, com Temurin 25 e cache do Maven:
+
+| Job | O que faz | Bloqueia? |
+| :--- | :--- | :--- |
+| `verify` | `./mvnw -B verify`: Checkstyle (regras de severidade `error`), testes de todos os módulos, `ArchitectureTest` (ArchUnit), relatório JaCoCo agregado (artefato `coverage`) e cobertura mínima de `prediction`, `prediction.rules` e `trading` | Sim |
+| `docker` | `docker build` da imagem | Sim |
+| `pr-title` | Título do PR no formato Conventional Commits | Sim |
+| `format` | `spotless:check` só nos arquivos alterados desde a base do PR (`ratchetFrom`) | Não, até o `main` estar formatado |
+| `strict` | Error Prone + NullAway | Não |
+| `spotbugs` | SpotBugs + find-sec-bugs, com exclusões em `config/spotbugs/exclude.xml` | Não |
+
+Além dele: `dependency-check.yml` (OWASP Dependency-Check semanal ou manual, só relatório; configure o segredo `NVD_API_KEY`), `qodana_code_quality.yml` (PRs e pushes para `main`/`dev`) e `.github/dependabot.yml` (Maven, GitHub Actions e Docker, semanal). Ative também o *secret scanning* e o *push protection* em Settings > Code security do repositório.
+
+Regras do Checkstyle em `btctradingengine/config/checkstyle/checkstyle.xml`: as já atendidas pelo código são `error`; as demais são `warning`, com a contagem de partida no próprio arquivo.
+
+Commits seguem [Conventional Commits](https://www.conventionalcommits.org) (`fix(trading): ...`). Hooks locais opcionais, por clone:
+
+```bash
+git config core.hooksPath .githooks   # commit-msg valida a mensagem; pre-commit roda o Spotless nos .java alterados
+```
+
+Front-end: o Chart.js 4.4.4 fica em `static/vendor/chartjs` (arquivo do pacote npm, integridade conferida) e é carregado com `integrity` (SRI). Para atualizar, troque o arquivo e recalcule o hash (`openssl dgst -sha384 -binary arquivo | openssl base64 -A`). Lightweight Charts (TradingView) é uma alternativa a avaliar para candles OHLC: mais leve e feita para séries financeiras, mas exigiria reescrever os gráficos do dashboard.
 
 ## Limitações conhecidas
 

@@ -1,0 +1,42 @@
+# Dependency updates (issue #110). Spring-managed versions move with spring-boot.version (the BOM), so Maven
+# PRs are grouped to keep the noise down; review Boot upgrades on their own.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /btctradingengine
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      maven-plugins:
+        patterns:
+          - "org.apache.maven.plugins:*"
+          - "org.codehaus.mojo:*"
+          - "com.diffplug.spotless:*"
+          - "com.github.spotbugs:*"
+          - "com.puppycrawl.tools:*"
+          - "org.jacoco:*"
+          - "org.owasp:*"
+          - "com.google.errorprone:*"
+          - "com.uber.nullaway:*"
+      test:
+        patterns:
+          - "com.tngtech.archunit:*"
+          - "org.openjdk.jmh:*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: docker
+    directory: /btctradingengine
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
