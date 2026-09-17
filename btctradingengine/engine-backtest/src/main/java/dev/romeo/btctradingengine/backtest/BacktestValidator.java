@@ -86,7 +86,8 @@ public class BacktestValidator {
             addWarning("Test set too small (<20% of data)");
         }
 
-        logger.info("Train/Test split: {:.0f}% / {:.0f}%", trainPercent * 100, testPercent * 100);
+        // SLF4J has no format specifiers: {:.0f} printed literally and dropped both values
+        logger.info("Train/Test split: {}% / {}%", Math.round(trainPercent * 100), Math.round(testPercent * 100));
     }
 
     public void validateDrawdown(BigDecimal maxDrawdown) {

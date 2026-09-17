@@ -89,7 +89,7 @@ public class OrderConfirmationManager {
 
         OrderStatus status = fromBinanceStatus(report.orderStatus(), cumulativeQty);
         if (status != null) {
-            emit(tracker.apply(report.orderId(), cumulativeQty, lastPrice, status));
+            tracker.apply(report.orderId(), cumulativeQty, lastPrice, status).ifPresent(this::emit);
         }
     }
 
@@ -115,7 +115,7 @@ public class OrderConfirmationManager {
                 logger.warn("No execution report for {} after {}s; Binance reports status={} executedQty={}",
                         tracker.clientOrderId, age.toSeconds(), order.status(), order.executedQuantity());
                 if (status != null) {
-                    emit(tracker.apply(order.orderId(), order.executedQuantity(), order.averagePrice(), status));
+                    tracker.apply(order.orderId(), order.executedQuantity(), order.averagePrice(), status).ifPresent(this::emit);
                     if (status != OrderStatus.PARTIALLY_FILLED) {
                         continue;
                     }
@@ -125,7 +125,7 @@ public class OrderConfirmationManager {
             if (age.compareTo(QUERY_GIVE_UP) >= 0) {
                 logger.error("Order {} still unconfirmed after {}s; giving up, known filled qty={}",
                         tracker.clientOrderId, age.toSeconds(), tracker.cumulativeQty);
-                emit(tracker.expire());
+                tracker.expire().ifPresent(this::emit);
             }
         }
     }
@@ -153,18 +153,16 @@ public class OrderConfirmationManager {
     }
 
     // Runs outside the tracker lock: the listener takes the PositionManager lock
-    private void emit(Optional<OrderConfirmation> confirmation) {
-        confirmation.ifPresent(conf -> {
-            if (conf.status() != OrderStatus.PARTIALLY_FILLED) {
-                pendingOrders.remove(conf.clientOrderId());
-            }
-            logger.info("Order {} ({}) confirmed: {} filledQty={} lastPrice={}",
-                    conf.orderId(), conf.clientOrderId(), conf.status(), conf.filledQuantity(), conf.lastFillPrice());
-            Consumer<OrderConfirmation> listener = confirmationListener;
-            if (listener != null) {
-                listener.accept(conf);
-            }
-        });
+    private void emit(OrderConfirmation conf) {
+        if (conf.status() != OrderStatus.PARTIALLY_FILLED) {
+            pendingOrders.remove(conf.clientOrderId());
+        }
+        logger.info("Order {} ({}) confirmed: {} filledQty={} lastPrice={}",
+                conf.orderId(), conf.clientOrderId(), conf.status(), conf.filledQuantity(), conf.lastFillPrice());
+        Consumer<OrderConfirmation> listener = confirmationListener;
+        if (listener != null) {
+            listener.accept(conf);
+        }
     }
 
     public void setConfirmationListener(Consumer<OrderConfirmation> listener) {

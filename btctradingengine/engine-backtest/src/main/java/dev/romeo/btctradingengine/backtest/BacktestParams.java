@@ -304,6 +304,8 @@ public record BacktestParams(
             args[i] = replacements.containsKey(c.getName()) ? replacements.get(c.getName()) : componentValue(c);
         }
         try {
+            // The canonical constructor takes the component types in order, which static analysis cannot see
+            //noinspection JavaReflectionMemberAccess
             Constructor<BacktestParams> canonical = BacktestParams.class.getDeclaredConstructor(types);
             return canonical.newInstance(args);
         } catch (ReflectiveOperationException e) {

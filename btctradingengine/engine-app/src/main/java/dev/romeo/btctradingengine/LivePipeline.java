@@ -114,6 +114,8 @@ public class LivePipeline implements ApplicationRunner, AutoCloseable {
         String symbol = market.symbol();
 
         c.dbWriter().start();
+        // Bean closed by close() when the context shuts down
+        //noinspection resource
         c.tickRetention().start();
 
         TradeJournal tradeJournal = c.tradeJournal();
@@ -285,6 +287,8 @@ public class LivePipeline implements ApplicationRunner, AutoCloseable {
 
         confirmationManager = new OrderConfirmationManager(executor);
         positionManager.setOrderConfirmationManager(confirmationManager);
+        // DashboardState is a Spring bean; the context closes it
+        //noinspection resource
         c.dashboardState().attachOrderConfirmationManager(confirmationManager);
 
         userDataStream = new BinanceUserDataStreamClient(binance.apiKey(), binance.apiSecret(),

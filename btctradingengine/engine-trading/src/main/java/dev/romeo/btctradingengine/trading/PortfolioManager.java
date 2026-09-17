@@ -64,6 +64,8 @@ public class PortfolioManager {
 
     private void foldPendingInitialBase() {
         if (pendingInitialBase.compareTo(BigDecimal.ZERO) > 0 && lastPrice != null) {
+            // Only called from synchronized methods; volatile is for lock-free readers
+            //noinspection NonAtomicOperationOnVolatileField
             initialCapital = initialCapital.add(pendingInitialBase.multiply(lastPrice));
             pendingInitialBase = BigDecimal.ZERO;
             logger.info("Initial capital includes base asset held at startup: {} USDT", initialCapital);

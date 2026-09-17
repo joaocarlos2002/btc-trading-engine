@@ -239,7 +239,7 @@ public class BinanceResilience {
             breaker.transitionToOpenState();
         } else if (status == HTTP_TOO_MANY_REQUESTS) {
             long pauseMs = retryAfterMs(response).orElse(settings.initialBackoff().toMillis());
-            state.pausedUntilMs = Math.max(state.pausedUntilMs, clock.getAsLong() + pauseMs);
+            state.extendPause(clock.getAsLong() + pauseMs);
             logger.warn("Binance rate limit (429) on {}; non-critical requests to {} paused for {}ms",
                     endpoint.name(), host, pauseMs);
             recordError(breaker, permitted, start, new IOException("HTTP 429"));
@@ -294,6 +294,8 @@ public class BinanceResilience {
                 if (System.nanoTime() > deadline) {
                     throw rateLimited(endpoint, host);
                 }
+                // Polling on purpose: the limiter has no "wait until N permits are free" call
+                //noinspection BusyWait
                 Thread.sleep(250);
             }
         }
@@ -411,6 +413,13 @@ public class BinanceResilience {
     private static final class HostState {
         volatile long bannedUntilMs;
         volatile long pausedUntilMs;
+
+        /** Concurrent 429s must not shorten a longer pause another thread just set (read-max-write under the lock). */
+        synchronized void extendPause(long untilMs) {
+            if (untilMs > pausedUntilMs) {
+                pausedUntilMs = untilMs;
+            }
+        }
         volatile int lastUsedWeight = -1;
         volatile long lastUsedWeightAtMs;
     }
