@@ -15,6 +15,15 @@
     <description>Spring Boot application: Main, typed configuration, live pipeline wiring, dashboard REST/WebSocket.</description>
 
     <dependencies>
+        <!-- core and data are also transitive; declared so the JaCoCo aggregate report (which reads direct dependencies only) covers them -->
+        <dependency>
+            <groupId>dev.romeo</groupId>
+            <artifactId>engine-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.romeo</groupId>
+            <artifactId>engine-data</artifactId>
+        </dependency>
         <dependency>
             <groupId>dev.romeo</groupId>
             <artifactId>engine-trading</artifactId>
@@ -79,6 +88,13 @@
             <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Layer rules over every module (issue #110); engine-app is the one module that sees them all -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit</artifactId>
+            <version>1.5.0</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -96,6 +112,24 @@
                         <goals>
                             <goal>repackage</goal>
                         </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- engine-app depends on every module: one coverage report for the whole reactor in target/site/jacoco-aggregate -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>report-aggregate</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report-aggregate</goal>
+                        </goals>
+                        <configuration>
+                            <includeCurrentProject>true</includeCurrentProject>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>

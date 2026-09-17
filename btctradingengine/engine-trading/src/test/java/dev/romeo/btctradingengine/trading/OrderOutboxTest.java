@@ -27,6 +27,7 @@ public class OrderOutboxTest {
         final Map<String, OrderLookup> lookups = new HashMap<>();
         OrderListQuery listAnswer = new OrderListQuery(OrderListQuery.State.FOUND, "EXECUTING", null);
         boolean buyFails;
+        boolean sellFails;
 
         Exchange() {
             super("test-key", "test-secret", "https://testnet.binance.vision", 10, 1000, 60000);
@@ -43,7 +44,9 @@ public class OrderOutboxTest {
         @Override
         public OrderResult executeSellMarket(String symbol, BigDecimal quantity, String clientOrderId) {
             orders.add("sell " + clientOrderId);
-            return new OrderResult(true, "2", quantity, new BigDecimal("99000"), null);
+            return sellFails
+                    ? new OrderResult(false, null, BigDecimal.ZERO, BigDecimal.ZERO, "timed out")
+                    : new OrderResult(true, "2", quantity, new BigDecimal("99000"), null);
         }
 
         @Override
@@ -151,6 +154,32 @@ public class OrderOutboxTest {
     }
 
     @Test
+    public void exitWhoseOutcomeCannotBeLookedUpStaysSentForTheStartupReconciliation() {
+        PositionManager manager = manager(false);
+        manager.openManualBuy(new BigDecimal("100000"), NOW);
+        exchange.sellFails = true; // the lookup default answers "timeout"
+
+        manager.closeManualPosition(new BigDecimal("99000"), NOW);
+
+        assertEquals(OrderCommand.Status.SENT, command(EXIT_ID).status(), "it may have filled on Binance");
+        assertEquals(List.of(EXIT_ID), store.findUnresolved().stream().map(OrderCommand::clientOrderId).toList());
+        assertEquals(PositionState.OPEN, manager.getOpenPosition().orElseThrow().getState());
+    }
+
+    @Test
+    public void exitBinanceDoesNotKnowIsRecordedAsFailed() {
+        PositionManager manager = manager(false);
+        manager.openManualBuy(new BigDecimal("100000"), NOW);
+        exchange.sellFails = true;
+        exchange.lookups.put(EXIT_ID, BinanceOrderExecutor.OrderLookup.notFound());
+
+        manager.closeManualPosition(new BigDecimal("99000"), NOW);
+
+        assertEquals(OrderCommand.Status.FAILED, command(EXIT_ID).status());
+        assertEquals("timed out", command(EXIT_ID).lastError());
+    }
+
+    @Test
     public void recordingAgainResetsTheSameRow() {
         store.record(EXIT_ID, "POS_1", OrderCommand.Type.EXIT, Map.of());
         store.markFailed(EXIT_ID, "rejected");
@@ -197,6 +226,28 @@ public class OrderOutboxTest {
         assertEquals(ExitReason.STOP_LOSS, closed.getExitReason());
         assertEquals(0, new BigDecimal("98400").compareTo(closed.getExitPrice()));
         assertEquals(List.of(), exchange.orders, "reconciliation never sends an order");
+    }
+
+    @Test
+    public void positionClosedByReconciliationIsNotCountedTwiceWhenTheJournalIsLoaded() {
+        PositionManager manager = restarted(new BigDecimal("0.005"));
+        store.record(EXIT_ID, "POS_1", OrderCommand.Type.EXIT, Map.of("reason", "STOP_LOSS"));
+        store.markSent(EXIT_ID);
+        exchange.lookups.put(EXIT_ID, BinanceOrderExecutor.OrderLookup.found(new BinanceOrderExecutor.QueriedOrder(
+                5, EXIT_ID, "FILLED", new BigDecimal("0.005"), new BigDecimal("98400"))));
+        reconciliation(manager).reconcile("BTCUSDT");
+
+        // LivePipeline loads the journal after the reconciliation, and the journal already holds the closed POS_1
+        Position journalCopy = new Position("POS_1", Signal.BUY, new BigDecimal("100000"), NOW,
+                new BigDecimal("2.0"), new BigDecimal("1.5"));
+        journalCopy.restoreClosed(new BigDecimal("98400"), NOW, "STOP_LOSS");
+        Position older = new Position("POS_0", Signal.BUY, new BigDecimal("100000"), NOW,
+                new BigDecimal("2.0"), new BigDecimal("1.5"));
+        older.restoreClosed(new BigDecimal("101000"), NOW, "TARGET_HIT");
+        manager.restoreClosedPositions(List.of(older, journalCopy));
+
+        assertEquals(List.of("POS_1", "POS_0"), manager.getClosedPositions().stream().map(Position::getPositionId).toList());
+        assertEquals(2, manager.getTotalTrades());
     }
 
     @Test

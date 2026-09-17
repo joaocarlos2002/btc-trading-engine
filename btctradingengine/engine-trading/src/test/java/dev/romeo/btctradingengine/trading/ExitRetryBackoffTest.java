@@ -52,6 +52,11 @@ public class ExitRetryBackoffTest {
         }
 
         @Override
+        public OrderLookup lookupOrder(String symbol, String clientOrderId) {
+            return OrderLookup.notFound();
+        }
+
+        @Override
         public BalanceResult getBalance(String asset) {
             return new BalanceResult(true, new BigDecimal("1000"), BigDecimal.ZERO, new BigDecimal("1000"), null);
         }

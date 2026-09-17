@@ -1,0 +1,9 @@
+#!/bin/sh
+# Optional formatting check on commit (issue #110): google-java-format on the staged Java files only.
+# Skip once with `git commit --no-verify`. Needs JDK 25 on JAVA_HOME.
+if git diff --cached --name-only --diff-filter=ACM | grep -q '^btctradingengine/.*\.java$'; then
+  (cd btctradingengine && ./mvnw -q -B spotless:check -Dspotless.ratchetFrom=HEAD) || {
+    echo "pre-commit: formatting differs; run ./mvnw spotless:apply -Dspotless.ratchetFrom=HEAD in btctradingengine" >&2
+    exit 1
+  }
+fi

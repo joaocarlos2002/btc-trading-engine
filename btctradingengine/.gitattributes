@@ -1,0 +1,4 @@
+# The wrapper must keep LF endings: a CRLF mvnw fails in Linux containers and CI runners.
+mvnw text eol=lf
+*.sh text eol=lf
+*.cmd text eol=crlf

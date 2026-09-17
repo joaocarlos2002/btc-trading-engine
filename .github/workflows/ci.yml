@@ -1,0 +1,163 @@
+name: CI
+
+# One workflow for build, tests and quality gates (issues #96, #110). Replaces build.yml + test.yml.
+# Blocking: verify (compile, Checkstyle errors, tests, ArchUnit, JaCoCo minimums), docker, pr-title.
+# Report only (continue-on-error) until the existing findings are paid off: format, strict, spotbugs.
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+  push:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: btctradingengine
+
+jobs:
+  verify:
+    name: Verify (tests, Checkstyle, ArchUnit, coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: btctradingengine/**/pom.xml
+
+      - name: Verify
+        # Every module in dependency order: compile, Checkstyle (validate), tests, JaCoCo report + check, jar.
+        run: ./mvnw -B verify
+
+      - name: Coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: btctradingengine/engine-app/target/site/jacoco-aggregate/
+          if-no-files-found: ignore
+
+      - name: Test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: btctradingengine/*/target/surefire-reports/
+          if-no-files-found: ignore
+
+  format:
+    name: Spotless (changed files)
+    runs-on: ubuntu-latest
+    # Non-blocking for now: ratchetFrom checks every file changed since the base branch, and the platform branches
+    # moved/rewrote most files. Remove continue-on-error once main is google-java-format clean.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: btctradingengine/**/pom.xml
+
+      - name: Spotless check
+        env:
+          # PRs compare with their base branch; pushes with the previous commit.
+          RATCHET: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before || 'origin/main' }}
+        # Report only: a violation becomes a warning annotation instead of a red check, until main gets a
+        # formatting-only PR. Drop the fallback (and continue-on-error) to make it blocking.
+        run: |
+          if ! ./mvnw -B spotless:check -Dspotless.ratchetFrom="$RATCHET" > spotless.log 2>&1; then
+            grep -E 'had format violations|^\[ERROR\] +src/' spotless.log | sed 's/^\[ERROR\] *//' | while read -r line; do
+              echo "::warning title=Spotless::$line"
+            done
+            echo "Spotless found unformatted files; run ./mvnw spotless:apply (see the log above)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          cat spotless.log | tail -40
+
+  strict:
+    name: Error Prone + NullAway (report)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: btctradingengine/**/pom.xml
+
+      - name: Compile with Error Prone
+        run: ./mvnw -B -Pstrict test-compile -Dcheckstyle.skip
+
+  spotbugs:
+    name: SpotBugs + find-sec-bugs (report)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: btctradingengine/**/pom.xml
+
+      - name: SpotBugs
+        # failOnError=false: findings are printed and saved, the job only fails if the analysis itself breaks.
+        run: ./mvnw -B -Pspotbugs verify -DskipTests -Dcheckstyle.skip -Djacoco.skip
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spotbugs
+          path: btctradingengine/*/target/spotbugsXml.xml
+          if-no-files-found: ignore
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        working-directory: .
+        run: docker build -f btctradingengine/Dockerfile -t btc-trading-engine:ci btctradingengine
+
+  pr-title:
+    name: Conventional PR title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check title
+        working-directory: .
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        # Same rule as .githooks/commit-msg: type(optional scope)!: description
+        run: |
+          pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9._/,-]+\))?!?: .+'
+          if ! printf '%s' "$TITLE" | grep -Eq "$pattern"; then
+            echo "::error::PR title is not a Conventional Commit: '$TITLE' (expected e.g. 'fix(trading): ...')"
+            exit 1
+          fi

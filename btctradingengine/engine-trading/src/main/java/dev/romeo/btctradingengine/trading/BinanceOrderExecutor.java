@@ -211,6 +211,14 @@ public class BinanceOrderExecutor implements ExecutionPort {
                 return result;
             } else {
                 String error = response.body();
+                if (response.statusCode() >= 500 && clientOrderId != null && !clientOrderId.isBlank()) {
+                    // Binance: a 5xx leaves the execution status UNKNOWN, the order may have filled
+                    Optional<OrderResult> recovered = findOrderByClientOrderId(symbol, clientOrderId);
+                    if (recovered.isPresent()) {
+                        logger.warn("Recovered order after HTTP {}: clientOrderId={}", response.statusCode(), clientOrderId);
+                        return recovered.get();
+                    }
+                }
                 logger.error("âœ— Order failed: {} {}", response.statusCode(), error);
                 return new OrderResult(false, null, BigDecimal.ZERO, BigDecimal.ZERO, error);
             }

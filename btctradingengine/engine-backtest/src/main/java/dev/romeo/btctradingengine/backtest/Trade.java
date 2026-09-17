@@ -70,15 +70,24 @@ public class Trade {
     public int getBarCount() { return barCount; }
     public void incrementBarCount() { this.barCount++; }
 
+    /**
+     * Open trades have no exit price, P&L or P&L % yet. Those used to go to %.2f as the strings "OPEN" and
+     * "N/A", which throws IllegalFormatConversionException (found by Error Prone, issue #110).
+     */
     @Override
     public String toString() {
         return String.format(
-                "%s: %s @ %.2f â†’ %.2f | P&L: %s (%.2f%%)",
+                "%s: %s @ %s -> %s | P&L: %s (%s%%)",
                 tradeId, signal,
-                entryPrice, exitPrice != null ? exitPrice : "OPEN",
-                pnl != null ? pnl.setScale(2, RoundingMode.HALF_UP) : "N/A",
-                pnlPercent != null ? pnlPercent.setScale(2, RoundingMode.HALF_UP) : "N/A"
+                scaled(entryPrice, "N/A"),
+                scaled(exitPrice, "OPEN"),
+                scaled(pnl, "N/A"),
+                scaled(pnlPercent, "N/A")
         );
+    }
+
+    private static String scaled(BigDecimal value, String missing) {
+        return value == null ? missing : value.setScale(2, RoundingMode.HALF_UP).toPlainString();
     }
 }
 

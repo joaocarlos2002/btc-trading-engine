@@ -1,0 +1,11 @@
+# Keep the build context small and free of secrets (issue #105).
+**/target/
+**/.flattened-pom.xml
+**/dependency-reduced-pom.xml
+engine-benchmarks/
+.idea/
+*.iml
+.vscode/
+.env
+**/.env
+*.log
