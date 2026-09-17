@@ -46,7 +46,7 @@ jobs:
 
       - name: Coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: btctradingengine/engine-app/target/site/jacoco-aggregate/
@@ -54,7 +54,7 @@ jobs:
 
       - name: Test reports
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: surefire-reports
           path: btctradingengine/*/target/surefire-reports/
@@ -128,7 +128,7 @@ jobs:
         # failOnError=false: findings are printed and saved, the job only fails if the analysis itself breaks.
         run: ./mvnw -B -Pspotbugs verify -DskipTests -Dcheckstyle.skip -Djacoco.skip
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: spotbugs
