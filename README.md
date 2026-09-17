@@ -229,7 +229,15 @@ Para operar de verdade:
 cd btctradingengine
 mvn test                    # todos os módulos
 mvn -pl engine-core test    # indicadores, features e regras, sem banco nem rede
+mvn verify                  # unitários + integração (*IT) com PostgreSQL e Binance simulados
 ```
+
+Testes de integração (issue #103) têm nome `*IT` e rodam no `verify` pelo maven-failsafe-plugin; o `mvn test` continua rápido e sem Docker.
+
+- **PostgreSQL real** (engine-data e engine-trading): um único container `postgres:16-alpine` do Testcontainers por módulo, com o schema criado pelas migrações Flyway de `db/migration`. Cobre `DatabaseWriter`, leitores de candles/ticks, `TickRetentionJob`, `TradeJournal`, `JdbcOrderCommandStore` e o cenário ponta a ponta `TradingLifecycleEndToEndIT` (compra → executionReport → timeout → saída → reinício → reconciliação).
+- **Binance simulada**: WireMock com respostas no formato da API Spot (`BinanceOrderExecutorIT`: assinatura, 429/Retry-After, 418, 5xx, timeout). O User Data Stream usa frames `executionReport` gravados entregues ao `BinanceUserDataStreamClient` real por um socket falso, porque o WireMock não fala WebSocket.
+- **Sem Docker** os ITs de banco são pulados (`@Testcontainers(disabledWithoutDocker = true)`), sem quebrar o build; os ITs só com WireMock rodam sempre.
+- **Windows / Docker Desktop**: basta o Docker Desktop rodando (pipe `npipe:////./pipe/docker_engine`), sem `TESTCONTAINERS_RYUK_DISABLED`. O Testcontainers fica em 1.21.4 (acima do 1.21.3 do Spring Boot) porque o Docker Engine 29 recusa a versão de API antiga com HTTP 400 e os ITs seriam pulados em silêncio. Se o Ryuk for bloqueado, `TESTCONTAINERS_RYUK_DISABLED=true` funciona: o container é parado por um shutdown hook.
 
 GitHub Actions em PRs para `main` e `dev`: `build.yml` (`mvn clean package -DskipTests`, na raiz do reactor) e `test.yml` (`mvn test`), ambos com Temurin 25. O `qodana_code_quality.yml` roda em PRs e em pushes para `main`/`develop`.
 
