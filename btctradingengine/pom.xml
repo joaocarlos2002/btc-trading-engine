@@ -33,6 +33,8 @@
         <spring-boot.version>3.5.5</spring-boot.version>
         <!-- Not in the Spring Boot BOM: one version for every resilience4j-* module (issue #100) -->
         <resilience4j.version>2.4.0</resilience4j.version>
+        <!-- Not in the Spring Boot BOM: Binance HTTP stubs of the integration tests (issue #103) -->
+        <wiremock.version>3.13.2</wiremock.version>
     </properties>
 
     <dependencyManagement>
@@ -50,6 +52,11 @@
                 <version>${resilience4j.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.wiremock</groupId>
+                <artifactId>wiremock-standalone</artifactId>
+                <version>${wiremock.version}</version>
             </dependency>
             <dependency>
                 <groupId>dev.romeo</groupId>
@@ -91,6 +98,20 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.5.3</version>
+                </plugin>
+                <!-- *IT classes (Testcontainers, WireMock) run in integration-test/verify, not in test (issue #103) -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>3.5.3</version>
+                    <executions>
+                        <execution>
+                            <goals>
+                                <goal>integration-test</goal>
+                                <goal>verify</goal>
+                            </goals>
+                        </execution>
+                    </executions>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
