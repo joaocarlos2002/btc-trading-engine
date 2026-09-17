@@ -39,7 +39,7 @@
         <!-- Spotless only checks files changed since this ref; CI passes the PR base (-Dspotless.ratchetFrom=origin/<base>) -->
         <spotless.ratchetFrom>origin/main</spotless.ratchetFrom>
         <!-- Stamps target/classes/git.properties with the commit the jar was built from (issue: runtime version) -->
-        <git-commit-id.version>9.0.2</git-commit-id.version>
+        <git-commit-id.version>10.0.1</git-commit-id.version>
         <checkstyle-plugin.version>3.6.0</checkstyle-plugin.version>
         <checkstyle.version>14.1.0</checkstyle.version>
         <jacoco.version>0.8.15</jacoco.version>
