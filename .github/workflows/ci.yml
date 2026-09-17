@@ -82,7 +82,16 @@ jobs:
         env:
           # PRs compare with their base branch; pushes with the previous commit.
           RATCHET: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before || 'origin/main' }}
-        run: ./mvnw -B spotless:check -Dspotless.ratchetFrom="$RATCHET"
+        # Report only: a violation becomes a warning annotation instead of a red check, until main gets a
+        # formatting-only PR. Drop the fallback (and continue-on-error) to make it blocking.
+        run: |
+          if ! ./mvnw -B spotless:check -Dspotless.ratchetFrom="$RATCHET" > spotless.log 2>&1; then
+            grep -E 'had format violations|^\[ERROR\] +src/' spotless.log | sed 's/^\[ERROR\] *//' | while read -r line; do
+              echo "::warning title=Spotless::$line"
+            done
+            echo "Spotless found unformatted files; run ./mvnw spotless:apply (see the log above)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          cat spotless.log | tail -40
 
   strict:
     name: Error Prone + NullAway (report)
