@@ -210,7 +210,7 @@ public class FeatureExtractor implements CandleEventListener {
         if (emaHistory.size() <= emaSlopePeriods) {
             return BigDecimal.ZERO;
         }
-        return percentDistanceFrom(ema, emaHistory.peekFirst());
+        return percentDistanceFrom(ema, emaHistory.getFirst());
     }
 
     private BigDecimal calculateReturn(CandleEvent candle) {

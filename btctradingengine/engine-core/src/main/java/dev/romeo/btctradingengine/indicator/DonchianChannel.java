@@ -33,8 +33,9 @@ public class DonchianChannel {
             return Optional.empty();
         }
 
-        BigDecimal upper = highs.value();
-        BigDecimal lower = lows.value();
+        // A full window always has an extremum
+        BigDecimal upper = java.util.Objects.requireNonNull(highs.value());
+        BigDecimal lower = java.util.Objects.requireNonNull(lows.value());
 
         return Optional.of(new DonchianValue(upper, lower, position(candle.close(), upper, lower)));
     }
