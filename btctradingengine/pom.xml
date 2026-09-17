@@ -51,7 +51,7 @@
         <!-- Not in the Spring Boot BOM: Binance HTTP stubs of the integration tests (issue #103) -->
         <wiremock.version>3.13.2</wiremock.version>
         <!-- Overrides the Boot BOM's 1.21.3, whose docker-java API version Docker Engine 29 rejects with HTTP 400 (issue #103) -->
-        <testcontainers.version>1.21.4</testcontainers.version>
+        <testcontainers.version>2.0.5</testcontainers.version>
     </properties>
 
     <dependencyManagement>
