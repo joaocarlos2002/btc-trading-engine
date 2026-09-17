@@ -20,6 +20,37 @@ services:
     networks:
       - btc_trading_engine_network
 
+  # The engine itself (issue #105): `docker compose up -d` builds btctradingengine/Dockerfile and starts it once
+  # postgres is healthy. Secrets come from .env (see .env.example) through the variables below; blank ones fall
+  # back to application.properties, exactly as when running the jar.
+  app:
+    build:
+      context: ./btctradingengine
+    image: btc-trading-engine:local
+    container_name: btc_trading_engine_app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Same database as the postgres service, reached by its service name on the compose network.
+      DB_URL: jdbc:postgresql://postgres:5432/btc_trading_engine
+      BTC_ENGINE_DB_PASSWORD: ${BTC_ENGINE_DB_PASSWORD:?set BTC_ENGINE_DB_PASSWORD in .env}
+      BTC_ENGINE_BINANCE_API_KEY: ${BTC_ENGINE_BINANCE_API_KEY:-}
+      BTC_ENGINE_BINANCE_API_SECRET: ${BTC_ENGINE_BINANCE_API_SECRET:-}
+      BTC_ENGINE_TRADING_OCO_ENABLED: ${BTC_ENGINE_TRADING_OCO_ENABLED:-}
+      BTC_ENGINE_TRADING_SIZING_STRATEGY: ${BTC_ENGINE_TRADING_SIZING_STRATEGY:-}
+      BTC_ENGINE_DISCORD_WEBHOOK_URL: ${BTC_ENGINE_DISCORD_WEBHOOK_URL:-}
+      # Dashboard login; blank = nobody can log in (fail closed).
+      DASHBOARD_AUTH_PASSWORD: ${DASHBOARD_AUTH_PASSWORD:-}
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
+      ENGINE_PIPELINE_ENABLED: ${ENGINE_PIPELINE_ENABLED:-true}
+    ports:
+      # Loopback only, like the dashboard outside Docker; the image listens on 0.0.0.0 inside the container.
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+    networks:
+      - btc_trading_engine_network
+
   # Observability (issue #104), off by default: `docker compose --profile observability up -d`.
   # Prometheus scrapes /actuator/prometheus with the dashboard login from ops/prometheus/secrets/dashboard_password
   # (see ops/prometheus/prometheus.yml) and evaluates ops/prometheus/alerts.yml.
