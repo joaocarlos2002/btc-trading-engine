@@ -113,7 +113,42 @@
                             <goal>repackage</goal>
                         </goals>
                     </execution>
+                    <!-- META-INF/build-info.properties: version, artifact and build time of this very jar.
+                         Feeds /actuator/info and the BuildProperties bean; nothing to keep in sync by hand. -->
+                    <execution>
+                        <id>build-info</id>
+                        <goals>
+                            <goal>build-info</goal>
+                        </goals>
+                    </execution>
                 </executions>
+            </plugin>
+
+            <!-- git.properties next to build-info: which commit the jar was built from. The Docker build
+                 copies sources without .git, so a missing repository only skips the file (failOnNoGitDirectory). -->
+            <plugin>
+                <groupId>io.github.git-commit-id</groupId>
+                <artifactId>git-commit-id-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>git-info</id>
+                        <goals>
+                            <goal>revision</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <failOnNoGitDirectory>false</failOnNoGitDirectory>
+                    <generateGitPropertiesFile>true</generateGitPropertiesFile>
+                    <includeOnlyProperties>
+                        <includeOnlyProperty>^git.branch$</includeOnlyProperty>
+                        <includeOnlyProperty>^git.commit.id$</includeOnlyProperty>
+                        <includeOnlyProperty>^git.commit.id.abbrev$</includeOnlyProperty>
+                        <includeOnlyProperty>^git.commit.time$</includeOnlyProperty>
+                        <includeOnlyProperty>^git.dirty$</includeOnlyProperty>
+                        <includeOnlyProperty>^git.tags$</includeOnlyProperty>
+                    </includeOnlyProperties>
+                </configuration>
             </plugin>
 
             <!-- engine-app depends on every module: one coverage report for the whole reactor in target/site/jacoco-aggregate -->
