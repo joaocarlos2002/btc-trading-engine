@@ -1,0 +1,60 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+        "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+        "https://checkstyle.org/dtds/configuration_1_3.dtd">
+<!--
+    Lenient project ruleset (issue #110). Only rules the code base already satisfies are errors, so the
+    build fails on regressions without a mass rewrite. Rules at "warning" are reported by
+    `mvnw checkstyle:check` / target/checkstyle-result.xml but do not fail the build yet; promote them to
+    error once the existing findings are fixed. Formatting is Spotless's job, not Checkstyle's.
+    Warning baseline (2026-09-16, 142 total): OneStatementPerLine 95, ConstantName 32, MissingSwitchDefault 5,
+    HideUtilityClassConstructor 4, UnusedImports 3, MethodName 2, EmptyCatchBlock 1.
+-->
+<module name="Checker">
+    <property name="charset" value="UTF-8"/>
+    <property name="severity" value="error"/>
+    <property name="fileExtensions" value="java"/>
+
+    <module name="SuppressWarningsFilter"/>
+
+    <module name="TreeWalker">
+        <module name="SuppressWarningsHolder"/>
+
+        <!-- Imports -->
+        <module name="AvoidStarImport">
+            <property name="allowStaticMemberImports" value="true"/>
+        </module>
+        <module name="UnusedImports"><property name="severity" value="warning"/></module>
+        <module name="RedundantImport"/>
+        <module name="IllegalImport"/>
+
+        <!-- Naming basics -->
+        <module name="PackageName">
+            <property name="format" value="^[a-z]+(\.[a-z][a-z0-9]*)*$"/>
+        </module>
+        <module name="TypeName"/>
+        <module name="MethodName"><property name="severity" value="warning"/></module>
+        <module name="ParameterName"/>
+        <module name="LocalVariableName"/>
+        <module name="MemberName"/>
+        <module name="ConstantName"><property name="severity" value="warning"/></module>
+        <module name="StaticVariableName"/>
+        <module name="ClassTypeParameterName"/>
+        <module name="MethodTypeParameterName"/>
+
+        <!-- Cheap bug patterns -->
+        <module name="EmptyStatement"/>
+        <module name="EqualsHashCode"/>
+        <module name="StringLiteralEquality"/>
+        <module name="SimplifyBooleanExpression"/>
+        <module name="SimplifyBooleanReturn"/>
+        <module name="UpperEll"/>
+        <module name="ArrayTypeStyle"/>
+        <module name="MissingSwitchDefault"><property name="severity" value="warning"/></module>
+        <module name="FallThrough"/>
+        <module name="EmptyCatchBlock"><property name="severity" value="warning"/></module>
+        <module name="OneStatementPerLine"><property name="severity" value="warning"/></module>
+        <module name="ModifierOrder"/>
+        <module name="HideUtilityClassConstructor"><property name="severity" value="warning"/></module>
+    </module>
+</module>

@@ -33,6 +33,20 @@
         <spring-boot.version>3.5.5</spring-boot.version>
         <!-- Not in the Spring Boot BOM: one version for every resilience4j-* module (issue #100) -->
         <resilience4j.version>2.4.0</resilience4j.version>
+
+        <!-- Quality tooling (issue #110). Plugin versions only: dependency versions come from the Boot BOM. -->
+        <spotless.version>2.46.1</spotless.version>
+        <!-- Spotless only checks files changed since this ref; CI passes the PR base (-Dspotless.ratchetFrom=origin/<base>) -->
+        <spotless.ratchetFrom>origin/main</spotless.ratchetFrom>
+        <checkstyle-plugin.version>3.6.0</checkstyle-plugin.version>
+        <checkstyle.version>14.1.0</checkstyle.version>
+        <jacoco.version>0.8.15</jacoco.version>
+        <spotbugs-plugin.version>4.10.4.1</spotbugs-plugin.version>
+        <findsecbugs.version>1.14.0</findsecbugs.version>
+        <spotbugs.failOnError>false</spotbugs.failOnError>
+        <errorprone.version>2.50.0</errorprone.version>
+        <nullaway.version>0.14.1</nullaway.version>
+        <dependency-check.version>13.0.0</dependency-check.version>
     </properties>
 
     <dependencyManagement>
@@ -107,6 +121,46 @@
                     <artifactId>spring-boot-maven-plugin</artifactId>
                     <version>${spring-boot.version}</version>
                 </plugin>
+                <plugin>
+                    <groupId>org.jacoco</groupId>
+                    <artifactId>jacoco-maven-plugin</artifactId>
+                    <version>${jacoco.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>com.github.spotbugs</groupId>
+                    <artifactId>spotbugs-maven-plugin</artifactId>
+                    <version>${spotbugs-plugin.version}</version>
+                    <configuration>
+                        <effort>Max</effort>
+                        <threshold>Medium</threshold>
+                        <xmlOutput>true</xmlOutput>
+                        <failOnError>${spotbugs.failOnError}</failOnError>
+                        <excludeFilterFile>${maven.multiModuleProjectDirectory}/config/spotbugs/exclude.xml</excludeFilterFile>
+                        <plugins>
+                            <plugin>
+                                <groupId>com.h3xstream.findsecbugs</groupId>
+                                <artifactId>findsecbugs-plugin</artifactId>
+                                <version>${findsecbugs.version}</version>
+                            </plugin>
+                        </plugins>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.owasp</groupId>
+                    <artifactId>dependency-check-maven</artifactId>
+                    <version>${dependency-check.version}</version>
+                    <configuration>
+                        <!-- Report only (issue #110): 11 is above every CVSS score, so no finding fails the build -->
+                        <failBuildOnCVSS>11</failBuildOnCVSS>
+                        <formats>
+                            <format>HTML</format>
+                            <format>SARIF</format>
+                        </formats>
+                        <!-- Optional; without a key the NVD download is much slower. CI passes the NVD_API_KEY secret. -->
+                        <nvdApiKeyEnvironmentVariable>NVD_API_KEY</nvdApiKeyEnvironmentVariable>
+                        <ossindexAnalyzerEnabled>false</ossindexAnalyzerEnabled>
+                    </configuration>
+                </plugin>
             </plugins>
         </pluginManagement>
 
@@ -138,11 +192,17 @@
                 </executions>
             </plugin>
 
+            <!--
+                Formatting (issues #96, #110). Not bound to a phase: CI runs `spotless:check`. ratchetFrom limits it
+                to files changed since ${spotless.ratchetFrom}, so the existing code is not reformatted in one go;
+                a file is formatted as a whole the first time it is touched. `mvnw spotless:apply` fixes it.
+            -->
             <plugin>
                 <groupId>com.diffplug.spotless</groupId>
                 <artifactId>spotless-maven-plugin</artifactId>
-                <version>2.46.1</version>
+                <version>${spotless.version}</version>
                 <configuration>
+                    <ratchetFrom>${spotless.ratchetFrom}</ratchetFrom>
                     <java>
                         <googleJavaFormat>
                             <version>1.30.0</version>
@@ -150,6 +210,139 @@
                     </java>
                 </configuration>
             </plugin>
+
+            <!-- Lenient Checkstyle ruleset (issue #110): fails only on error-severity rules, which the code already passes -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <version>${checkstyle-plugin.version}</version>
+                <dependencies>
+                    <dependency>
+                        <groupId>com.puppycrawl.tools</groupId>
+                        <artifactId>checkstyle</artifactId>
+                        <version>${checkstyle.version}</version>
+                    </dependency>
+                </dependencies>
+                <configuration>
+                    <configLocation>${maven.multiModuleProjectDirectory}/config/checkstyle/checkstyle.xml</configLocation>
+                    <includeTestSourceDirectory>true</includeTestSourceDirectory>
+                    <consoleOutput>false</consoleOutput>
+                    <violationSeverity>error</violationSeverity>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>checkstyle</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Coverage (issue #110): per-module reports; engine-app aggregates them, core/trading enforce minimums -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+            Error Prone + NullAway (issue #110): `mvnw -Pstrict verify`. Error Prone's ERROR-level checks fail the
+            compilation; NullAway only warns until the code is annotated. javac is forked because Error Prone
+            needs the jdk.compiler internals exported.
+        -->
+        <profile>
+            <id>strict</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <fork>true</fork>
+                            <compilerArgs combine.children="append">
+                                <arg>-Xmaxwarns</arg>
+                                <arg>10000</arg>
+                                <arg>-XDcompilePolicy=simple</arg>
+                                <arg>--should-stop=ifError=FLOW</arg>
+                                <arg>-Xplugin:ErrorProne -XepDisableWarningsInGeneratedCode -Xep:NullAway:WARN -XepOpt:NullAway:AnnotatedPackages=dev.romeo.btctradingengine</arg>
+                                <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED</arg>
+                                <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED</arg>
+                                <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED</arg>
+                                <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED</arg>
+                                <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED</arg>
+                                <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED</arg>
+                                <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED</arg>
+                                <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED</arg>
+                                <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED</arg>
+                                <arg>-J--add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED</arg>
+                                <arg>-J--add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED</arg>
+                                <arg>-J--add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED</arg>
+                            </compilerArgs>
+                            <annotationProcessorPaths combine.children="append">
+                                <path>
+                                    <groupId>com.google.errorprone</groupId>
+                                    <artifactId>error_prone_core</artifactId>
+                                    <version>${errorprone.version}</version>
+                                </path>
+                                <path>
+                                    <groupId>com.uber.nullaway</groupId>
+                                    <artifactId>nullaway</artifactId>
+                                    <version>${nullaway.version}</version>
+                                </path>
+                            </annotationProcessorPaths>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- SpotBugs + find-sec-bugs (issue #110): `mvnw -Pspotbugs verify -DskipTests`. Reports only, unless -Dspotbugs.failOnError=true. -->
+        <profile>
+            <id>spotbugs</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.github.spotbugs</groupId>
+                        <artifactId>spotbugs-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>spotbugs</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>check</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- JMH benchmarks (issue #110), outside the default build: `mvnw -Pbenchmarks -pl engine-benchmarks -am package` -->
+        <profile>
+            <id>benchmarks</id>
+            <modules>
+                <module>engine-benchmarks</module>
+            </modules>
+        </profile>
+    </profiles>
 </project>
