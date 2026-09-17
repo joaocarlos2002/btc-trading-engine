@@ -27,6 +27,7 @@ public class OrderOutboxTest {
         final Map<String, OrderLookup> lookups = new HashMap<>();
         OrderListQuery listAnswer = new OrderListQuery(OrderListQuery.State.FOUND, "EXECUTING", null);
         boolean buyFails;
+        boolean sellFails;
 
         Exchange() {
             super("test-key", "test-secret", "https://testnet.binance.vision", 10, 1000, 60000);
@@ -43,7 +44,9 @@ public class OrderOutboxTest {
         @Override
         public OrderResult executeSellMarket(String symbol, BigDecimal quantity, String clientOrderId) {
             orders.add("sell " + clientOrderId);
-            return new OrderResult(true, "2", quantity, new BigDecimal("99000"), null);
+            return sellFails
+                    ? new OrderResult(false, null, BigDecimal.ZERO, BigDecimal.ZERO, "timed out")
+                    : new OrderResult(true, "2", quantity, new BigDecimal("99000"), null);
         }
 
         @Override
@@ -148,6 +151,32 @@ public class OrderOutboxTest {
         assertEquals(OrderCommand.Type.CANCEL, command(OrderCommand.cancelKey(LIST_ID)).type());
         assertEquals(OrderCommand.Status.CONFIRMED, command(OrderCommand.cancelKey(LIST_ID)).status());
         assertEquals(List.of("buy " + ENTRY_ID, "oco " + LIST_ID, "cancel " + LIST_ID, "sell " + EXIT_ID), exchange.orders);
+    }
+
+    @Test
+    public void exitWhoseOutcomeCannotBeLookedUpStaysSentForTheStartupReconciliation() {
+        PositionManager manager = manager(false);
+        manager.openManualBuy(new BigDecimal("100000"), NOW);
+        exchange.sellFails = true; // the lookup default answers "timeout"
+
+        manager.closeManualPosition(new BigDecimal("99000"), NOW);
+
+        assertEquals(OrderCommand.Status.SENT, command(EXIT_ID).status(), "it may have filled on Binance");
+        assertEquals(List.of(EXIT_ID), store.findUnresolved().stream().map(OrderCommand::clientOrderId).toList());
+        assertEquals(PositionState.OPEN, manager.getOpenPosition().orElseThrow().getState());
+    }
+
+    @Test
+    public void exitBinanceDoesNotKnowIsRecordedAsFailed() {
+        PositionManager manager = manager(false);
+        manager.openManualBuy(new BigDecimal("100000"), NOW);
+        exchange.sellFails = true;
+        exchange.lookups.put(EXIT_ID, BinanceOrderExecutor.OrderLookup.notFound());
+
+        manager.closeManualPosition(new BigDecimal("99000"), NOW);
+
+        assertEquals(OrderCommand.Status.FAILED, command(EXIT_ID).status());
+        assertEquals("timed out", command(EXIT_ID).lastError());
     }
 
     @Test

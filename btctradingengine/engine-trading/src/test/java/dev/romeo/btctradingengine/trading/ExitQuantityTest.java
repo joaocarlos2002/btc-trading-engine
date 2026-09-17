@@ -60,6 +60,11 @@ public class ExitQuantityTest {
         public Optional<QueriedOrder> queryOrder(String symbol, String clientOrderId) {
             return queryAnswer;
         }
+
+        @Override
+        public OrderLookup lookupOrder(String symbol, String clientOrderId) {
+            return queryAnswer.map(OrderLookup::found).orElseGet(OrderLookup::notFound);
+        }
     }
 
     private static BinanceOrderExecutor.BalanceResult free(String qty) {
