@@ -1,0 +1,14 @@
+#!/bin/sh
+# Conventional Commits check (issue #110). Enable once per clone: git config core.hooksPath .githooks
+# Same pattern as the "Conventional PR title" job in .github/workflows/ci.yml.
+first_line=$(head -n1 "$1")
+case "$first_line" in
+  Merge\ *|Revert\ *|fixup!\ *|squash!\ *|amend!\ *) exit 0 ;;
+esac
+pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9._/,-]+\))?!?: .+'
+if ! printf '%s' "$first_line" | grep -Eq "$pattern"; then
+  echo "commit-msg: not a Conventional Commit: '$first_line'" >&2
+  echo "  expected: type(scope): description   e.g. fix(trading): retry the OCO placement (#99)" >&2
+  echo "  types: build chore ci docs feat fix perf refactor revert style test" >&2
+  exit 1
+fi
