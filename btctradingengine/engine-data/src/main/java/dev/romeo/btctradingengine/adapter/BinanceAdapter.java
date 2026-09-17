@@ -51,7 +51,7 @@ public class BinanceAdapter implements MarketDataSource {
                 fragmentBuffer.append(data);
 
                 if (!last) {
-                    return WebSocket.Listener.super.onText(webSocket, data, last);
+                    return WebSocket.Listener.super.onText(webSocket, data, false);
                 }
 
                 String completeMessage = fragmentBuffer.toString();
@@ -163,6 +163,8 @@ public class BinanceAdapter implements MarketDataSource {
                 System.err.println("Connection attempt " + attempt + " failed: " + e.getMessage() +
                                  ". Retrying in " + backoffMs + "ms...");
                 try {
+                    // Reconnect backoff, not a busy wait
+                    //noinspection BusyWait
                     Thread.sleep(backoffMs);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();

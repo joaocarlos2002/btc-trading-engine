@@ -129,6 +129,8 @@ public class TickRetentionJob implements AutoCloseable {
             }
             if (pauseBetweenBatchesMs > 0) {
                 try {
+                    // Deliberate pause between DELETE batches so the table is not held busy
+                    //noinspection BusyWait
                     Thread.sleep(pauseBetweenBatchesMs);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
