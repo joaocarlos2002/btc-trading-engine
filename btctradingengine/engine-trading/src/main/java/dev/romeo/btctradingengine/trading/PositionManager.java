@@ -648,10 +648,19 @@ public class PositionManager {
         }
     }
 
+    /**
+     * Loads closed positions from the journal. One the startup reconciliation already closed (an exit filled while
+     * the bot was down) is in the journal too, and is skipped so it does not count twice in the statistics.
+     */
     public synchronized void restoreClosedPositions(List<Position> positions) {
+        java.util.Set<String> known = new java.util.HashSet<>();
+        closedPositions.forEach(closed -> known.add(closed.getPositionId()));
         for (Position position : positions) {
-            closedPositions.add(position);
             String id = position.getPositionId();
+            if (!known.add(id)) {
+                continue;
+            }
+            closedPositions.add(position);
             if (id.startsWith("POS_")) {
                 try {
                     positionCounter.updateAndGet(current -> Math.max(current, Integer.parseInt(id.substring(4))));
@@ -1462,7 +1471,8 @@ public class PositionManager {
 
             if (!result.success()) {
                 // The error may be ambiguous (e.g. a timeout after Binance accepted the order)
-                Optional<BinanceOrderExecutor.QueriedOrder> found = executor.queryOrder(symbol, clientOrderId);
+                BinanceOrderExecutor.OrderLookup lookup = executor.lookupOrder(symbol, clientOrderId);
+                Optional<BinanceOrderExecutor.QueriedOrder> found = lookup.order();
                 if (found.isPresent() && "FILLED".equals(found.get().status())) {
                     BinanceOrderExecutor.QueriedOrder order = found.get();
                     logger.warn("Exit order {} reported an error but is FILLED on Binance: {}", clientOrderId, result.error());
@@ -1470,6 +1480,13 @@ public class PositionManager {
                     syncPortfolioBalance(order.averagePrice());
                     return Optional.of(new BinanceOrderExecutor.OrderResult(true, String.valueOf(order.orderId()),
                             order.executedQuantity(), order.averagePrice(), null));
+                }
+                if (lookup.state() == BinanceOrderExecutor.OrderListQuery.State.ERROR) {
+                    // Binance could not be asked: the exit may still have filled, so the command stays SENT
+                    // for the startup reconciliation instead of being recorded as a failure
+                    logger.error("âœ— Exit order {} for {} has an unknown outcome ({}); lookup failed: {}",
+                            clientOrderId, pos.getPositionId(), result.error(), lookup.error());
+                    return Optional.empty();
                 }
                 orderCommands.markFailed(clientOrderId, result.error());
                 logger.error("âœ— Real exit order failed for {}: {}", pos.getPositionId(), result.error());

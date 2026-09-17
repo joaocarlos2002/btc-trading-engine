@@ -238,7 +238,8 @@ Para operar de verdade:
 
 ```bash
 cd btctradingengine
-./mvnw -B verify                 # o mesmo que o CI: Checkstyle, testes, ArchUnit, JaCoCo (mínimos) e o jar
+./mvnw test                      # testes unitários de todos os módulos, sem Docker
+./mvnw -B verify                 # o mesmo que o CI: Checkstyle, unitários, integração (*IT), ArchUnit, JaCoCo e o jar
 ./mvnw -pl engine-core test      # indicadores, features e regras, sem banco nem rede
 ./mvnw spotless:apply            # formata os arquivos alterados desde origin/main (ratchetFrom)
 ./mvnw -Pstrict test-compile     # Error Prone + NullAway
@@ -246,6 +247,14 @@ cd btctradingengine
 ./mvnw -Pbenchmarks -pl engine-benchmarks -am package -DskipTests \
   && java -jar engine-benchmarks/target/benchmarks.jar FeatureExtractorBenchmark   # JMH, fora do build padrão
 ```
+
+Testes de integração (issue #103) têm nome `*IT` e rodam no `verify` pelo maven-failsafe-plugin; o `mvn test` continua rápido e sem Docker.
+
+- **PostgreSQL real** (engine-data e engine-trading): um único container `postgres:16-alpine` do Testcontainers por módulo, com o schema criado pelas migrações Flyway de `db/migration`. Cobre `DatabaseWriter`, leitores de candles/ticks, `TickRetentionJob`, `TradeJournal`, `JdbcOrderCommandStore` e o cenário ponta a ponta `TradingLifecycleEndToEndIT` (compra → executionReport → timeout → saída → reinício → reconciliação).
+- **Binance simulada**: WireMock com respostas no formato da API Spot (`BinanceOrderExecutorIT`: assinatura, 429/Retry-After, 418, 5xx, timeout). O User Data Stream usa frames `executionReport` gravados entregues ao `BinanceUserDataStreamClient` real por um socket falso, porque o WireMock não fala WebSocket.
+- **Sem Docker** os ITs de banco são pulados (`@Testcontainers(disabledWithoutDocker = true)`), sem quebrar o build; os ITs só com WireMock rodam sempre.
+- **Windows / Docker Desktop**: basta o Docker Desktop rodando (pipe `npipe:////./pipe/docker_engine`), sem `TESTCONTAINERS_RYUK_DISABLED`. O Testcontainers fica em 1.21.4 (acima do 1.21.3 do Spring Boot) porque o Docker Engine 29 recusa a versão de API antiga com HTTP 400 e os ITs seriam pulados em silêncio. Se o Ryuk for bloqueado, `TESTCONTAINERS_RYUK_DISABLED=true` funciona: o container é parado por um shutdown hook.
+
 
 GitHub Actions (`.github/workflows/ci.yml`) em PRs e pushes para `main` e `dev`, com Temurin 25 e cache do Maven:
 
