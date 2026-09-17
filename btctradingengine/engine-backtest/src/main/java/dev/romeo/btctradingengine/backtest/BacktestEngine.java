@@ -16,7 +16,7 @@ public class BacktestEngine {
     private static final Logger logger = LoggerFactory.getLogger(BacktestEngine.class);
 
     private final List<Trade> closedTrades = new ArrayList<>();
-    private Optional<Trade> openTrade = Optional.empty();
+    private Trade openTrade = null;
     private final AtomicInteger tradeCounter = new AtomicInteger(0);
     private final BigDecimal commissionRate; // ex: 0.001 = 0.1%
     private final BigDecimal targetPercent;
@@ -45,49 +45,51 @@ public class BacktestEngine {
     }
 
     public void processPrediction(PredictionVector prediction, CandleEvent candle) {
-        openTrade.ifPresent(Trade::incrementBarCount);
+        if (openTrade != null) {
+            openTrade.incrementBarCount();
+        }
 
         Signal signal = prediction.signal();
         boolean closedByRisk = false;
 
-        if (openTrade.isPresent()) {
-            Trade current = openTrade.get();
+        if (openTrade != null) {
+            Trade current = openTrade;
 
             BigDecimal riskExitPrice = findRiskExitPrice(current, candle);
             if (riskExitPrice != null) {
                 current.close(riskExitPrice, candle.closeTime());
                 closedTrades.add(current);
-                openTrade = Optional.empty();
+                openTrade = null;
                 closedByRisk = true;
                 logger.debug("Risk limit closed trade: {}", current);
             } else if (shouldCloseTrade(current, signal)) {
                 current.close(candle.close(), candle.closeTime());
                 closedTrades.add(current);
-                openTrade = Optional.empty();
+                openTrade = null;
                 logger.debug("Trade closed: {}", current);
             }
         }
 
         // entryAllowed only gates opening: the reversal close above already ran, as in PositionManager
-        if (!closedByRisk && signal == Signal.BUY && !openTrade.isPresent() && prediction.entryAllowed()) {
+        if (!closedByRisk && signal == Signal.BUY && openTrade == null && prediction.entryAllowed()) {
             Trade trade = new Trade(
                     String.format("TRADE_%d", tradeCounter.incrementAndGet()),
                     Signal.BUY,
                     candle.close(),
                     candle.closeTime()
             );
-            openTrade = Optional.of(trade);
+            openTrade = trade;
             logger.debug("BUY signal: entered at {}", candle.close());
 
         } else if (!closedByRisk && signal == Signal.SELL && allowShort
-                && !openTrade.isPresent() && prediction.entryAllowed()) {
+                && openTrade == null && prediction.entryAllowed()) {
             Trade trade = new Trade(
                     String.format("TRADE_%d", tradeCounter.incrementAndGet()),
                     Signal.SELL,
                     candle.close(),
                     candle.closeTime()
             );
-            openTrade = Optional.of(trade);
+            openTrade = trade;
             logger.debug("SELL signal: entered at {}", candle.close());
         }
     }
@@ -132,8 +134,8 @@ public class BacktestEngine {
 
     public void finalize(BigDecimal lastPrice, java.time.Instant lastTime) {
         // Fechar trade aberto (se houver)
-        if (openTrade.isPresent()) {
-            Trade trade = openTrade.get();
+        if (openTrade != null) {
+            Trade trade = openTrade;
             trade.close(lastPrice, lastTime);
             closedTrades.add(trade);
             logger.info("Final trade closed at: {}", lastPrice);
@@ -149,11 +151,11 @@ public class BacktestEngine {
     }
 
     public Optional<Trade> getOpenTrade() {
-        return openTrade;
+        return Optional.ofNullable(openTrade);
     }
 
     public int getTradeCount() {
-        return closedTrades.size() + (openTrade.isPresent() ? 1 : 0);
+        return closedTrades.size() + (openTrade != null ? 1 : 0);
     }
 }
 
