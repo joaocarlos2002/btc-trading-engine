@@ -32,7 +32,7 @@ jobs:
           cache-dependency-path: btctradingengine/**/pom.xml
 
       - name: NVD data cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.m2/repository/org/owasp/dependency-check-data
           key: nvd-${{ github.run_id }}
