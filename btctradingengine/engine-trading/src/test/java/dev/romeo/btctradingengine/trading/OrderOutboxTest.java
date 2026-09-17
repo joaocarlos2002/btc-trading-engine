@@ -229,6 +229,28 @@ public class OrderOutboxTest {
     }
 
     @Test
+    public void positionClosedByReconciliationIsNotCountedTwiceWhenTheJournalIsLoaded() {
+        PositionManager manager = restarted(new BigDecimal("0.005"));
+        store.record(EXIT_ID, "POS_1", OrderCommand.Type.EXIT, Map.of("reason", "STOP_LOSS"));
+        store.markSent(EXIT_ID);
+        exchange.lookups.put(EXIT_ID, BinanceOrderExecutor.OrderLookup.found(new BinanceOrderExecutor.QueriedOrder(
+                5, EXIT_ID, "FILLED", new BigDecimal("0.005"), new BigDecimal("98400"))));
+        reconciliation(manager).reconcile("BTCUSDT");
+
+        // LivePipeline loads the journal after the reconciliation, and the journal already holds the closed POS_1
+        Position journalCopy = new Position("POS_1", Signal.BUY, new BigDecimal("100000"), NOW,
+                new BigDecimal("2.0"), new BigDecimal("1.5"));
+        journalCopy.restoreClosed(new BigDecimal("98400"), NOW, "STOP_LOSS");
+        Position older = new Position("POS_0", Signal.BUY, new BigDecimal("100000"), NOW,
+                new BigDecimal("2.0"), new BigDecimal("1.5"));
+        older.restoreClosed(new BigDecimal("101000"), NOW, "TARGET_HIT");
+        manager.restoreClosedPositions(List.of(older, journalCopy));
+
+        assertEquals(List.of("POS_1", "POS_0"), manager.getClosedPositions().stream().map(Position::getPositionId).toList());
+        assertEquals(2, manager.getTotalTrades());
+    }
+
+    @Test
     public void pendingEntryUnknownToBinanceFailsThePosition() {
         PositionManager manager = restarted(BigDecimal.ZERO);
         store.record(ENTRY_ID, "POS_1", OrderCommand.Type.ENTRY, Map.of());

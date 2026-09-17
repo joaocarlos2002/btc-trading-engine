@@ -648,10 +648,19 @@ public class PositionManager {
         }
     }
 
+    /**
+     * Loads closed positions from the journal. One the startup reconciliation already closed (an exit filled while
+     * the bot was down) is in the journal too, and is skipped so it does not count twice in the statistics.
+     */
     public synchronized void restoreClosedPositions(List<Position> positions) {
+        java.util.Set<String> known = new java.util.HashSet<>();
+        closedPositions.forEach(closed -> known.add(closed.getPositionId()));
         for (Position position : positions) {
-            closedPositions.add(position);
             String id = position.getPositionId();
+            if (!known.add(id)) {
+                continue;
+            }
+            closedPositions.add(position);
             if (id.startsWith("POS_")) {
                 try {
                     positionCounter.updateAndGet(current -> Math.max(current, Integer.parseInt(id.substring(4))));
