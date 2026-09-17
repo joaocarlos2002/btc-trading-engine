@@ -68,6 +68,20 @@ public class ConnectivityGuard {
         this.exchangeHealth = exchangeHealth;
     }
 
+    /** Whether the market data stream reported itself connected; staleness is separate (issue #104). */
+    public boolean isMarketDataConnected() {
+        return marketDataConnected;
+    }
+
+    /** Whether the User Data Stream reported itself connected; always true when it is not tracked. */
+    public boolean isUserDataStreamConnected() {
+        return !trackUserDataStream || userDataStreamConnected;
+    }
+
+    public boolean isTrackingUserDataStream() {
+        return trackUserDataStream;
+    }
+
     public boolean isStale() {
         return Duration.between(lastPriceEventAt.get(), Instant.now()).compareTo(maxStaleness) > 0;
     }

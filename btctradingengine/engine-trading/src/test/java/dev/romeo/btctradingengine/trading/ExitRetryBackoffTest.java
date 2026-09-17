@@ -102,6 +102,7 @@ public class ExitRetryBackoffTest {
 
         assertEquals(20, executor.sellAttempts);
         assertEquals(3, alerts.size(), "failures 1, 10 and 20");
+        assertEquals(20, manager.exitFailuresTotal(), "orders.exit.failures counts every failure (issue #104)");
     }
 
     @Test
@@ -124,6 +125,7 @@ public class ExitRetryBackoffTest {
         stopLossTick(manager);
         assertEquals(3, executor.sellAttempts);
         assertEquals(2, alerts.size());
+        assertEquals(2, manager.exitFailuresTotal(), "the metric is not reset with the backoff");
     }
 
     @Test

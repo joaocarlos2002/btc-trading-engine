@@ -1,0 +1,22 @@
+# Prometheus for the BTC trading engine (issue #104). Started by `docker compose --profile observability up -d`.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: btc-trading-engine
+    metrics_path: /actuator/prometheus
+    # /actuator/prometheus needs the dashboard login (DashboardSecurityConfig). Put the value of
+    # dashboard.auth.password (DASHBOARD_AUTH_PASSWORD), in plain text, in ops/prometheus/secrets/dashboard_password;
+    # that directory is git-ignored. Prefer a VIEWER-only user for this if you run a separate instance.
+    basic_auth:
+      username: trader
+      password_file: /etc/prometheus/secrets/dashboard_password
+    static_configs:
+      # The engine as the `app` service of docker-compose.yml, on the compose network. The dashboard binds
+      # 127.0.0.1 by default, so a container can only reach it when the app itself runs in compose (with
+      # server.address=0.0.0.0 inside its container), or when Prometheus runs on the host network.
+      - targets: ["app:8080"]

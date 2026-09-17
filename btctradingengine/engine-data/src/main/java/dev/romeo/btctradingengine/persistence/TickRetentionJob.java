@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Deletes ticks older than {@code db.ticks.retention.days} (issue #85): Mainnet BTCUSDT records 1-3 million
@@ -41,6 +42,7 @@ public class TickRetentionJob implements AutoCloseable {
     private final Duration interval;
     private final long pauseBetweenBatchesMs;
     private ScheduledExecutorService scheduler;
+    private final AtomicLong deletedTotal = new AtomicLong();
 
     TickRetentionJob(ConnectionSource connections, Clock clock, int retentionDays, int batchSize,
                      Duration interval, long pauseBetweenBatchesMs) {
@@ -58,6 +60,11 @@ public class TickRetentionJob implements AutoCloseable {
     /** db.ticks.retention.days / batch.size / interval.minutes; 0 days keeps ticks forever. */
     public static TickRetentionJob create(DataSource dataSource, int retentionDays, int batchSize, Duration interval) {
         return new TickRetentionJob(dataSource::getConnection, Clock.systemUTC(), retentionDays, batchSize, interval, 50);
+    }
+
+    /** Ticks deleted since startup, across every run; read by the metrics (issue #104). */
+    public long deletedTotal() {
+        return deletedTotal.get();
     }
 
     public boolean isEnabled() {
@@ -116,6 +123,7 @@ public class TickRetentionJob implements AutoCloseable {
                 deleted = statement.executeUpdate();
             }
             total += deleted;
+            deletedTotal.addAndGet(deleted);
             if (deleted < batchSize) {
                 break;
             }

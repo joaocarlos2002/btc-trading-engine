@@ -3,6 +3,8 @@ package dev.romeo.btctradingengine.dashboard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.actuate.autoconfigure.security.servlet.EndpointRequest;
+import org.springframework.boot.actuate.health.HealthEndpoint;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -35,6 +37,13 @@ import java.util.List;
  * additionally require the {@code TRADER} role. Every state-changing request needs the CSRF token,
  * so a POST from another site is refused even while the operator is logged in.
  *
+ * <p>Actuator (issue #104): {@code /actuator/health} is public but only reports the aggregate status
+ * (details and components need a login, see {@code management.endpoint.health.show-details}), so a
+ * load balancer or container healthcheck can probe it. Every other endpoint, {@code /actuator/prometheus}
+ * included, needs the same login as the dashboard; Prometheus scrapes it with basic auth. They share the
+ * dashboard's port and its {@code server.address=127.0.0.1} binding instead of a separate management
+ * port, so there is one listener and one set of rules to keep closed.
+ *
  * <p>Fails closed: with {@code dashboard.auth.password} blank no user exists and nobody can log in.
  * Together with {@code server.address=127.0.0.1}, remote access is meant to go through a reverse
  * proxy with TLS.
@@ -63,6 +72,8 @@ public class DashboardSecurityConfig {
                         // Placing orders needs the TRADER role; a VIEWER-only login can watch but not trade.
                         .requestMatchers("/api/trades/manual/**").hasRole("TRADER")
                         .requestMatchers(HttpMethod.GET, "/favicon.ico").permitAll()
+                        .requestMatchers(EndpointRequest.to(HealthEndpoint.class)).permitAll()
+                        .requestMatchers(EndpointRequest.toAnyEndpoint()).authenticated()
                         // Boot's error dispatch: without this a 401 sent as an error would be turned into
                         // a redirect to the login form on the way out.
                         .requestMatchers("/error").permitAll()
@@ -80,6 +91,9 @@ public class DashboardSecurityConfig {
                         .defaultAuthenticationEntryPointFor(
                                 new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED),
                                 new AntPathRequestMatcher("/api/**"))
+                        .defaultAuthenticationEntryPointFor(
+                                new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED),
+                                EndpointRequest.toAnyEndpoint())
                         .defaultAuthenticationEntryPointFor(
                                 new LoginUrlAuthenticationEntryPoint("/login"),
                                 AnyRequestMatcher.INSTANCE))

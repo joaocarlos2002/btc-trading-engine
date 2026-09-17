@@ -1,5 +1,7 @@
 package dev.romeo.btctradingengine.resilience;
 
+import dev.romeo.btctradingengine.http.HttpMetrics;
+
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -197,11 +199,13 @@ public class BinanceResilience {
             response = timeLimiter(endpoint).executeFutureSupplier(() -> client.sendAsync(request, bodyHandler));
         } catch (TimeoutException e) {
             recordError(breaker, permitted, start, e);
+            HttpMetrics.recordFailure(request);
             throw new HttpTimeoutException(endpoint.name() + " timed out after "
                     + endpoint.timeoutOr(settings.requestTimeout()).toMillis() + "ms");
         } catch (ExecutionException e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             recordError(breaker, permitted, start, cause);
+            HttpMetrics.recordFailure(request);
             if (cause instanceof IOException io) {
                 throw io;
             }
@@ -209,6 +213,7 @@ public class BinanceResilience {
         } catch (IOException e) {
             // TimeLimiter unwraps the future's ExecutionException
             recordError(breaker, permitted, start, e);
+            HttpMetrics.recordFailure(request);
             throw e;
         } catch (InterruptedException e) {
             if (permitted) {
@@ -217,10 +222,13 @@ public class BinanceResilience {
             throw e;
         } catch (Exception e) {
             recordError(breaker, permitted, start, e);
+            HttpMetrics.recordFailure(request);
             throw new IOException(e.getMessage(), e);
         }
 
         recordUsedWeight(state, response);
+        // One metrics sample per attempt, so every retry counts as its own request (issue #104)
+        HttpMetrics.record(request, response);
         int status = response.statusCode();
         if (status == HTTP_IP_BANNED) {
             long banMs = retryAfterMs(response).orElse(settings.banFallback().toMillis());
