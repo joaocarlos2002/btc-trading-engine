@@ -22,6 +22,8 @@ final class SpaCsrfTokenRequestHandler implements CsrfTokenRequestHandler {
     private final CsrfTokenRequestHandler plain = new CsrfTokenRequestAttributeHandler();
     private final CsrfTokenRequestHandler xor = new XorCsrfTokenRequestAttributeHandler();
 
+    // get() is called for its side effect of loading the deferred token, not for its value
+    @SuppressWarnings("ReturnValueIgnored")
     @Override
     public void handle(HttpServletRequest request, HttpServletResponse response, Supplier<CsrfToken> csrfToken) {
         xor.handle(request, response, csrfToken);
