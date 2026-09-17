@@ -1,0 +1,5 @@
+# Git hooks run under sh on every platform: keep LF endings.
+.githooks/* text eol=lf
+
+# Vendored front-end files are checked with SRI hashes: never rewrite their bytes (line endings included).
+btctradingengine/engine-app/src/main/resources/static/vendor/** -text
