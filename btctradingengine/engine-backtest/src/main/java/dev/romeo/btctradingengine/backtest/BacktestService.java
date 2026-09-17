@@ -272,7 +272,9 @@ public class BacktestService implements AutoCloseable {
             sweepExecutor.shutdownNow();
         }
         try {
-            jobExecutor.awaitTermination(5, TimeUnit.SECONDS);
+            if (!jobExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                logger.warn("Backtest jobs still running 5s after shutdown; abandoning them");
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
