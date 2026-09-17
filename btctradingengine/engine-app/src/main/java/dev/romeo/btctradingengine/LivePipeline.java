@@ -3,6 +3,7 @@ package dev.romeo.btctradingengine;
 import dev.romeo.btctradingengine.adapter.BinanceAdapter;
 import dev.romeo.btctradingengine.adapter.BinanceKlineClient;
 import dev.romeo.btctradingengine.adapter.CandleAggregator;
+import dev.romeo.btctradingengine.adapter.FeedStats;
 import dev.romeo.btctradingengine.adapter.PriceEventBus;
 import dev.romeo.btctradingengine.alerting.AlertNotifier;
 import dev.romeo.btctradingengine.config.BinanceProperties;
@@ -16,6 +17,7 @@ import dev.romeo.btctradingengine.feature.DerivativesLookup;
 import dev.romeo.btctradingengine.feature.FeatureExtractor;
 import dev.romeo.btctradingengine.feature.IndicatorPeriods;
 import dev.romeo.btctradingengine.feature.OrderBookLookup;
+import dev.romeo.btctradingengine.metrics.PipelineMetrics;
 import dev.romeo.btctradingengine.model.CandleEvent;
 import dev.romeo.btctradingengine.orderbook.OrderBookHistory;
 import dev.romeo.btctradingengine.orderbook.OrderBookPoller;
@@ -24,6 +26,7 @@ import dev.romeo.btctradingengine.persistence.DatabaseInitializer;
 import dev.romeo.btctradingengine.persistence.DatabaseWriter;
 import dev.romeo.btctradingengine.persistence.JdbcOrderCommandStore;
 import dev.romeo.btctradingengine.persistence.TickRetentionJob;
+import dev.romeo.btctradingengine.port.PriceEventListener;
 import dev.romeo.btctradingengine.prediction.PredictionSettings;
 import dev.romeo.btctradingengine.prediction.RuleBasedPredictor;
 import dev.romeo.btctradingengine.trading.BinanceOrderExecutor;
@@ -74,7 +77,9 @@ public class LivePipeline implements ApplicationRunner, AutoCloseable {
             OrderBookPoller orderBookPoller,
             BinanceKlineClient spotKlines,
             BinanceAdapter source,
-            PriceEventBus priceEventBus) {
+            PriceEventBus priceEventBus,
+            FeedStats feedStats,
+            PipelineMetrics metrics) {
     }
 
     private final Components c;
@@ -140,6 +145,7 @@ public class LivePipeline implements ApplicationRunner, AutoCloseable {
                             p.confidence().setScale(3, RoundingMode.HALF_UP),
                             p.price(),
                             p.reason());
+                    c.metrics().recordPrediction(p);
                     dashboardState.onPrediction(p);
                     if (lastCandle.value != null) {
                         positionManager.processPrediction(p, lastCandle.value);
@@ -188,14 +194,21 @@ public class LivePipeline implements ApplicationRunner, AutoCloseable {
         PriceEventBus priceEventBus = c.priceEventBus();
         // Aggregator, DB writer and trading path must not lose ticks: bounded queues that block the
         // reader briefly when full. The dashboard only needs the latest tick (issue #85).
-        priceEventBus.subscribe(aggregator);
-        priceEventBus.subscribe(c.dbWriter());
-        priceEventBus.subscribe(event -> {
+        PriceEventListener tradingPath = event -> {
             c.connectivityGuard().recordPriceEvent();
             positionManager.processPriceEvent(event);
             dashboardState.refreshPositions();
-        });
+        };
+        priceEventBus.subscribe(aggregator);
+        priceEventBus.subscribe(c.dbWriter());
+        priceEventBus.subscribe(tradingPath);
         priceEventBus.subscribeLatest(dashboardState);
+        PipelineMetrics metrics = c.metrics();
+        metrics.bindPriceBusSubscriber(priceEventBus, "aggregator", aggregator);
+        metrics.bindPriceBusSubscriber(priceEventBus, "dbwriter", c.dbWriter());
+        metrics.bindPriceBusSubscriber(priceEventBus, "trading", tradingPath);
+        metrics.bindPriceBusSubscriber(priceEventBus, "dashboard", dashboardState);
+        metrics.bindCandleAggregator(aggregator);
 
         if (c.derivativesPoller() != null) {
             c.derivativesPoller().start();
@@ -205,7 +218,12 @@ public class LivePipeline implements ApplicationRunner, AutoCloseable {
         }
         aggregator.start();
         started = true;
-        source.start(priceEventBus);
+        FeedStats feedStats = c.feedStats();
+        // Counted on the reader thread before the bus, so lag excludes the subscribers' queues
+        source.start(event -> {
+            feedStats.record(event);
+            priceEventBus.onEvent(event);
+        });
         logger.info("Live pipeline started for {} ({} candles)", symbol, market.binanceInterval());
     }
 

@@ -3,6 +3,7 @@ package dev.romeo.btctradingengine.config;
 import dev.romeo.btctradingengine.LivePipeline;
 import dev.romeo.btctradingengine.adapter.BinanceAdapter;
 import dev.romeo.btctradingengine.adapter.BinanceKlineClient;
+import dev.romeo.btctradingengine.adapter.FeedStats;
 import dev.romeo.btctradingengine.adapter.PriceEventBus;
 import dev.romeo.btctradingengine.alerting.AlertNotifier;
 import dev.romeo.btctradingengine.alerting.DiscordAlertNotifier;
@@ -11,6 +12,7 @@ import dev.romeo.btctradingengine.derivatives.BinanceFuturesClient;
 import dev.romeo.btctradingengine.derivatives.DerivativesHistory;
 import dev.romeo.btctradingengine.derivatives.DerivativesPoller;
 import dev.romeo.btctradingengine.feature.IndicatorPeriods;
+import dev.romeo.btctradingengine.metrics.PipelineMetrics;
 import dev.romeo.btctradingengine.orderbook.BinanceDepthClient;
 import dev.romeo.btctradingengine.orderbook.OrderBookHistory;
 import dev.romeo.btctradingengine.orderbook.OrderBookPoller;
@@ -131,6 +133,12 @@ public class LivePipelineConfiguration {
                 binance.maxRetries(), binance.initialBackoffMs(), binance.maxBackoffMs());
     }
 
+    /** Tick count, lag and last tick age of the market data stream: metrics and health (issue #104). */
+    @Bean
+    FeedStats feedStats() {
+        return new FeedStats();
+    }
+
     @Bean(destroyMethod = "")
     PriceEventBus priceEventBus(PriceBusProperties bus) {
         return new PriceEventBus(bus.queueCapacity(), bus.blockTimeoutMs());
@@ -146,13 +154,15 @@ public class LivePipelineConfiguration {
                               ObjectProvider<OrderBookHistory> orderBookHistory,
                               ObjectProvider<OrderBookPoller> orderBookPoller,
                               @Qualifier("spotKlineClient") BinanceKlineClient spotKlineClient, BinanceAdapter source, PriceEventBus priceEventBus,
+                              FeedStats feedStats, ObjectProvider<PipelineMetrics> pipelineMetrics,
                               MarketProperties market, FeatureProperties features, TradingProperties trading,
                               BinanceProperties binance, IndicatorPeriods periods, PredictionSettings prediction) {
         return new LivePipeline(new LivePipeline.Components(dataSource, dbWriter, tickRetention, tradeJournal,
                 orderCommands, positionManager, connectivityGuard, alertNotifier, dashboardState,
                 derivativesHistory.getIfAvailable(), derivativesPoller.getIfAvailable(),
                 orderBookHistory.getIfAvailable(), orderBookPoller.getIfAvailable(),
-                spotKlineClient, source, priceEventBus),
+                spotKlineClient, source, priceEventBus, feedStats,
+                pipelineMetrics.getIfAvailable(() -> PipelineMetrics.NONE)),
                 market, features, trading, binance, periods, prediction);
     }
 }
