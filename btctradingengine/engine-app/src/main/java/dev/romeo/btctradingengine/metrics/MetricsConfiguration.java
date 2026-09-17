@@ -31,6 +31,8 @@ public class MetricsConfiguration {
 
     @Bean(destroyMethod = "close")
     MicrometerHttpMetricsListener binanceHttpMetrics(MeterRegistry registry) {
+        // Closed by Spring through destroyMethod
+        //noinspection resource
         return new MicrometerHttpMetricsListener(registry).install();
     }
 
