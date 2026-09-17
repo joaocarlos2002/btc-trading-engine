@@ -25,7 +25,8 @@ jobs:
           distribution: temurin
           java-version: '25'
           cache: maven
-          cache-dependency-path: btctradingengine/pom.xml
+          cache-dependency-path: btctradingengine/**/pom.xml
 
       - name: Build
-        run: mvn clean package -DskipTests
+        # Reactor root: builds every module in dependency order; the executable jar is engine-app/target/engine-app-*.jar
+        run: mvn -B clean package -DskipTests

@@ -1,0 +1,65 @@
+# Alert rules for the BTC trading engine (issue #104). No Alertmanager is configured: firing alerts show on
+# http://127.0.0.1:9090/alerts and in Grafana. The engine still sends its own Discord alerts (alert.discord.webhook.url).
+groups:
+  - name: btc-trading-engine
+    rules:
+      - alert: EngineDown
+        expr: up{job="btc-trading-engine"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Trading engine is not answering /actuator/prometheus"
+          description: "Scrapes of {{ $labels.instance }} have failed for 1 minute. An open position may be unmanaged."
+
+      - alert: FeedStalled
+        # feed.tick.age.ms counts from startup before the first tick, so a feed that never started fires too
+        expr: max by (instance) (feed_tick_age_ms) > 60000
+        labels:
+          severity: critical
+        annotations:
+          summary: "No market data for more than 60 s"
+          description: "Last aggTrade arrived {{ $value }} ms ago on {{ $labels.instance }}; new entries are blocked and target/stop monitoring is blind."
+
+      - alert: ExitOrderFailed
+        expr: increase(orders_exit_failures_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "A real exit order failed"
+          description: "{{ $value }} exit order failures in the last 5 minutes; the position stays OPEN until a retry succeeds. Check Binance manually."
+
+      - alert: DrawdownNearLimit
+        # 80% of trading.max.drawdown.percent: the same level at which the engine re-enables trading
+        expr: max by (instance) (portfolio_drawdown_pct) >= 0.8 * max by (instance) (portfolio_drawdown_max_pct)
+        labels:
+          severity: warning
+        annotations:
+          summary: "Portfolio drawdown is close to the stop"
+          description: "Drawdown is {{ $value }}% on {{ $labels.instance }}."
+
+      - alert: DrawdownLimitReached
+        expr: max by (instance) (portfolio_drawdown_pct) >= max by (instance) (portfolio_drawdown_max_pct)
+        labels:
+          severity: critical
+        annotations:
+          summary: "Portfolio max drawdown reached: new entries are blocked"
+          description: "Drawdown is {{ $value }}% on {{ $labels.instance }}."
+
+      - alert: PriceBusDropping
+        expr: increase(pricebus_dropped_total{subscriber!="dashboard"}[5m]) > 0 or increase(dbwriter_dropped_total[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ticks are being dropped"
+          description: "A critical subscriber or the database writer lost ticks in the last 5 minutes ({{ $labels.subscriber }})."
+
+      - alert: BinanceWeightHigh
+        # Spot limit is 6000 weight per minute per IP (futures 2400); 80% of the lower is a safe warning
+        expr: max by (host) (binance_weight_used) > 1900
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Binance request weight is high on {{ $labels.host }}"
+          description: "Used weight {{ $value }} in the current minute."

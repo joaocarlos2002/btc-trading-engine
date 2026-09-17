@@ -25,7 +25,8 @@ jobs:
           distribution: temurin
           java-version: '25'
           cache: maven
-          cache-dependency-path: btctradingengine/pom.xml
+          cache-dependency-path: btctradingengine/**/pom.xml
 
       - name: Run tests
-        run: mvn test
+        # Runs the tests of every module (engine-core, engine-data, engine-trading, engine-backtest, engine-app)
+        run: mvn -B test
