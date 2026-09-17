@@ -133,7 +133,7 @@ public class BinanceReconciliationService {
                 }
                 logger.warn("Kept persisted local position while reconciling Binance order {}",
                         order.orderId());
-                logger.info("OCO protection of {}: {}", localPosition.getPositionId(),
+                logger.info("OCO protection of kept local position {}: {}", localPosition.getPositionId(),
                         positionManager.reconcileProtection());
                 return new ReconciliationResult(true, "Existing position reconciled", botOrders.size(), localPosition);
             }

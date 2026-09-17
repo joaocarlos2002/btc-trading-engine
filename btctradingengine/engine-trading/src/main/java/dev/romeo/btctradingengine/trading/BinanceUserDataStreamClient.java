@@ -102,6 +102,8 @@ public class BinanceUserDataStreamClient {
     }
 
     private static SocketFactory defaultSocketFactory(String wsApiUrl) {
+        // Lives as long as the client: every reconnect opens its WebSocket through it
+        //noinspection resource
         HttpClient httpClient = HttpClient.newBuilder().connectTimeout(HTTP_CONNECT_TIMEOUT).build();
         return listener -> httpClient.newWebSocketBuilder()
                 .connectTimeout(REQUEST_TIMEOUT)
