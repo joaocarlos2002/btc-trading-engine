@@ -20,8 +20,53 @@ services:
     networks:
       - btc_trading_engine_network
 
+  # Observability (issue #104), off by default: `docker compose --profile observability up -d`.
+  # Prometheus scrapes /actuator/prometheus with the dashboard login from ops/prometheus/secrets/dashboard_password
+  # (see ops/prometheus/prometheus.yml) and evaluates ops/prometheus/alerts.yml.
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: btc_trading_engine_prometheus
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./ops/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./ops/prometheus/secrets:/etc/prometheus/secrets:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      - btc_trading_engine_network
+
+  # Grafana with the Prometheus datasource and the "BTC Trading Engine" dashboard provisioned from ops/grafana.
+  grafana:
+    image: grafana/grafana-oss:12.1.1
+    container_name: btc_trading_engine_grafana
+    profiles: ["observability"]
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      # Set GRAFANA_ADMIN_PASSWORD in .env; the fallback is only acceptable because the port is loopback-only.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      - btc_trading_engine_network
+
 volumes:
   postgres_data:
+  prometheus_data:
+  grafana_data:
 
 networks:
   btc_trading_engine_network:
