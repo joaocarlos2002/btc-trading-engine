@@ -238,6 +238,8 @@
                     <java>
                         <googleJavaFormat>
                             <version>1.30.0</version>
+                            <!-- AOSP = 4-space indentation, the style the code base already uses -->
+                            <style>AOSP</style>
                         </googleJavaFormat>
                     </java>
                 </configuration>

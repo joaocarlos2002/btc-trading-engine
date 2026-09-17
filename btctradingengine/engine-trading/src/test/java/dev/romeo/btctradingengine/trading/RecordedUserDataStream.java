@@ -2,7 +2,6 @@ package dev.romeo.btctradingengine.trading;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.util.List;
@@ -10,10 +9,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Stand-in for the Binance WebSocket API behind {@link BinanceUserDataStreamClient} (issue #103). WireMock has no
- * WebSocket support, so the integration tests plug this into the client's socket factory: it accepts the signed
- * {@code userDataStream.subscribe.signature} request and then delivers recorded executionReport frames through the
- * real listener, so the client's own framing, parsing and dispatch all run.
+ * Stand-in for the Binance WebSocket API behind {@link BinanceUserDataStreamClient} (issue #103).
+ * WireMock has no WebSocket support, so the integration tests plug this into the client's socket
+ * factory: it accepts the signed {@code userDataStream.subscribe.signature} request and then
+ * delivers recorded executionReport frames through the real listener, so the client's own framing,
+ * parsing and dispatch all run.
  */
 final class RecordedUserDataStream implements BinanceUserDataStreamClient.SocketFactory {
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -52,8 +52,12 @@ final class RecordedUserDataStream implements BinanceUserDataStreamClient.Socket
             try {
                 JsonNode request = MAPPER.readTree(data.toString());
                 subscribeRequests.add(request);
-                listener.onText(this, "{\"id\":\"" + request.path("id").asText()
-                        + "\",\"status\":200,\"result\":{\"subscriptionId\":0},\"rateLimits\":[]}", true);
+                listener.onText(
+                        this,
+                        "{\"id\":\""
+                                + request.path("id").asText()
+                                + "\",\"status\":200,\"result\":{\"subscriptionId\":0},\"rateLimits\":[]}",
+                        true);
             } catch (Exception e) {
                 throw new IllegalStateException(e);
             }
@@ -81,8 +85,7 @@ final class RecordedUserDataStream implements BinanceUserDataStreamClient.Socket
         }
 
         @Override
-        public void request(long n) {
-        }
+        public void request(long n) {}
 
         @Override
         public String getSubprotocol() {
@@ -100,7 +103,6 @@ final class RecordedUserDataStream implements BinanceUserDataStreamClient.Socket
         }
 
         @Override
-        public void abort() {
-        }
+        public void abort() {}
     }
 }

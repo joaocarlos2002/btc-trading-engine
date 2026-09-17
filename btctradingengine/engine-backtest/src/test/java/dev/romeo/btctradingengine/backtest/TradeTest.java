@@ -1,12 +1,11 @@
 package dev.romeo.btctradingengine.backtest;
 
-import dev.romeo.btctradingengine.prediction.Signal;
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import dev.romeo.btctradingengine.prediction.Signal;
 import java.math.BigDecimal;
 import java.time.Instant;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import org.junit.jupiter.api.Test;
 
 class TradeTest {
 
