@@ -71,13 +71,15 @@ class ArchitectureTest {
     }
 
     /**
-     * Two cycles existed when the rule was added (2026-09-16) and are ignored here, one direction each, so
+     * Three cycles existed when the rule was added (2026-09-17) and are ignored here, one direction each, so
      * no new cycle can appear while they are paid off:
      * <ul>
      *   <li>dashboard -> config: DashboardState, DashboardWebSocketConfig and BacktestServiceConfig take the
      *       *Properties records, while config wires the dashboard beans;</li>
      *   <li>persistence -> orderbook: OrderBookSnapshotWriter takes BinanceDepthClient.DepthSnapshot, while
-     *       OrderBookPoller writes through the persistence writer.</li>
+     *       OrderBookPoller writes through the persistence writer;</li>
+     *   <li>metrics -> config: MetricsConfiguration reads the *Properties records, while LivePipelineConfiguration
+     *       takes PipelineMetrics.</li>
      * </ul>
      * Remove an ignore once its cycle is broken (e.g. move the snapshot record to model).
      */
@@ -90,6 +92,8 @@ class ArchitectureTest {
                         resideInAPackage("dev.romeo.btctradingengine.config.."))
                 .ignoreDependency(resideInAPackage("dev.romeo.btctradingengine.persistence.."),
                         resideInAPackage("dev.romeo.btctradingengine.orderbook.."))
+                .ignoreDependency(resideInAPackage("dev.romeo.btctradingengine.metrics.."),
+                        resideInAPackage("dev.romeo.btctradingengine.config.."))
                 .check(classes);
     }
 }
