@@ -35,7 +35,7 @@
         <resilience4j.version>2.4.0</resilience4j.version>
 
         <!-- Quality tooling (issue #110). Plugin versions only: dependency versions come from the Boot BOM. -->
-        <spotless.version>2.46.1</spotless.version>
+        <spotless.version>3.10.2</spotless.version>
         <!-- Spotless only checks files changed since this ref; CI passes the PR base (-Dspotless.ratchetFrom=origin/<base>) -->
         <spotless.ratchetFrom>origin/main</spotless.ratchetFrom>
         <checkstyle-plugin.version>3.6.0</checkstyle-plugin.version>
@@ -112,7 +112,7 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
-                    <version>3.14.0</version>
+                    <version>3.16.0</version>
                     <configuration>
                         <release>${maven.compiler.release}</release>
                         <!-- Spring binds @Bean and constructor parameters by name, as spring-boot-starter-parent set up -->
@@ -122,13 +122,13 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.5.3</version>
+                    <version>3.6.0</version>
                 </plugin>
                 <!-- *IT classes (Testcontainers, WireMock) run in integration-test/verify, not in test (issue #103) -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-failsafe-plugin</artifactId>
-                    <version>3.5.3</version>
+                    <version>3.6.0</version>
                     <executions>
                         <execution>
                             <goals>
@@ -141,12 +141,12 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-resources-plugin</artifactId>
-                    <version>3.3.1</version>
+                    <version>3.5.0</version>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-jar-plugin</artifactId>
-                    <version>3.4.2</version>
+                    <version>3.5.1</version>
                 </plugin>
                 <plugin>
                     <groupId>org.springframework.boot</groupId>
@@ -201,7 +201,7 @@
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>flatten-maven-plugin</artifactId>
-                <version>1.7.0</version>
+                <version>1.8.0</version>
                 <configuration>
                     <updatePomFile>true</updatePomFile>
                     <flattenMode>resolveCiFriendliesOnly</flattenMode>
