@@ -161,6 +161,21 @@ class BinanceOrderExecutorIT {
     }
 
     @Test
+    void serverErrorOnNewOrderThatDidFillIsRecoveredByClientOrderId() {
+        // Binance documents a 5xx as "execution status UNKNOWN": the MARKET buy may have filled anyway
+        wm.stubFor(post(urlPathEqualTo("/api/v3/order"))
+                .willReturn(aResponse().withStatus(503).withBody(BinanceFixtures.ERROR_INTERNAL)));
+        wm.stubFor(get(urlPathEqualTo("/api/v3/order")).withQueryParam("origClientOrderId", equalTo(CLIENT_ID))
+                .willReturn(okJson(queriedFilled("BUY", "499.88330000"))));
+
+        BinanceOrderExecutor.OrderResult result = executor().executeBuyMarket(SYMBOL, new BigDecimal("0.00833"), CLIENT_ID);
+
+        assertTrue(result.success(), "a filled order must not be reported as failed: the bot would lose the bought BTC");
+        assertEquals(0, new BigDecimal("0.00833").compareTo(result.executedQuantity()));
+        assertEquals(1, requests(wm, "POST", "/api/v3/order").size());
+    }
+
+    @Test
     void slowNewOrderTimesOutIsNotResentAndIsRecoveredByClientOrderId() {
         wm.stubFor(post(urlPathEqualTo("/api/v3/order"))
                 .willReturn(okJson(fill(BinanceFixtures.ORDER_BUY_FILLED, Map.of("clientOrderId", CLIENT_ID)))
