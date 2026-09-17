@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Executor;
@@ -45,17 +46,17 @@ public class PositionManager {
     private final Consumer<Position> positionPersistence;
     private final Consumer<ExecutionEvent> executionPersistence;
 
-    private Optional<Position> openPosition = Optional.empty();
+    private Position openPosition = null;
     private final List<Position> closedPositions = new ArrayList<>();
     private final List<ExecutionEvent> executionLog = new ArrayList<>();
 
-    // Volatile: set at startup, read by the order I/O thread without the lock
-    private volatile Optional<ExecutionPort> orderExecutor = Optional.empty();
-    private volatile Optional<PortfolioManager> portfolioManager = Optional.empty();
-    private volatile Optional<BinanceSymbolValidationService> validationService = Optional.empty();
-    private volatile Optional<OrderConfirmationManager> confirmationManager = Optional.empty();
-    private volatile Optional<ConnectivityGuard> connectivityGuard = Optional.empty();
-    private volatile Optional<AlertNotifier> alertNotifier = Optional.empty();
+    // Volatile: set at startup, read by the order I/O thread without the lock; null until attached
+    private volatile ExecutionPort orderExecutor;
+    private volatile PortfolioManager portfolioManager;
+    private volatile BinanceSymbolValidationService validationService;
+    private volatile OrderConfirmationManager confirmationManager;
+    private volatile ConnectivityGuard connectivityGuard;
+    private volatile AlertNotifier alertNotifier;
     private volatile String symbol = "BTCUSDT";
     private volatile boolean simulationMode = true;
     private boolean allowShort = false;
@@ -112,9 +113,9 @@ public class PositionManager {
     }
 
     public void setRealTradingMode(ExecutionPort executor, PortfolioManager portfolio, String symbol) {
-        this.orderExecutor = Optional.of(executor);
-        this.portfolioManager = Optional.of(portfolio);
-        this.validationService = Optional.of(new BinanceSymbolValidationService(executor));
+        this.orderExecutor = Objects.requireNonNull(executor);
+        this.portfolioManager = Objects.requireNonNull(portfolio);
+        this.validationService = new BinanceSymbolValidationService(executor);
         this.symbol = symbol;
         this.simulationMode = false;
         this.reconciliationComplete = false;
@@ -205,7 +206,10 @@ public class PositionManager {
     }
 
     private void alert(String message) {
-        alertNotifier.ifPresent(a -> a.alert(message));
+        AlertNotifier notifier = alertNotifier;
+        if (notifier != null) {
+            notifier.alert(message);
+        }
     }
 
     /**
@@ -228,11 +232,11 @@ public class PositionManager {
     }
 
     public synchronized void setOrderConfirmationManager(OrderConfirmationManager manager) {
-        this.confirmationManager = Optional.of(manager);
+        this.confirmationManager = manager;
         manager.setConfirmationListener(this::onOrderConfirmed);
         // Reconciliation runs before the manager exists: legs it found active start being tracked now
-        if (protectionActive && openPosition.isPresent()) {
-            registerProtectionLegs(openPosition.get());
+        if (protectionActive && openPosition != null) {
+            registerProtectionLegs(openPosition);
         }
         logger.info("Order confirmation manager attached");
     }
@@ -253,13 +257,13 @@ public class PositionManager {
     }
 
     public void setConnectivityGuard(ConnectivityGuard guard) {
-        this.connectivityGuard = Optional.of(guard);
-        guard.setOpenPositionSupplier(() -> openPosition.isPresent());
+        this.connectivityGuard = guard;
+        guard.setOpenPositionSupplier(() -> openPosition != null);
         logger.info("Connectivity guard attached");
     }
 
     public void setAlertNotifier(AlertNotifier notifier) {
-        this.alertNotifier = Optional.of(notifier);
+        this.alertNotifier = Objects.requireNonNull(notifier);
     }
 
     /** Time source for the exit retry backoff; tests advance it instead of sleeping. */
@@ -268,23 +272,23 @@ public class PositionManager {
     }
 
     private boolean isCurrent(Position pos) {
-        return openPosition.isPresent() && openPosition.get() == pos;
+        return openPosition == pos;
     }
 
     // synchronized: confirmations come from the User Data Stream and timeout threads
     private synchronized void onOrderConfirmed(OrderConfirmationManager.OrderConfirmation confirmation) {
-        if (openPosition.isPresent() && isProtectionLeg(openPosition.get(), confirmation.clientOrderId())) {
-            onProtectionLegConfirmed(openPosition.get(), confirmation);
+        if (openPosition != null && isProtectionLeg(openPosition, confirmation.clientOrderId())) {
+            onProtectionLegConfirmed(openPosition, confirmation);
             return;
         }
-        if (openPosition.isEmpty()
-                || !entryClientOrderId(openPosition.get()).equals(confirmation.clientOrderId())) {
+        if (openPosition == null
+                || !entryClientOrderId(openPosition).equals(confirmation.clientOrderId())) {
             logger.warn("Received order confirmation that does not match the open position: {} ({})",
                     confirmation.orderId(), confirmation.clientOrderId());
             return;
         }
 
-        Position pos = openPosition.get();
+        Position pos = openPosition;
         logger.info("Order confirmed: {} status={} filledQty={} lastPrice={}",
                 confirmation.orderId(), confirmation.status(), confirmation.filledQuantity(), confirmation.lastFillPrice());
 
@@ -350,7 +354,7 @@ public class PositionManager {
             boolean target = OcoOrderIds.target(symbol, pos.getPositionId()).equals(confirmation.clientOrderId());
             submitOrderIo("OCO fill " + pos.getPositionId(), () -> {
                 // The report carries the last execution price; the order's average is the real exit price
-                BigDecimal price = orderExecutor.get().queryOrder(symbol, confirmation.clientOrderId())
+                BigDecimal price = attachedExecutor().queryOrder(symbol, confirmation.clientOrderId())
                         .map(BinanceOrderExecutor.QueriedOrder::averagePrice)
                         .filter(p -> p.signum() > 0)
                         .orElse(confirmation.lastFillPrice());
@@ -385,8 +389,8 @@ public class PositionManager {
     }
 
     public synchronized void processPrediction(PredictionVector prediction, CandleEvent candle) {
-        if (openPosition.isPresent()) {
-            Position pos = openPosition.get();
+        if (openPosition != null) {
+            Position pos = openPosition;
             pos.updatePrice(candle.close(), candle.closeTime());
 
             if (pos.getState() != PositionState.OPEN) {
@@ -416,7 +420,7 @@ public class PositionManager {
             }
         }
 
-        if (!openPosition.isPresent() && prediction.signal() != Signal.HOLD) {
+        if (openPosition == null && prediction.signal() != Signal.HOLD) {
             if (prediction.signal() == Signal.SELL && !shortEntryAllowed()) {
                 countEntryBlocked(EntryBlock.SHORT_DISABLED);
                 logger.info(simulationMode
@@ -444,13 +448,16 @@ public class PositionManager {
     public synchronized void processPriceEvent(NormalizedPriceEvent event) {
         if (event.price() != null) {
             // Keeps equity drawdown current between orders; in-memory only, no HTTP
-            portfolioManager.ifPresent(pm -> pm.updateMarketPrice(event.price()));
+            PortfolioManager pm = portfolioManager;
+            if (pm != null) {
+                pm.updateMarketPrice(event.price());
+            }
         }
-        if (openPosition.isEmpty() || event.price() == null) {
+        if (openPosition == null || event.price() == null) {
             return;
         }
 
-        Position pos = openPosition.get();
+        Position pos = openPosition;
         pos.updatePrice(event.price(), event.eventTimestamp());
 
         // A pending entry has nothing to exit yet; a pending exit already has its order in flight
@@ -496,10 +503,12 @@ public class PositionManager {
         if (!simulationMode && !reconciliationComplete) {
             return EntryBlock.RECONCILIATION;
         }
-        if (portfolioManager.isPresent() && !portfolioManager.get().canTrade()) {
+        PortfolioManager pm = portfolioManager;
+        if (pm != null && !pm.canTrade()) {
             return EntryBlock.DRAWDOWN;
         }
-        if (connectivityGuard.isPresent() && !connectivityGuard.get().isHealthy()) {
+        ConnectivityGuard guard = connectivityGuard;
+        if (guard != null && !guard.isHealthy()) {
             return EntryBlock.CONNECTIVITY;
         }
         return null;
@@ -510,7 +519,7 @@ public class PositionManager {
             case RECONCILIATION -> "Binance reconciliation is not complete";
             case DRAWDOWN -> "Portfolio stop-loss is active (max drawdown reached)";
             case CONNECTIVITY -> "Connectivity guard is unhealthy: "
-                    + connectivityGuard.map(ConnectivityGuard::getUnhealthyReason).orElse("unknown");
+                    + Optional.ofNullable(connectivityGuard).map(ConnectivityGuard::getUnhealthyReason).orElse("unknown");
             case SHORT_DISABLED -> "short entries are not allowed";
             case FILTER -> "filter rules / VPIN / order book";
         };
@@ -558,11 +567,11 @@ public class PositionManager {
 
     /** The real-mode portfolio, empty in simulation. */
     public Optional<PortfolioManager> getPortfolioManager() {
-        return portfolioManager;
+        return Optional.ofNullable(portfolioManager);
     }
 
     public synchronized ManualBuyResult openManualBuy(BigDecimal price, java.time.Instant time) {
-        if (openPosition.isPresent()) {
+        if (openPosition != null) {
             return ManualBuyResult.blocked("A position is already open");
         }
         if (price == null || price.compareTo(BigDecimal.ZERO) <= 0) {
@@ -575,12 +584,12 @@ public class PositionManager {
         }
 
         openNewPosition(Signal.BUY, price, time, 0.0);
-        if (openPosition.isEmpty()) {
+        if (openPosition == null) {
             // The real entry order failed and the position was closed with its failure reason
             ExitReason reason = closedPositions.isEmpty() ? null : closedPositions.getLast().getExitReason();
             return ManualBuyResult.blocked("Entry order was not executed (" + reason + ")");
         }
-        if (openPosition.get().getState() == PositionState.PENDING_ENTRY) {
+        if (openPosition.getState() == PositionState.PENDING_ENTRY) {
             return new ManualBuyResult(true, "Manual BUY entry order sent");
         }
         return new ManualBuyResult(true, "Manual BUY opened");
@@ -593,21 +602,14 @@ public class PositionManager {
     }
 
     public synchronized boolean restoreOpenPosition(Position position) {
-        if (openPosition.isPresent() || position == null) {
+        if (openPosition != null || position == null) {
             return false;
         }
 
-        openPosition = Optional.of(position);
+        openPosition = position;
         resetExitBackoff();
         resetProtection();
-        String id = position.getPositionId();
-        if (id.startsWith("POS_")) {
-            try {
-                positionCounter.updateAndGet(current -> Math.max(current, Integer.parseInt(id.substring(4))));
-            } catch (NumberFormatException ignored) {
-                logger.warn("Could not parse restored position id: {}", id);
-            }
-        }
+        advancePositionCounterPast(position.getPositionId());
         logger.info("Restored open simulated position: {}", position);
         return true;
     }
@@ -620,10 +622,10 @@ public class PositionManager {
     public synchronized void applyReconciledCommands(List<OrderCommandReconciler.Resolution> resolutions) {
         for (OrderCommandReconciler.Resolution resolution : resolutions) {
             OrderCommand command = resolution.command();
-            if (openPosition.isEmpty() || !openPosition.get().getPositionId().equals(command.positionId())) {
+            if (openPosition == null || !openPosition.getPositionId().equals(command.positionId())) {
                 continue;
             }
-            Position pos = openPosition.get();
+            Position pos = openPosition;
             if (command.type() == OrderCommand.Type.EXIT && resolution.outcome() == OrderCommandReconciler.Outcome.CONFIRMED) {
                 BinanceOrderExecutor.QueriedOrder order = resolution.order().orElseThrow();
                 if (!resolution.filled() || pos.getState() != PositionState.OPEN) {
@@ -661,12 +663,17 @@ public class PositionManager {
                 continue;
             }
             closedPositions.add(position);
-            if (id.startsWith("POS_")) {
-                try {
-                    positionCounter.updateAndGet(current -> Math.max(current, Integer.parseInt(id.substring(4))));
-                } catch (NumberFormatException ignored) {
-                    logger.warn("Could not parse restored position id: {}", id);
-                }
+            advancePositionCounterPast(id);
+        }
+    }
+
+    /** A restored POS_n id: new positions must not reuse its number. */
+    private void advancePositionCounterPast(String id) {
+        if (id.startsWith("POS_")) {
+            try {
+                positionCounter.updateAndGet(current -> Math.max(current, Integer.parseInt(id.substring(4))));
+            } catch (NumberFormatException ignored) {
+                logger.warn("Could not parse restored position id: {}", id);
             }
         }
     }
@@ -676,15 +683,15 @@ public class PositionManager {
      * dedicated order I/O thread; false when nothing could be sent or the exit failed.
      */
     public synchronized boolean closeManualPosition(BigDecimal price, java.time.Instant time) {
-        if (openPosition.isEmpty() || price == null || price.compareTo(BigDecimal.ZERO) <= 0) {
+        if (openPosition == null || price == null || price.compareTo(BigDecimal.ZERO) <= 0) {
             return false;
         }
-        if (openPosition.get().getState() == PositionState.EXIT_PENDING) {
+        if (openPosition.getState() == PositionState.EXIT_PENDING) {
             return true; // the exit already in flight is the one the user asked for
         }
 
         // An explicit user request skips the backoff wait; failures still count
-        return closePosition(openPosition.get(), price, time, ExitReason.MANUAL_CLOSE, false);
+        return closePosition(openPosition, price, time, ExitReason.MANUAL_CLOSE, false);
     }
 
     private boolean shouldReversePosition(Position pos, PredictionVector pred) {
@@ -711,12 +718,12 @@ public class PositionManager {
                 stopLossPercent,
                 PositionState.PENDING_ENTRY
         );
-        boolean realOrder = !simulationMode && orderExecutor.isPresent();
+        boolean realOrder = !simulationMode && orderExecutor != null;
         if (!realOrder) {
             // A simulated entry fills at the signal price
             pos.transitionTo(PositionState.OPEN);
         }
-        openPosition = Optional.of(pos);
+        openPosition = pos;
         resetExitBackoff();
         resetProtection();
 
@@ -776,7 +783,7 @@ public class PositionManager {
         BigDecimal quantity = BigDecimal.ZERO;
         boolean sent = false;
         try {
-            PortfolioManager pm = portfolioManager.get();
+            PortfolioManager pm = attached(portfolioManager, "portfolio manager");
             BigDecimal allocatedCapital = sizing.allocate(new PositionSizingStrategy.SizingContext(
                             pm.getCurrentBalance(), entryPrice, stopLossPercent, latestAtr, history))
                     .max(BigDecimal.ZERO)
@@ -784,8 +791,9 @@ public class PositionManager {
 
             quantity = allocatedCapital.divide(entryPrice, 8, java.math.RoundingMode.DOWN);
 
-            if (validationService.isPresent()) {
-                Optional<BigDecimal> validatedQty = validationService.get()
+            BinanceSymbolValidationService validation = validationService;
+            if (validation != null) {
+                Optional<BigDecimal> validatedQty = validation
                         .validateAndAdjustQuantity(symbol, quantity, entryPrice, allocatedCapital);
                 if (validatedQty.isEmpty()) {
                     return EntryOutcome.of(EntryKind.VALIDATION_FAILED, quantity, "quantity validation failed");
@@ -799,10 +807,12 @@ public class PositionManager {
                     "symbol", symbol, "side", signal.name(), "quantity", quantity.toPlainString(),
                     "price", entryPrice.toPlainString()));
             // Before sending: a MARKET order fills at once and its report can beat the REST response
-            confirmationManager.ifPresent(m ->
-                    m.registerOrder(clientOrderId, symbol, signal.toString(), orderQuantity, entryPrice));
+            OrderConfirmationManager confirmations = confirmationManager;
+            if (confirmations != null) {
+                confirmations.registerOrder(clientOrderId, symbol, signal.toString(), orderQuantity, entryPrice);
+            }
 
-            ExecutionPort executor = orderExecutor.get();
+            ExecutionPort executor = attachedExecutor();
             orderCommands.markSent(clientOrderId);
             sent = true;
             BinanceOrderExecutor.OrderResult result = signal == Signal.BUY
@@ -811,7 +821,9 @@ public class PositionManager {
 
             if (!result.success()) {
                 orderCommands.markFailed(clientOrderId, result.error());
-                confirmationManager.ifPresent(m -> m.unregisterOrder(clientOrderId));
+                if (confirmations != null) {
+                    confirmations.unregisterOrder(clientOrderId);
+                }
                 return new EntryOutcome(EntryKind.ORDER_FAILED, quantity, result, result.error());
             }
             orderCommands.markConfirmed(clientOrderId);
@@ -1017,7 +1029,7 @@ public class PositionManager {
         resetProtection();
         pos.close(exitPrice, exitTime, reason);
         closedPositions.add(pos);
-        openPosition = Optional.empty();
+        openPosition = null;
 
         ExecutionEvent event = new ExecutionEvent(
                 pos.getPositionId(),
@@ -1054,7 +1066,7 @@ public class PositionManager {
      * Uses min(position qty, free base balance), rounded down to the LOT_SIZE step.
      */
     BigDecimal sellableExitQuantity(String positionId, BigDecimal positionQuantity) {
-        ExecutionPort executor = orderExecutor.get();
+        ExecutionPort executor = attachedExecutor();
         BigDecimal quantity = positionQuantity;
 
         String baseAsset = baseAsset();
@@ -1086,7 +1098,7 @@ public class PositionManager {
     // Cached on success: filters rarely change
     private BinanceOrderExecutor.SymbolFilters symbolFilters() {
         if (cachedFilters == null) {
-            BinanceOrderExecutor.SymbolFilters filters = orderExecutor.get().getSymbolFilters(symbol);
+            BinanceOrderExecutor.SymbolFilters filters = attachedExecutor().getSymbolFilters(symbol);
             if (filters != null && filters.stepSize() != null && filters.stepSize().compareTo(BigDecimal.ZERO) > 0) {
                 cachedFilters = filters;
             }
@@ -1138,7 +1150,7 @@ public class PositionManager {
     }
 
     private boolean protectionApplicable(Position pos) {
-        return ocoEnabled && !simulationMode && orderExecutor.isPresent()
+        return ocoEnabled && !simulationMode && orderExecutor != null
                 && pos.getSignal() == Signal.BUY && pos.getQuantity().signum() > 0;
     }
 
@@ -1186,7 +1198,7 @@ public class PositionManager {
                     "symbol", symbol, "quantity", quantity.toPlainString(), "target", prices.target().toPlainString(),
                     "stop", prices.stop().toPlainString(), "stopLimit", prices.stopLimit().toPlainString()));
             registerProtectionLegs(pos);
-            ExecutionPort executor = orderExecutor.get();
+            ExecutionPort executor = attachedExecutor();
             orderCommands.markSent(listId);
             BinanceOrderExecutor.OcoResult result = executor.placeOcoSell(symbol, quantity, prices.target(),
                     prices.stop(), prices.stopLimit(), listId,
@@ -1245,7 +1257,7 @@ public class PositionManager {
      * Binance does not know is GONE; anything unanswered is UNKNOWN.
      */
     private ProtectionCheck checkProtection(Position pos) {
-        ExecutionPort executor = orderExecutor.get();
+        ExecutionPort executor = attachedExecutor();
         BinanceOrderExecutor.OrderListQuery list = executor.queryOrderList(OcoOrderIds.list(symbol, pos.getPositionId()));
         if (list.state() == BinanceOrderExecutor.OrderListQuery.State.ERROR) {
             return ProtectionCheck.of(ProtectionKind.UNKNOWN);
@@ -1276,7 +1288,7 @@ public class PositionManager {
         String key = OrderCommand.cancelKey(listId);
         orderCommands.record(key, positionId, OrderCommand.Type.CANCEL, java.util.Map.of("symbol", symbol, "list", listId));
         orderCommands.markSent(key);
-        BinanceOrderExecutor.OrderListQuery cancel = orderExecutor.get().cancelOrderList(symbol, listId);
+        BinanceOrderExecutor.OrderListQuery cancel = attachedExecutor().cancelOrderList(symbol, listId);
         switch (cancel.state()) {
             case FOUND -> orderCommands.markConfirmed(key);
             case NOT_FOUND -> orderCommands.markFailed(key, "list not open: " + cancel.error());
@@ -1357,7 +1369,7 @@ public class PositionManager {
         logger.warn("Position {} closed by Binance OCO: {} qty={} @ {}", pos.getPositionId(), reason, quantity, exitPrice);
         unregisterProtectionLegs(pos);
         finishClose(pos, exitPrice, time, reason);
-        if (portfolioManager.isPresent() && orderExecutor.isPresent()) {
+        if (portfolioManager != null && orderExecutor != null) {
             submitOrderIo("balance sync", () -> syncPortfolioBalance(exitPrice), () -> { });
         }
     }
@@ -1381,10 +1393,10 @@ public class PositionManager {
      * outcome.
      */
     public synchronized ProtectionReconciliation reconcileProtection() {
-        if (!ocoEnabled || simulationMode || orderExecutor.isEmpty() || openPosition.isEmpty()) {
+        if (!ocoEnabled || simulationMode || orderExecutor == null || openPosition == null) {
             return ProtectionReconciliation.NOT_APPLICABLE;
         }
-        Position pos = openPosition.get();
+        Position pos = openPosition;
         if (pos.getSignal() != Signal.BUY || pos.getQuantity().signum() <= 0) {
             return ProtectionReconciliation.NOT_APPLICABLE;
         }
@@ -1431,17 +1443,19 @@ public class PositionManager {
 
     // Before sending: a leg can fill at once and its report must find the tracker
     private void registerProtectionLegs(Position pos) {
-        confirmationManager.ifPresent(m -> {
+        OrderConfirmationManager m = confirmationManager;
+        if (m != null) {
             m.registerProtectiveOrder(OcoOrderIds.target(symbol, pos.getPositionId()), symbol);
             m.registerProtectiveOrder(OcoOrderIds.stop(symbol, pos.getPositionId()), symbol);
-        });
+        }
     }
 
     private void unregisterProtectionLegs(Position pos) {
-        confirmationManager.ifPresent(m -> {
+        OrderConfirmationManager m = confirmationManager;
+        if (m != null) {
             m.unregisterOrder(OcoOrderIds.target(symbol, pos.getPositionId()));
             m.unregisterOrder(OcoOrderIds.stop(symbol, pos.getPositionId()));
-        });
+        }
     }
 
     /** Runs on the order I/O thread without the lock. */
@@ -1450,7 +1464,7 @@ public class PositionManager {
         String clientOrderId = exitClientOrderId(pos);
         boolean sent = false;
         try {
-            ExecutionPort executor = orderExecutor.get();
+            ExecutionPort executor = attachedExecutor();
             BigDecimal quantity = positionQuantity;
             if (pos.getSignal() == Signal.BUY) {
                 quantity = sellableExitQuantity(pos.getPositionId(), positionQuantity);
@@ -1512,18 +1526,19 @@ public class PositionManager {
      * the order I/O thread; PortfolioManager synchronizes itself.
      */
     private void syncPortfolioBalance(BigDecimal lastFillPrice) {
-        if (portfolioManager.isEmpty() || orderExecutor.isEmpty()) {
+        PortfolioManager pm = portfolioManager;
+        ExecutionPort executor = orderExecutor;
+        if (pm == null || executor == null) {
             return;
         }
-        PortfolioManager pm = portfolioManager.get();
         pm.updateMarketPrice(lastFillPrice);
 
-        BinanceOrderExecutor.BalanceResult balance = orderExecutor.get().getBalance("USDT");
+        BinanceOrderExecutor.BalanceResult balance = executor.getBalance("USDT");
         if (!balance.success()) {
             logger.warn("Could not refresh USDT balance after order: {}", balance.error());
             return;
         }
-        BinanceOrderExecutor.BalanceResult base = orderExecutor.get().getBalance(baseAsset());
+        BinanceOrderExecutor.BalanceResult base = executor.getBalance(baseAsset());
         if (base.success()) {
             pm.updateBalances(balance.total(), base.total());
         } else {
@@ -1533,12 +1548,24 @@ public class PositionManager {
         }
     }
 
+    /** The order executor of real mode; its absence is a programming error on the real-order paths. */
+    private ExecutionPort attachedExecutor() {
+        return attached(orderExecutor, "order executor");
+    }
+
+    private static <T> T attached(T collaborator, String name) {
+        if (collaborator == null) {
+            throw new NoSuchElementException("No " + name + " attached");
+        }
+        return collaborator;
+    }
+
     private String baseAsset() {
         return symbol.endsWith("USDT") ? symbol.substring(0, symbol.length() - 4) : symbol;
     }
 
     public synchronized Optional<Position> getOpenPosition() {
-        return openPosition;
+        return Optional.ofNullable(openPosition);
     }
 
     public void markReconciliationComplete() {
