@@ -1,5 +1,7 @@
 # Keep the build context small and free of secrets (issue #105).
 **/target/
+**/node_modules/
+**/.angular/
 **/.flattened-pom.xml
 **/dependency-reduced-pom.xml
 engine-benchmarks/
