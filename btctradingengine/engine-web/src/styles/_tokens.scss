@@ -1,0 +1,150 @@
+// Design tokens: every color, size and timing in the app comes from here.
+// Dark is the default theme; [data-theme='light'] on <html> switches (see ThemeService).
+
+:root {
+  // Typography
+  --font-sans: 'Inter Variable', 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+
+  --text-2xs: 0.6875rem; // 11px
+  --text-xs: 0.75rem; // 12px
+  --text-sm: 0.8125rem; // 13px
+  --text-base: 0.875rem; // 14px
+  --text-md: 1rem; // 16px
+  --text-lg: 1.125rem; // 18px
+  --text-xl: 1.375rem; // 22px
+  --text-2xl: 1.75rem; // 28px
+  --text-3xl: 2.25rem; // 36px
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 650;
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+  --tracking-tight: -0.015em;
+  --tracking-caps: 0.06em;
+
+  // Spacing (4px grid)
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  // Shape
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 999px;
+
+  // Motion
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+
+  // Layout
+  --sidebar-width: 240px;
+  --sidebar-width-collapsed: 72px;
+  --topbar-height: 60px;
+  --content-max: 1480px;
+
+  // Layers
+  --z-sticky: 10;
+  --z-drawer: 40;
+  --z-dialog: 50;
+  --z-toast: 60;
+  --z-tooltip: 70;
+
+  color-scheme: dark;
+
+  // Dark palette (default)
+  --bg: #0b0c0f;
+  --surface: #121418;
+  --surface-2: #171a1f;
+  --surface-hover: #1c1f26;
+  --surface-active: #22262e;
+  --overlay: rgb(5 6 8 / 0.62);
+  --border: #22252c;
+  --border-strong: #30343d;
+
+  --text: #e8eaef;
+  --text-muted: #a1a7b3;
+  --text-subtle: #7f8693;
+  --text-inverse: #0b0c0f;
+
+  --accent: #8b95ff;
+  --accent-strong: #a3abff;
+  --accent-soft: rgb(139 149 255 / 0.12);
+  --accent-contrast: #0b0c0f;
+
+  --positive: #3cc78f;
+  --positive-soft: rgb(60 199 143 / 0.12);
+  --negative: #f2706d;
+  --negative-soft: rgb(242 112 109 / 0.12);
+  --warning: #e3b457;
+  --warning-soft: rgb(227 180 87 / 0.12);
+  --info: #6cb2f0;
+  --info-soft: rgb(108 178 240 / 0.12);
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-md: 0 8px 24px rgb(0 0 0 / 0.35);
+  --shadow-lg: 0 20px 48px rgb(0 0 0 / 0.45);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgb(139 149 255 / 0.65);
+
+  --chart-grid: rgb(255 255 255 / 0.05);
+  --chart-text: #7f8693;
+  --skeleton: #1b1e24;
+  --skeleton-shine: #23272e;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f9fafb;
+  --surface-hover: #f1f3f6;
+  --surface-active: #e9ecf1;
+  --overlay: rgb(15 18 25 / 0.4);
+  --border: #e5e7eb;
+  --border-strong: #d4d8df;
+
+  --text: #111418;
+  --text-muted: #4b5260;
+  --text-subtle: #697080;
+  --text-inverse: #ffffff;
+
+  --accent: #4e5ad8;
+  --accent-strong: #3f4ac4;
+  --accent-soft: rgb(78 90 216 / 0.09);
+  --accent-contrast: #ffffff;
+
+  --positive: #0c8a5c;
+  --positive-soft: rgb(12 138 92 / 0.09);
+  --negative: #d0393a;
+  --negative-soft: rgb(208 57 58 / 0.08);
+  --warning: #9a6408;
+  --warning-soft: rgb(196 138 22 / 0.12);
+  --info: #1f6fb5;
+  --info-soft: rgb(31 111 181 / 0.09);
+
+  --shadow-sm: 0 1px 2px rgb(16 24 40 / 0.05);
+  --shadow-md: 0 8px 24px rgb(16 24 40 / 0.08);
+  --shadow-lg: 0 20px 48px rgb(16 24 40 / 0.14);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgb(78 90 216 / 0.55);
+
+  --chart-grid: rgb(17 20 24 / 0.06);
+  --chart-text: #697080;
+  --skeleton: #eceef2;
+  --skeleton-shine: #f5f6f8;
+}

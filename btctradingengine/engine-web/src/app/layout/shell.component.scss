@@ -1,0 +1,331 @@
+:host {
+  display: block;
+  min-height: 100dvh;
+}
+
+// ───────────── Sidebar ─────────────
+.sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: var(--z-drawer);
+  display: flex;
+  flex-direction: column;
+  width: var(--sidebar-width);
+  padding: var(--space-4) var(--space-3);
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  transition:
+    width var(--dur-slow) var(--ease-out),
+    transform var(--dur-slow) var(--ease-out);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 40px;
+  padding: 0 var(--space-2);
+  margin-bottom: var(--space-6);
+  overflow: hidden;
+}
+
+.logo {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  white-space: nowrap;
+
+  strong {
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
+    letter-spacing: -0.01em;
+  }
+
+  small {
+    font-size: var(--text-2xs);
+    color: var(--text-subtle);
+  }
+}
+
+.nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  overflow-y: auto;
+  overflow-x: hidden;
+
+  ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+}
+
+.nav-title {
+  padding: 0 var(--space-3);
+  margin-bottom: var(--space-2);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--text-subtle);
+  white-space: nowrap;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+.nav-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  text-align: left;
+  text-decoration: none;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+
+  &:hover {
+    background: var(--surface-hover);
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  &.active {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 0 0 1px var(--border);
+
+    bte-icon {
+      color: var(--accent);
+    }
+
+    &::before {
+      content: '';
+      position: absolute;
+      left: -12px;
+      top: 10px;
+      bottom: 10px;
+      width: 3px;
+      border-radius: 0 3px 3px 0;
+      background: var(--accent);
+      animation: fade-in var(--dur-base) var(--ease-out);
+    }
+  }
+}
+
+.nav-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  white-space: nowrap;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+.nav-label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.nav-description {
+  font-size: var(--text-2xs);
+  color: var(--text-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+}
+
+.user-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.user-name {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-role {
+  font-size: var(--text-2xs);
+  color: var(--text-subtle);
+}
+
+// ───────────── Collapsed (desktop) ─────────────
+:host(.collapsed) {
+  .sidebar {
+    width: var(--sidebar-width-collapsed);
+  }
+
+  .brand-text,
+  .nav-text,
+  .user-text {
+    opacity: 0;
+    pointer-events: none;
+    width: 0;
+  }
+
+  .nav-title {
+    opacity: 0;
+    height: 0;
+    margin: 0;
+  }
+
+  .nav-link {
+    justify-content: center;
+    gap: 0;
+    padding: var(--space-2);
+  }
+
+  .user {
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-2) 0;
+  }
+
+  .main {
+    padding-left: var(--sidebar-width-collapsed);
+  }
+}
+
+// ───────────── Main column ─────────────
+.main {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  padding-left: var(--sidebar-width);
+  transition: padding-left var(--dur-slow) var(--ease-out);
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--topbar-height);
+  padding: 0 var(--space-6);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: saturate(1.4) blur(10px);
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+.content {
+  flex: 1;
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--space-6);
+
+  &:focus {
+    outline: none;
+  }
+}
+
+.mobile-only {
+  display: none;
+}
+
+// ───────────── Drawer (tablet and phone) ─────────────
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-drawer) - 1);
+  background: var(--overlay);
+}
+
+@media (max-width: 1023px) {
+  .sidebar {
+    width: min(300px, 86vw);
+    transform: translateX(-100%);
+    box-shadow: none;
+  }
+
+  :host(.drawer-open) .sidebar {
+    transform: none;
+    box-shadow: var(--shadow-lg);
+    background: var(--surface);
+  }
+
+  .main {
+    padding-left: 0;
+  }
+
+  .desktop-only {
+    display: none;
+  }
+
+  .mobile-only {
+    display: inline-flex;
+  }
+
+  .topbar {
+    padding: 0 var(--space-4);
+  }
+
+  .content {
+    padding: var(--space-5) var(--space-4) var(--space-8);
+  }
+}
+
+@media (max-width: 480px) {
+  .clock {
+    display: none;
+  }
+}

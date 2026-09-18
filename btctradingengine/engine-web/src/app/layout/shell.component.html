@@ -1,0 +1,116 @@
+<a class="skip-link" href="#content">Pular para o conteúdo</a>
+
+@if (drawerOpen()) {
+  <div
+    class="backdrop"
+    aria-hidden="true"
+    animate.enter="enter-fade"
+    animate.leave="leave-fade"
+    (click)="closeDrawer()"
+  ></div>
+}
+
+<aside
+  #sidebar
+  class="sidebar"
+  id="sidebar"
+  aria-label="Navegação principal"
+  [attr.inert]="isMobile() && !drawerOpen() ? '' : null"
+>
+  <div class="brand">
+    <span class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 17l5-5 4 4 8-9" />
+        <path d="M15 7h5v5" />
+      </svg>
+    </span>
+    <span class="brand-text">
+      <strong>BTC Engine</strong>
+      <small>Trading engine</small>
+    </span>
+  </div>
+
+  <nav class="nav">
+    @for (section of sections; track section.title) {
+      <div class="nav-section">
+        <p class="nav-title">{{ section.title }}</p>
+        <ul>
+          @for (item of section.items; track item.path) {
+            <li>
+              <a
+                class="nav-link"
+                [routerLink]="item.path"
+                routerLinkActive="active"
+                ariaCurrentWhenActive="page"
+                [bteTooltip]="collapsed() && !isMobile() ? item.label : ''"
+              >
+                <bte-icon [name]="item.icon" [size]="18" />
+                <span class="nav-text">
+                  <span class="nav-label">{{ item.label }}</span>
+                  <span class="nav-description">{{ item.description }}</span>
+                </span>
+              </a>
+            </li>
+          }
+        </ul>
+      </div>
+    }
+  </nav>
+
+  <div class="sidebar-footer">
+    <button
+      type="button"
+      class="nav-link theme-toggle"
+      [attr.aria-label]="theme.theme() === 'dark' ? 'Usar tema claro' : 'Usar tema escuro'"
+      [bteTooltip]="collapsed() && !isMobile() ? (theme.theme() === 'dark' ? 'Tema claro' : 'Tema escuro') : ''"
+      (click)="theme.toggle()"
+    >
+      <bte-icon [name]="theme.theme() === 'dark' ? 'sun' : 'moon'" [size]="18" />
+      <span class="nav-text"><span class="nav-label">{{ theme.theme() === 'dark' ? 'Tema claro' : 'Tema escuro' }}</span></span>
+    </button>
+
+    @if (auth.session(); as session) {
+      <div class="user">
+        <span class="avatar" aria-hidden="true">{{ initials() }}</span>
+        <span class="user-text">
+          <span class="user-name">{{ session.username }}</span>
+          <span class="user-role">{{ roleLabel() }}</span>
+        </span>
+        <button
+          type="button"
+          class="btn btn-ghost btn-icon btn-sm logout"
+          aria-label="Sair da conta"
+          bteTooltip="Sair"
+          [disabled]="loggingOut()"
+          [attr.aria-busy]="loggingOut()"
+          (click)="logout()"
+        >
+          <bte-icon name="log-out" [size]="16" />
+        </button>
+      </div>
+    }
+  </div>
+</aside>
+
+<div class="main">
+  <header class="topbar">
+    <button
+      type="button"
+      class="btn btn-ghost btn-icon nav-toggle"
+      aria-controls="sidebar"
+      [attr.aria-expanded]="navExpanded()"
+      aria-label="Alternar navegação"
+      (click)="toggleNavigation()"
+    >
+      <bte-icon name="panel-left" class="desktop-only" [size]="18" />
+      <bte-icon name="menu" class="mobile-only" [size]="18" />
+    </button>
+    <span class="topbar-spacer"></span>
+    <bte-connection-status />
+    <bte-utc-clock class="clock" />
+  </header>
+
+  <main id="content" class="content" tabindex="-1">
+    <router-outlet />
+  </main>
+</div>
