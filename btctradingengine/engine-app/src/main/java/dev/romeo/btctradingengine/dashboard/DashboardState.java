@@ -2,6 +2,8 @@ package dev.romeo.btctradingengine.dashboard;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectWriter;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import dev.romeo.btctradingengine.port.PriceEventListener;
 import dev.romeo.btctradingengine.config.TradingProperties;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,7 +36,7 @@ import java.time.Instant;
 
 @Component
 public class DashboardState implements PriceEventListener, AutoCloseable {
-    private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+    private final ObjectWriter jsonWriter;
     private final List<CandleEvent> candles = new ArrayList<>();
     private final CopyOnWriteArrayList<WebSocketSession> sessions = new CopyOnWriteArrayList<>();
     private final ConcurrentHashMap<String, Object> pendingEvents = new ConcurrentHashMap<>();
@@ -58,14 +60,23 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
 
     private final BigDecimal initialCapital;
 
-    /** trading.initial.capital.usdt: the base of the equity curve and drawdown in {@link #stats()}. */
+    /**
+     * trading.initial.capital.usdt: the base of the equity curve and drawdown in {@link #stats()}. The WebSocket
+     * uses Spring's ObjectMapper, like the REST endpoints.
+     */
     @Autowired
-    public DashboardState(TradingProperties trading) {
-        this(trading.initialCapitalUsdt());
+    public DashboardState(TradingProperties trading, ObjectMapper objectMapper) {
+        this(trading.initialCapitalUsdt(), objectMapper);
     }
 
     public DashboardState(BigDecimal initialCapital) {
+        this(initialCapital, new ObjectMapper().findAndRegisterModules());
+    }
+
+    DashboardState(BigDecimal initialCapital, ObjectMapper objectMapper) {
         this.initialCapital = initialCapital;
+        // Always ISO-8601: the front-end does new Date(v), which reads a number as epoch millis (issue #87)
+        this.jsonWriter = objectMapper.writer().without(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         publisher.scheduleAtFixedRate(this::flushPendingEvents, 50, 50, TimeUnit.MILLISECONDS);
     }
 
@@ -284,7 +295,7 @@ public class DashboardState implements PriceEventListener, AutoCloseable {
     private void broadcast(String type, Object payload) {
         String json;
         try {
-            json = objectMapper.writeValueAsString(new MapPayload(type, payload));
+            json = jsonWriter.writeValueAsString(new MapPayload(type, payload));
         } catch (JsonProcessingException ignored) {
             return;
         }
