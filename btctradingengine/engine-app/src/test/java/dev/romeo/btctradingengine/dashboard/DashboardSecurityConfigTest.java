@@ -12,9 +12,12 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 
 import org.springframework.http.MediaType;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -68,13 +71,59 @@ class DashboardSecurityConfigTest {
     void anonymousPagesAndTheWebSocketAreSentToTheLoginForm() throws Exception {
         mvc.perform(get("/")).andExpect(status().is3xxRedirection());
         mvc.perform(get("/index.html")).andExpect(status().is3xxRedirection());
-        mvc.perform(get("/backtest.html")).andExpect(status().is3xxRedirection());
         mvc.perform(get("/ws/live")).andExpect(status().is3xxRedirection());
     }
 
     @Test
-    void theLoginPageItselfIsReachable() throws Exception {
-        mvc.perform(get("/login")).andExpect(status().isOk());
+    void aDeepLinkReturnsToItsPageAfterTheLogin() throws Exception {
+        mvc.perform(get("/backtest")).andExpect(redirectedUrl("/login?returnUrl=/backtest"));
+        mvc.perform(get("/live").queryParam("tab", "flow"))
+                .andExpect(redirectedUrl("/login?returnUrl=/live?tab%3Dflow"));
+        // Only app pages are remembered
+        mvc.perform(get("/")).andExpect(redirectedUrl("/login"));
+        mvc.perform(get("/ws/live")).andExpect(redirectedUrl("/login"));
+    }
+
+    @Test
+    void theLoginPageAndItsStaticFilesAreReachable() throws Exception {
+        // /login is the Angular app (a stub index.html under src/test/resources/static)
+        mvc.perform(get("/login"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("spa-test-index")));
+        mvc.perform(get("/main-test.js")).andExpect(status().isOk());
+    }
+
+    @Test
+    void theLoginFormAnswersWithAStatus() throws Exception {
+        Cookie csrf = mvc.perform(get("/api/auth/me")).andExpect(status().isUnauthorized())
+                .andReturn().getResponse().getCookie("XSRF-TOKEN");
+        assertNotNull(csrf, "the 401 must still hand out the XSRF-TOKEN cookie the login form posts with");
+
+        mvc.perform(post("/api/auth/login").cookie(csrf).header("X-XSRF-TOKEN", csrf.getValue())
+                        .param("username", "trader").param("password", "s3cret"))
+                .andExpect(status().isNoContent());
+        mvc.perform(post("/api/auth/login").cookie(csrf).header("X-XSRF-TOKEN", csrf.getValue())
+                        .param("username", "trader").param("password", "wrong"))
+                .andExpect(status().isUnauthorized());
+        // Without the token the login itself is refused
+        mvc.perform(post("/api/auth/login").param("username", "trader").param("password", "s3cret"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void theSessionEndpointReportsTheRoles() throws Exception {
+        mvc.perform(get("/api/auth/me").with(user("trader").roles("VIEWER", "TRADER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.username").value("trader"))
+                .andExpect(jsonPath("$.roles[0]").value("TRADER"))
+                .andExpect(jsonPath("$.roles[1]").value("VIEWER"));
+    }
+
+    @Test
+    void logoutNeedsTheCsrfTokenAndAnswers204() throws Exception {
+        mvc.perform(post("/api/auth/logout").with(user("trader").roles("VIEWER")))
+                .andExpect(status().isForbidden());
+        mvc.perform(postWithCsrf("/api/auth/logout", "VIEWER")).andExpect(status().isNoContent());
     }
 
     @Test
