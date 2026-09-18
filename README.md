@@ -97,8 +97,9 @@ Fluxo resumido:
     ├── engine-trading/           # trading (posições, execução, reconciliação, guardas, TradeJournal),
     │                             # replay determinístico, JdbcOrderCommandStore
     ├── engine-backtest/          # BacktestEngine, BacktestRunner, BacktestParams, sweep, walk-forward, BacktestService
+    ├── engine-web/               # Dashboard Angular (issue #134); com -P frontend vira static/ dentro do jar
     └── engine-app/               # Spring Boot: Main, LivePipeline, config/ (*Properties validados), dashboard/,
-                                  # BinanceBacktestDataLoader, ReplayRunner; application*.properties, static/
+                                  # BinanceBacktestDataLoader, ReplayRunner; application*.properties
                                   # Único módulo com spring-boot-maven-plugin: gera o jar executável
 ```
 
@@ -112,7 +113,7 @@ Fluxo resumido:
 | JSON | Jackson | Parsing de mensagens da Binance e serialização |
 | HTTP/WS cliente | `java.net.http.HttpClient` | REST e WebSocket da Binance |
 | Banco | PostgreSQL 16, JDBC, HikariCP 5.1 | Persistência |
-| Front-end | HTML/JS puro, Chart.js 4.4.4 (local, com SRI), Google Fonts | Dashboard e tela de backtest |
+| Front-end | Angular 22 (standalone, signals, sem zone.js), RxJS, Lightweight Charts, Chart.js, Inter e JetBrains Mono (locais) | Dashboard ao vivo, backtest e login (`engine-web`) |
 | Alertas | Discord Webhook | Notificações críticas |
 | Testes | JUnit Jupiter 5.11 | Testes unitários |
 | Qualidade | GitHub Actions, Checkstyle, JaCoCo, ArchUnit, SpotBugs + find-sec-bugs, Error Prone + NullAway, OWASP Dependency-Check, Dependabot, JMH, Qodana | Build, testes, análise estática |
@@ -179,11 +180,26 @@ O schema é versionado com Flyway (issue #102): as migrações ficam em `engine-
 
 ```bash
 cd btctradingengine
-./mvnw -B package -DskipTests
+./mvnw -B -P frontend clean package -DskipTests   # -P frontend inclui o dashboard Angular no jar
 java -jar engine-app/target/engine-app-*.jar
 # ou, sem gerar o jar:
 ./mvnw install -DskipTests && ./mvnw -pl engine-app spring-boot:run
 ```
+
+Sem `-P frontend` o build não precisa de Node e fica mais rápido, mas o jar sai sem o dashboard (a API e o WebSocket continuam no ar). O perfil baixa o Node 24 para `engine-web/target`, roda `npm ci`, `ng build` e os testes do front (Vitest).
+
+### Desenvolvimento do dashboard (issue #134)
+
+```bash
+cd btctradingengine/engine-web
+npm ci
+npm start          # ng serve em http://localhost:4200, com hot reload
+npm run test:ci    # testes unitários (Vitest)
+```
+
+O `proxy.conf.mjs` encaminha `/api`, `/actuator` e `/ws` para o backend em `localhost:8080`, então não há CORS nem mudança no servidor: basta o engine rodando (`engine.pipeline.enabled=false` serve se só a API interessar). O login é a tela `/login` do próprio Angular, que posta em `/api/auth/login` com o token CSRF do cookie `XSRF-TOKEN`.
+
+O front fica em `src/app`: `core/` (modelos tipados dos contratos, serviços de API, WebSocket com reconexão, autenticação), `shared/` (design system: tokens em `src/styles`, cartões, badges, tooltips, toasts, diálogo de confirmação, gráficos) e `features/` (ao vivo, backtest, login). Depois de trocar os HTMLs antigos, rode um `clean` uma vez: o Maven não apaga de `engine-app/target/classes/static` os arquivos removidos do código.
 
 ### Docker (issue #105)
 
@@ -198,8 +214,8 @@ O `btctradingengine/Dockerfile` compila com o wrapper numa imagem Temurin 25 JDK
 
 Perfis opcionais: `SPRING_PROFILES_ACTIVE=testnet` ou `mainnet` (só apontam a execução; `trading.confirm.mainnet=true` continua obrigatório para operar na Mainnet). `engine.pipeline.enabled=false` sobe só o dashboard e os backtests.
 
-- Dashboard: <http://localhost:8080>
-- Backtest: <http://localhost:8080/backtest.html>
+- Dashboard: <http://localhost:8080> (ao vivo em `/live`)
+- Backtest: <http://localhost:8080/backtest>
 - API REST: <http://localhost:8080/api/...>
 
 > O jar tem um único ponto de entrada (`Main`, declarado no `spring-boot-maven-plugin` do `engine-app`) e sobe o pipeline completo junto com o dashboard (issue #77).
@@ -260,7 +276,7 @@ GitHub Actions (`.github/workflows/ci.yml`) em PRs e pushes para `main` e `dev`,
 
 | Job | O que faz | Bloqueia? |
 | :--- | :--- | :--- |
-| `verify` | `./mvnw -B verify`: Checkstyle (regras de severidade `error`), testes de todos os módulos, `ArchitectureTest` (ArchUnit), relatório JaCoCo agregado (artefato `coverage`) e cobertura mínima de `prediction`, `prediction.rules` e `trading` | Sim |
+| `verify` | `./mvnw -B -P frontend verify`: build e testes do dashboard Angular, Checkstyle (regras de severidade `error`), testes de todos os módulos, `ArchitectureTest` (ArchUnit), relatório JaCoCo agregado (artefato `coverage`) e cobertura mínima de `prediction`, `prediction.rules` e `trading` | Sim |
 | `docker` | `docker build` da imagem | Sim |
 | `pr-title` | Título do PR no formato Conventional Commits | Sim |
 | `format` | `spotless:check` só nos arquivos alterados desde a base do PR (`ratchetFrom`) | Não, até o `main` estar formatado |
@@ -277,7 +293,7 @@ Commits seguem [Conventional Commits](https://www.conventionalcommits.org) (`fix
 git config core.hooksPath .githooks   # commit-msg valida a mensagem; pre-commit roda o Spotless nos .java alterados
 ```
 
-Front-end: o Chart.js 4.4.4 fica em `static/vendor/chartjs` (arquivo do pacote npm, integridade conferida) e é carregado com `integrity` (SRI). Para atualizar, troque o arquivo e recalcule o hash (`openssl dgst -sha384 -binary arquivo | openssl base64 -A`). Lightweight Charts (TradingView) é uma alternativa a avaliar para candles OHLC: mais leve e feita para séries financeiras, mas exigiria reescrever os gráficos do dashboard.
+Front-end: as dependências do dashboard (Angular, Lightweight Charts para as velas, Chart.js para as outras séries e as fontes) vêm do npm com versões travadas no `package-lock.json` e são empacotadas no build: nada é carregado de CDN em tempo de execução. Os arquivos gerados têm hash no nome e são servidos com cache de um ano; o `index.html` é revalidado a cada acesso.
 
 ## Limitações conhecidas
 
