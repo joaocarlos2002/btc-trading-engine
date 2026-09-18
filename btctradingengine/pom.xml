@@ -8,6 +8,7 @@
         Reactor root (issue #133). Dependencies point inward:
           engine-core  <-  engine-data  <-  engine-trading  <-  engine-app
           engine-core  <-  engine-backtest                  <-  engine-app
+                             engine-web (Angular, #134)   <-  engine-app
         engine-core has no Spring, JDBC or HTTP client on its compile classpath; only engine-app is a
         Spring Boot application and builds the executable jar.
         Planned modules (not created yet): engine-research (#112), engine-copytrading (#120), engine-scanner (#127).
@@ -22,6 +23,7 @@
         <module>engine-data</module>
         <module>engine-trading</module>
         <module>engine-backtest</module>
+        <module>engine-web</module>
         <module>engine-app</module>
     </modules>
 
@@ -103,6 +105,11 @@
             <dependency>
                 <groupId>dev.romeo</groupId>
                 <artifactId>engine-backtest</artifactId>
+                <version>${revision}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.romeo</groupId>
+                <artifactId>engine-web</artifactId>
                 <version>${revision}</version>
             </dependency>
         </dependencies>

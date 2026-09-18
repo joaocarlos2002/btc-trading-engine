@@ -16,6 +16,7 @@ COPY engine-core/pom.xml engine-core/
 COPY engine-data/pom.xml engine-data/
 COPY engine-trading/pom.xml engine-trading/
 COPY engine-backtest/pom.xml engine-backtest/
+COPY engine-web/pom.xml engine-web/
 COPY engine-app/pom.xml engine-app/
 # The reactor modules depend on each other, so dependency:go-offline cannot run before their sources exist;
 # a BuildKit cache mount keeps ~/.m2 between builds instead.
@@ -26,10 +27,14 @@ COPY engine-core/src engine-core/src
 COPY engine-data/src engine-data/src
 COPY engine-trading/src engine-trading/src
 COPY engine-backtest/src engine-backtest/src
+# The Angular dashboard (issue #134): -P frontend installs Node under engine-web/target and runs npm ci + ng build
+COPY engine-web/package.json engine-web/package-lock.json engine-web/angular.json engine-web/tsconfig*.json engine-web/
+COPY engine-web/public engine-web/public
+COPY engine-web/src engine-web/src
 COPY engine-app/src engine-app/src
-# Tests and quality gates run in CI (`./mvnw verify`); the image only packages.
-RUN --mount=type=cache,target=/root/.m2 \
-    ./mvnw -B -pl engine-app -am package -DskipTests -Dcheckstyle.skip -Djacoco.skip \
+# Tests and quality gates run in CI (`./mvnw -P frontend verify`); the image only packages.
+RUN --mount=type=cache,target=/root/.m2 --mount=type=cache,target=/root/.npm \
+    ./mvnw -B -P frontend -pl engine-app -am package -DskipTests -Dcheckstyle.skip -Djacoco.skip \
     && cp engine-app/target/engine-app-*.jar /tmp/app.jar \
     && java -Djarmode=tools -jar /tmp/app.jar extract --layers --launcher --destination /tmp/extracted
 

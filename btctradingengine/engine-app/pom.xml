@@ -32,6 +32,12 @@
             <groupId>dev.romeo</groupId>
             <artifactId>engine-backtest</artifactId>
         </dependency>
+        <!-- The Angular dashboard under classpath:/static; empty unless built with -P frontend (issue #134) -->
+        <dependency>
+            <groupId>dev.romeo</groupId>
+            <artifactId>engine-web</artifactId>
+            <scope>runtime</scope>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>

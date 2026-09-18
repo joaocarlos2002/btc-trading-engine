@@ -40,9 +40,17 @@ jobs:
           cache: maven
           cache-dependency-path: btctradingengine/**/pom.xml
 
+      # npm's download cache; the Node binary itself is cached in ~/.m2 by frontend-maven-plugin
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('btctradingengine/engine-web/package-lock.json') }}
+          restore-keys: npm-
+
       - name: Verify
         # Every module in dependency order: compile, Checkstyle (validate), tests, JaCoCo report + check, jar.
-        run: ./mvnw -B verify
+        # -P frontend also builds and tests the Angular dashboard (engine-web, issue #134).
+        run: ./mvnw -B -P frontend verify
 
       - name: Coverage report
         if: always()
