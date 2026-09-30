@@ -41,7 +41,7 @@ jobs:
           cache-dependency-path: btctradingengine/**/pom.xml
 
       # npm's download cache; the Node binary itself is cached in ~/.m2 by frontend-maven-plugin
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.npm
           key: npm-${{ hashFiles('btctradingengine/engine-web/package-lock.json') }}
